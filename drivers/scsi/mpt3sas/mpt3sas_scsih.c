@@ -65,6 +65,7 @@
 #include <linux/aer.h>
 #endif
 #include <linux/raid_class.h>
+#include <linux/list_sort.h>
 
 #include "mpt3sas_base.h"
 
@@ -14496,6 +14497,21 @@ static void sas_device_make_active(struct MPT3SAS_ADAPTER *ioc,
 	spin_unlock_irqrestore(&ioc->sas_device_lock, flags);
 }
 
+static int _sas_slot_cmp(void *priv, struct list_head *a, struct list_head *b)
+{
+	struct _sas_device *sas_a, *sas_b;
+
+	sas_a = list_entry(a, struct _sas_device, list);
+	sas_b = list_entry(b, struct _sas_device, list);
+
+	if (sas_a->slot > sas_b->slot)
+		return 1;
+	if (sas_a->slot < sas_b->slot)
+		return -1;
+
+	return 0;
+}
+
 /**
  * _scsih_probe_sas - reporting sas devices to sas transport
  * @ioc: per adapter object
@@ -14506,6 +14522,11 @@ static void
 _scsih_probe_sas(struct MPT3SAS_ADAPTER *ioc)
 {
 	struct _sas_device *sas_device;
+ 	unsigned long flags;
+
+	spin_lock_irqsave(&ioc->sas_device_lock, flags);
+	list_sort(NULL, &ioc->sas_device_init_list, _sas_slot_cmp);
+	spin_unlock_irqrestore(&ioc->sas_device_lock, flags);
 
 	while ((sas_device = get_next_sas_device(ioc))) {
 		if (ioc->hide_drives) {
