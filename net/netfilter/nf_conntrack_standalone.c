@@ -277,6 +277,9 @@ static const char* l4proto_name(u16 proto)
 	return "unknown";
 }
 
+void (*ct_get_vmip_vpcid)(const struct nf_conn *ct, __be32 *vmip, u32 *vpcid) = NULL;
+EXPORT_SYMBOL_GPL(ct_get_vmip_vpcid);
+
 /* return 0 on success, 1 in case of error */
 static int ct_seq_show(struct seq_file *s, void *v)
 {
@@ -352,6 +355,15 @@ static int ct_seq_show(struct seq_file *s, void *v)
 	ct_show_secctx(s, ct);
 	ct_show_zone(s, ct, NF_CT_DEFAULT_ZONE_DIR);
 	ct_show_delta_time(s, ct);
+
+	void (*ct_get_vmip_vpcid_tmp)(const struct nf_conn *ct, __be32 *vmip, u32 *vpcid) = ct_get_vmip_vpcid;
+	if(ct_get_vmip_vpcid_tmp) {
+		__be32 vmip = 0;
+		u32 vpcid = 0;
+		ct_get_vmip_vpcid_tmp(ct, &vmip, &vpcid);
+		seq_printf(s, "vpcid=%u ", vpcid);
+		seq_printf(s, "vmip=%pI4 ", &vmip);
+	}
 
 	seq_printf(s, "use=%u\n", atomic_read(&ct->ct_general.use));
 

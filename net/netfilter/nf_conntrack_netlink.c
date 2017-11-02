@@ -463,6 +463,31 @@ nla_put_failure:
 	return -1;
 }
 
+extern void (*ct_get_vmip_vpcid)(const struct nf_conn *ct, __be32 *vmip, u32 *vpcid);
+
+static inline int
+ctnetlink_dump_vpcid_vmip(struct sk_buff *skb, const struct nf_conn *ct)
+{
+	int ret = 0;
+	void (*ct_get_vmip_vpcid_tmp)(const struct nf_conn *ct, __be32 *vmip, u32 *vpcid) = ct_get_vmip_vpcid;
+
+	if(ct_get_vmip_vpcid_tmp)
+	{
+		__be32 vmip = 0;
+		u32 vpcid = 0;
+		ct_get_vmip_vpcid_tmp(ct, &vmip, &vpcid);
+		ret = nla_put_be32(skb, CTA_VPCID, htonl(vpcid));
+		if (ret)
+			goto nla_put_failure;
+		ret = nla_put_be32(skb, CTA_VMIP, vmip);
+		if (ret)
+			goto nla_put_failure;
+	}
+
+nla_put_failure:
+	return ret;
+}
+
 static int
 ctnetlink_fill_info(struct sk_buff *skb, u32 portid, u32 seq, u32 type,
 		    struct nf_conn *ct)
@@ -521,6 +546,7 @@ ctnetlink_fill_info(struct sk_buff *skb, u32 portid, u32 seq, u32 type,
 	    ctnetlink_dump_id(skb, ct) < 0 ||
 	    ctnetlink_dump_use(skb, ct) < 0 ||
 	    ctnetlink_dump_master(skb, ct) < 0 ||
+	    ctnetlink_dump_vpcid_vmip(skb, ct) < 0 ||
 	    ctnetlink_dump_ct_seq_adj(skb, ct) < 0)
 		goto nla_put_failure;
 
@@ -1118,6 +1144,8 @@ static const struct nla_policy ct_nla_policy[CTA_MAX+1] = {
 				    .len = NF_CT_LABELS_MAX_SIZE },
 	[CTA_LABELS_MASK]	= { .type = NLA_BINARY,
 				    .len = NF_CT_LABELS_MAX_SIZE },
+	[CTA_VPCID]		= { .type = NLA_U32 },
+	[CTA_VMIP]		= { .type = NLA_U32 },
 };
 
 static int ctnetlink_flush_conntrack(struct net *net,
