@@ -929,6 +929,8 @@ void ceph_handle_snap(struct ceph_mds_client *mdsc,
 				 &realm->inodes_with_caps);
 			oldrealm = ci->i_snap_realm;
 			ci->i_snap_realm = realm;
+			if (realm->ino == ci->i_vino.ino)
+                realm->inode = inode;
 			spin_unlock(&realm->inodes_with_caps_lock);
 			spin_unlock(&ci->i_ceph_lock);
 
