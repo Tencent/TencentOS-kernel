@@ -747,13 +747,6 @@ static struct ctl_table ipv4_table[] = {
 		.extra1		= &zero,
 	},
 	{
-		.procname	= "tcp_no_delay_ack",
-		.data		= &sysctl_tcp_no_delay_ack,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec,
-	},
-	{
 		.procname	= "tcp_init_cwnd",
 		.data		= &sysctl_tcp_init_cwnd,
 		.maxlen		= sizeof(int),
@@ -1182,6 +1175,13 @@ static struct ctl_table ipv4_net_table[] = {
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
+	},
+	{
+		.procname   = "tcp_no_delay_ack",
+		.data       = &init_net.ipv4.sysctl_tcp_no_delay_ack,
+		.maxlen     = sizeof(int),
+		.mode       = 0644,
+		.proc_handler   = proc_dointvec
 	},
 	{ }
 };

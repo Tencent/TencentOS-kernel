@@ -277,7 +277,6 @@ extern int sysctl_tcp_pacing_ss_ratio;
 extern int sysctl_tcp_pacing_ca_ratio;
 extern int sysctl_tcp_tw_ignore_syn_tsval_zero;
 extern int sysctl_tcp_loss_init_cwnd;
-extern int sysctl_tcp_no_delay_ack;
 extern int sysctl_tcp_init_cwnd;
 
 extern atomic_long_t tcp_memory_allocated;

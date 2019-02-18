@@ -97,7 +97,6 @@ int sysctl_tcp_early_retrans __read_mostly = 3;
 int sysctl_tcp_invalid_ratelimit __read_mostly = HZ/2;
 int sysctl_tcp_tw_ignore_syn_tsval_zero __read_mostly = 1;
 int sysctl_tcp_loss_init_cwnd = 1;
-int sysctl_tcp_no_delay_ack = 0;
 int sysctl_tcp_init_cwnd = TCP_INIT_CWND;
 
 #define FLAG_DATA		0x01 /* Incoming frame contained data.		*/
@@ -5123,8 +5122,8 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 	     __tcp_select_window(sk) >= tp->rcv_wnd) ||
 	    /* We ACK each frame or... */
 	    tcp_in_quickack_mode(sk) ||
-		/* We need to send ack no delay or ... */
-		sysctl_tcp_no_delay_ack ||
+	    /* We need to send ack no delay or ... */
+	    sock_net(sk)->ipv4.sysctl_tcp_no_delay_ack ||
 	    /* We have out of order data. */
 	    (ofo_possible && !RB_EMPTY_ROOT(&tp->out_of_order_queue))) {
 		/* Then ack it now */
