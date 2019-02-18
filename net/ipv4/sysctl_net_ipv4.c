@@ -502,22 +502,6 @@ static struct ctl_table ipv4_table[] = {
 		.proc_handler	= proc_doulongvec_minmax,
 	},
 	{
-		.procname	= "tcp_wmem",
-		.data		= &sysctl_tcp_wmem,
-		.maxlen		= sizeof(sysctl_tcp_wmem),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &one,
-	},
-	{
-		.procname	= "tcp_rmem",
-		.data		= &sysctl_tcp_rmem,
-		.maxlen		= sizeof(sysctl_tcp_rmem),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= &one,
-	},
-	{
 		.procname	= "tcp_app_win",
 		.data		= &sysctl_tcp_app_win,
 		.maxlen		= sizeof(int),
@@ -1182,6 +1166,22 @@ static struct ctl_table ipv4_net_table[] = {
 		.maxlen         = sizeof(int),
 		.mode           = 0644,
 		.proc_handler   = proc_dointvec
+	},
+	{
+		.procname       = "tcp_wmem",
+		.data           = &init_net.ipv4.sysctl_tcp_wmem,
+		.maxlen         = sizeof(init_net.ipv4.sysctl_tcp_wmem),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = &one,
+	},
+	{
+		.procname       = "tcp_rmem",
+		.data           = &init_net.ipv4.sysctl_tcp_rmem,
+		.maxlen         = sizeof(init_net.ipv4.sysctl_tcp_rmem),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = &one,
 	},
 	{ }
 };
