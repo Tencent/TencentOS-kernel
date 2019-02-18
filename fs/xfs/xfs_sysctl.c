@@ -205,6 +205,33 @@ static struct ctl_table xfs_table[] = {
 		.extra2		= &xfs_params.stats_clear.max
 	},
 #endif /* CONFIG_PROC_FS */
+	{
+		.procname	= "kmem_fail_dump_stack",
+		.data		= &xfs_params.kmem_fail_dump_stack.val,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &xfs_params.kmem_fail_dump_stack.min,
+		.extra2		= &xfs_params.kmem_fail_dump_stack.max,
+	},
+	{
+		.procname	= "kmem_alloc_by_vmalloc",
+		.data		= &xfs_params.kmem_alloc_by_vmalloc.val,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &xfs_params.kmem_alloc_by_vmalloc.min,
+		.extra2		= &xfs_params.kmem_alloc_by_vmalloc.max,
+	},
+	{
+		.procname	= "kmem_alloc_large_dump_stack",
+		.data		= &xfs_params.kmem_alloc_large_dump_stack.val,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &xfs_params.kmem_alloc_large_dump_stack.min,
+		.extra2		= &xfs_params.kmem_alloc_large_dump_stack.max,
+	},
 
 	{}
 };

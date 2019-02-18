@@ -22,8 +22,10 @@
 #include <linux/swap.h>
 #include <linux/blkdev.h>
 #include <linux/backing-dev.h>
+#include <linux/nmi.h>
 #include "kmem.h"
 #include "xfs_message.h"
+#include "xfs_linux.h"
 
 void *
 kmem_alloc(size_t size, xfs_km_flags_t flags)
@@ -32,15 +34,33 @@ kmem_alloc(size_t size, xfs_km_flags_t flags)
 	gfp_t	lflags = kmem_flags_convert(flags);
 	void	*ptr;
 
+	if (xfs_kmem_alloc_by_vmalloc &&
+			size > (PAGE_SIZE * xfs_kmem_alloc_by_vmalloc) &&
+			xfs_kmem_alloc_large_dump_stack) {
+		xfs_warn(NULL, "%s size: %ld large than %ld\n",
+				__func__, size, PAGE_SIZE * xfs_kmem_alloc_by_vmalloc);
+		dump_stack();
+	}
+
 	do {
-		ptr = kmalloc(size, lflags);
+		if (xfs_kmem_alloc_by_vmalloc && (size > PAGE_SIZE * xfs_kmem_alloc_by_vmalloc))
+			ptr = __vmalloc(size, lflags, PAGE_KERNEL);
+		else
+			ptr = kmalloc(size, lflags);
 		if (ptr || (flags & (KM_MAYFAIL|KM_NOSLEEP)))
 			return ptr;
-		if (!(++retries % 100))
+		if (!(++retries % 100)) {
 			xfs_err(NULL,
-	"%s(%u) possible memory allocation deadlock size %u in %s (mode:0x%x)",
+				"%s(%u) possible memory allocation deadlock size %u in %s (mode:0x%x), flags: 0x%x",
 				current->comm, current->pid,
-				(unsigned int)size, __func__, lflags);
+				(unsigned int)size, __func__, lflags, flags);
+			if (xfs_kmem_fail_dump_stack == 1)
+				dump_stack();
+			else if (xfs_kmem_fail_dump_stack == 2)
+				trigger_all_cpu_backtrace();
+			else if (xfs_kmem_fail_dump_stack == 3)
+				show_mem(0, NULL);
+		}
 		congestion_wait(BLK_RW_ASYNC, HZ/50);
 	} while (1);
 }
@@ -106,11 +126,18 @@ kmem_zone_alloc(kmem_zone_t *zone, xfs_km_flags_t flags)
 		ptr = kmem_cache_alloc(zone, lflags);
 		if (ptr || (flags & (KM_MAYFAIL|KM_NOSLEEP)))
 			return ptr;
-		if (!(++retries % 100))
+		if (!(++retries % 100)) {
 			xfs_err(NULL,
-		"%s(%u) possible memory allocation deadlock in %s (mode:0x%x)",
+				"%s(%u) possible memory allocation deadlock in %s (mode:0x%x), size: 0x%x, flags: 0x%x",
 				current->comm, current->pid,
-				__func__, lflags);
+				__func__, lflags, kmem_cache_size(zone), flags);
+			if (xfs_kmem_fail_dump_stack == 1)
+				dump_stack();
+			else if (xfs_kmem_fail_dump_stack == 2)
+				trigger_all_cpu_backtrace();
+			else if (xfs_kmem_fail_dump_stack == 3)
+				show_mem(0, NULL);
+		}
 		congestion_wait(BLK_RW_ASYNC, HZ/50);
 	} while (1);
 }

@@ -43,6 +43,9 @@ xfs_param_t xfs_params = {
 	.fstrm_timer	= {	1,		30*100,		3600*100},
 	.eofb_timer	= {	1,		300,		3600*24},
 	.cowb_timer	= {	1,		1800,		3600*24},
+	.kmem_fail_dump_stack = {	0,		0,		3	},
+	.kmem_alloc_by_vmalloc = {	0,		1,		4	},
+	.kmem_alloc_large_dump_stack = {	0,		0,		1	},
 };
 
 struct xfs_globals xfs_globals = {

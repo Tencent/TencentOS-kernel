@@ -38,6 +38,7 @@ void arch_trigger_cpumask_backtrace(const cpumask_t *mask, bool exclude_self)
 	nmi_trigger_cpumask_backtrace(mask, exclude_self,
 				      nmi_raise_cpu_backtrace);
 }
+EXPORT_SYMBOL_GPL(arch_trigger_cpumask_backtrace);
 
 static int nmi_cpu_backtrace_handler(unsigned int cmd, struct pt_regs *regs)
 {
