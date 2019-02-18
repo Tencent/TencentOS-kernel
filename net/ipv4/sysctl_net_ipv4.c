@@ -582,13 +582,6 @@ static struct ctl_table ipv4_table[] = {
 		.proc_handler	= proc_tcp_congestion_control,
 	},
 	{
-		.procname	= "tcp_workaround_signed_windows",
-		.data		= &sysctl_tcp_workaround_signed_windows,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec
-	},
-	{
 		.procname	= "tcp_limit_output_bytes",
 		.data		= &sysctl_tcp_limit_output_bytes,
 		.maxlen		= sizeof(int),
@@ -1179,6 +1172,13 @@ static struct ctl_table ipv4_net_table[] = {
 	{
 		.procname       = "tcp_max_orphans",
 		.data           = &init_net.ipv4.sysctl_tcp_max_orphans,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec
+	},
+	{
+		.procname       = "tcp_workaround_signed_windows",
+		.data           = &init_net.ipv4.sysctl_tcp_workaround_signed_windows,
 		.maxlen         = sizeof(int),
 		.mode           = 0644,
 		.proc_handler   = proc_dointvec
