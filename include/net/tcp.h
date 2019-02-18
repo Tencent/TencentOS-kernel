@@ -245,7 +245,6 @@ extern int sysctl_tcp_retrans_collapse;
 extern int sysctl_tcp_stdurg;
 extern int sysctl_tcp_rfc1337;
 extern int sysctl_tcp_abort_on_overflow;
-extern int sysctl_tcp_max_orphans;
 extern int sysctl_tcp_fack;
 extern int sysctl_tcp_reordering;
 extern int sysctl_tcp_max_reordering;
@@ -323,10 +322,11 @@ static inline bool tcp_too_many_orphans(struct sock *sk, int shift)
 {
 	struct percpu_counter *ocp = sk->sk_prot->orphan_count;
 	int orphans = percpu_counter_read_positive(ocp);
+	struct net *net = sock_net(sk);
 
-	if (orphans << shift > sysctl_tcp_max_orphans) {
+	if (orphans << shift > net->ipv4.sysctl_tcp_max_orphans) {
 		orphans = percpu_counter_sum_positive(ocp);
-		if (orphans << shift > sysctl_tcp_max_orphans)
+		if (orphans << shift > net->ipv4.sysctl_tcp_max_orphans)
 			return true;
 	}
 	return false;

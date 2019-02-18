@@ -161,6 +161,7 @@ struct netns_ipv4 {
 #endif
 
 	int sysctl_tcp_no_delay_ack;
+	int sysctl_tcp_max_orphans;
 
 	struct fib_notifier_ops	*notifier_ops;
 	unsigned int	fib_seq;	/* protected by rtnl_mutex */

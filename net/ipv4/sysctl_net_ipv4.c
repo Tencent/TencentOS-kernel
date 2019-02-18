@@ -404,13 +404,6 @@ static struct ctl_table ipv4_table[] = {
 		.proc_handler	= proc_dointvec
 	},
 	{
-		.procname	= "tcp_max_orphans",
-		.data		= &sysctl_tcp_max_orphans,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec
-	},
-	{
 		.procname	= "tcp_fastopen",
 		.data		= &sysctl_tcp_fastopen,
 		.maxlen		= sizeof(int),
@@ -1181,6 +1174,13 @@ static struct ctl_table ipv4_net_table[] = {
 		.data       = &init_net.ipv4.sysctl_tcp_no_delay_ack,
 		.maxlen     = sizeof(int),
 		.mode       = 0644,
+		.proc_handler   = proc_dointvec
+	},
+	{
+		.procname       = "tcp_max_orphans",
+		.data           = &init_net.ipv4.sysctl_tcp_max_orphans,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
 		.proc_handler   = proc_dointvec
 	},
 	{ }

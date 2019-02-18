@@ -2510,6 +2510,7 @@ static int __net_init tcp_sk_init(struct net *net)
 	net->ipv4.sysctl_tcp_sack = 1;
 	net->ipv4.sysctl_tcp_window_scaling = 1;
 	net->ipv4.sysctl_tcp_timestamps = 1;
+	net->ipv4.sysctl_tcp_max_orphans = NR_FILE;
 
 	return 0;
 fail:
