@@ -121,6 +121,7 @@ static int __assign_irq_vector(int irq, struct apic_chip_data *d,
 	static int current_vector = FIRST_EXTERNAL_VECTOR + VECTOR_OFFSET_START;
 	static int current_offset = VECTOR_OFFSET_START % 16;
 	int cpu, vector;
+	bool assigned = false;
 
 	/*
 	 * If there is still a move in progress or the previous move has not
@@ -189,8 +190,12 @@ next:
 		/* Schedule the old vector for cleanup on all cpus */
 		if (d->cfg.vector)
 			cpumask_copy(d->old_domain, d->domain);
-		for_each_cpu(new_cpu, vector_searchmask)
+		for_each_cpu(new_cpu, vector_searchmask) {
 			per_cpu(vector_irq, new_cpu)[vector] = irq_to_desc(irq);
+			assigned = true;
+		}
+		if (!assigned)
+			pr_info("%s, irq not assigned to vector_irq\n", __func__);
 		goto update;
 
 next_cpu:
