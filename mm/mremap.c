@@ -277,7 +277,11 @@ static unsigned long move_vma(struct vm_area_struct *vma,
 	 * We'd prefer to avoid failure later on in do_munmap:
 	 * which may split one vma into three before unmapping.
 	 */
+#ifdef CONFIG_PID_NS
+	if (mm->map_count >= task_active_pid_ns(current)->max_map_count - 3)
+#else
 	if (mm->map_count >= sysctl_max_map_count - 3)
+#endif
 		return -ENOMEM;
 
 	/*

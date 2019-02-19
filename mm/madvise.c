@@ -147,7 +147,12 @@ static long madvise_behavior(struct vm_area_struct *vma,
 	*prev = vma;
 
 	if (start != vma->vm_start) {
-		if (unlikely(mm->map_count >= sysctl_max_map_count)) {
+#ifdef CONFIG_PID_NS
+		if (unlikely(mm->map_count >= task_active_pid_ns(current)->max_map_count))
+#else
+		if (unlikely(mm->map_count >= sysctl_max_map_count)) 
+#endif	
+		{
 			error = -ENOMEM;
 			goto out;
 		}
@@ -164,7 +169,12 @@ static long madvise_behavior(struct vm_area_struct *vma,
 	}
 
 	if (end != vma->vm_end) {
-		if (unlikely(mm->map_count >= sysctl_max_map_count)) {
+#ifdef CONFIG_PID_NS
+		if (unlikely(mm->map_count >= task_active_pid_ns(current)->max_map_count))
+#else
+		if (unlikely(mm->map_count >= sysctl_max_map_count)) 
+#endif
+		{
 			error = -ENOMEM;
 			goto out;
 		}

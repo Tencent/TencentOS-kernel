@@ -208,6 +208,9 @@ static int proc_taint(struct ctl_table *table, int write,
 			       void __user *buffer, size_t *lenp, loff_t *ppos);
 #endif
 
+static int proc_dointvec_max_map_count(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp, loff_t *ppos);
+
 #ifdef CONFIG_PRINTK
 static int proc_dointvec_minmax_sysadmin(struct ctl_table *table, int write,
 				void __user *buffer, size_t *lenp, loff_t *ppos);
@@ -1509,7 +1512,7 @@ static struct ctl_table vm_table[] = {
 		.data		= &sysctl_max_map_count,
 		.maxlen		= sizeof(sysctl_max_map_count),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
+		.proc_handler	= proc_dointvec_max_map_count,
 		.extra1		= &zero,
 	},
 #else
@@ -2521,6 +2524,15 @@ int proc_douintvec(struct ctl_table *table, int write,
 {
 	return do_proc_douintvec(table, write, buffer, lenp, ppos,
 				 do_proc_douintvec_conv, NULL);
+}
+
+static int proc_dointvec_max_map_count(struct ctl_table *table, int write,
+			void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+#ifdef CONFIG_PID_NS
+	table->data = &task_active_pid_ns(current)->max_map_count;
+#endif
+	return do_proc_dointvec(table, write, buffer, lenp, ppos, NULL, NULL);
 }
 
 /*
