@@ -58,6 +58,7 @@
 static struct kmem_cache *sigqueue_cachep;
 
 int print_fatal_signals __read_mostly;
+int print_fatal_signals_src_dst __read_mostly;
 
 static void __user *sig_handler(struct task_struct *t, int sig)
 {
@@ -1040,6 +1041,16 @@ static int __send_signal(int sig, struct siginfo *info, struct task_struct *t,
 	struct sigqueue *q;
 	int override_rlimit;
 	int ret = 0, result;
+
+	if (print_fatal_signals_src_dst && sig_kernel_coredump(sig)) {
+		printk(KERN_INFO "pid: %d, comm: %s try to send fatal sig: %d to pid: %d, comm: %s\n",
+			current->pid,
+			current->comm,
+			sig,
+			t->pid,
+			t->comm);
+		dump_stack();
+	}
 
 	assert_spin_locked(&t->sighand->siglock);
 

@@ -10,6 +10,7 @@ struct task_struct;
 
 /* for sysctl */
 extern int print_fatal_signals;
+extern int print_fatal_signals_src_dst;
 
 static inline void copy_siginfo(struct siginfo *to, struct siginfo *from)
 {
