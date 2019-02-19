@@ -45,6 +45,7 @@
 #include <linux/rcupdate.h>
 #include <linux/sched.h>
 #include <linux/sched/mm.h>
+#include <linux/sched/stat.h>
 #include <linux/sched/task.h>
 #include <linux/seq_file.h>
 #include <linux/security.h>
@@ -63,6 +64,9 @@
 #include <linux/mutex.h>
 #include <linux/cgroup.h>
 #include <linux/wait.h>
+#include <linux/kernel_stat.h>
+#include <linux/tick.h>
+#include <linux/cpufreq.h>
 
 DEFINE_STATIC_KEY_FALSE(cpusets_pre_enable_key);
 DEFINE_STATIC_KEY_FALSE(cpusets_enabled_key);
@@ -1828,6 +1832,293 @@ static s64 cpuset_read_s64(struct cgroup_subsys_state *css, struct cftype *cft)
 	return 0;
 }
 
+static u64 get_idle_time(int cpu)
+{
+	u64 idle, idle_time = -1ULL;
+
+	if (cpu_online(cpu))
+		idle_time = get_cpu_idle_time_us(cpu, NULL);
+
+	if (idle_time == -1ULL)
+		/* !NO_HZ or cpu offline so we can rely on cpustat.idle */
+		idle = kcpustat_cpu(cpu).cpustat[CPUTIME_IDLE];
+	else
+		idle = div_u64(idle_time, NSEC_PER_USEC);
+
+	return idle;
+}
+
+static u64 get_iowait_time(int cpu)
+{
+	u64 iowait, iowait_time = -1ULL;
+
+	if (cpu_online(cpu))
+		iowait_time = get_cpu_iowait_time_us(cpu, NULL);
+
+	if (iowait_time == -1ULL)
+		/* !NO_HZ or cpu offline so we can rely on cpustat.iowait */
+		iowait = kcpustat_cpu(cpu).cpustat[CPUTIME_IOWAIT];
+	else
+		iowait = div_u64(iowait_time, NSEC_PER_USEC);
+
+	return iowait;
+}
+
+
+static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
+{
+	struct cpuset *cs = css_cs(seq_css(sf));
+	int i, j;
+	u64 user, nice, system, idle, iowait, irq, softirq, steal;
+	u64 guest, guest_nice, n_ctx_switch, n_process, n_running, n_blocked;
+	u64 sum = 0;
+	u64 sum_softirq = 0;
+	unsigned int per_softirq_sums[NR_SOFTIRQS] = {0};
+	struct timespec boottime;
+
+	user = nice = system = idle = iowait =
+		irq = softirq = steal = 0;
+	guest = guest_nice = 0;
+	getboottime(&boottime);
+
+	for_each_cpu(i, cs->cpus_allowed) {
+		user += kcpustat_cpu(i).cpustat[CPUTIME_USER];
+		nice += kcpustat_cpu(i).cpustat[CPUTIME_NICE];
+		system += kcpustat_cpu(i).cpustat[CPUTIME_SYSTEM];
+		idle += get_idle_time(i);
+		iowait += get_iowait_time(i);
+		irq += kcpustat_cpu(i).cpustat[CPUTIME_IRQ];
+		softirq += kcpustat_cpu(i).cpustat[CPUTIME_SOFTIRQ];
+		steal += kcpustat_cpu(i).cpustat[CPUTIME_STEAL];
+		guest += kcpustat_cpu(i).cpustat[CPUTIME_GUEST];
+		guest_nice += kcpustat_cpu(i).cpustat[CPUTIME_GUEST_NICE];
+		sum += kstat_cpu_irqs_sum(i);
+		sum += arch_irq_stat_cpu(i);
+
+		for (j = 0; j < NR_SOFTIRQS; j++) {
+			unsigned int softirq_stat = kstat_softirqs_cpu(j, i);
+
+			per_softirq_sums[j] += softirq_stat;
+			sum_softirq += softirq_stat;
+		}
+	}
+	//sum += arch_irq_stat();
+
+	seq_put_decimal_ull(sf, "cpu  ", nsec_to_clock_t(user));
+	seq_put_decimal_ull(sf, " ", nsec_to_clock_t(nice));
+	seq_put_decimal_ull(sf, " ", nsec_to_clock_t(system));
+	seq_put_decimal_ull(sf, " ", nsec_to_clock_t(idle));
+	seq_put_decimal_ull(sf, " ", nsec_to_clock_t(iowait));
+	seq_put_decimal_ull(sf, " ", nsec_to_clock_t(irq));
+	seq_put_decimal_ull(sf, " ", nsec_to_clock_t(softirq));
+	seq_put_decimal_ull(sf, " ", nsec_to_clock_t(steal));
+	seq_put_decimal_ull(sf, " ", nsec_to_clock_t(guest));
+	seq_put_decimal_ull(sf, " ", nsec_to_clock_t(guest_nice));
+	seq_putc(sf, '\n');
+
+	j = 0;
+	for_each_cpu(i, cs->cpus_allowed) {
+		/* Copy values here to work around gcc-2.95.3, gcc-2.96 */
+		user = kcpustat_cpu(i).cpustat[CPUTIME_USER];
+		nice = kcpustat_cpu(i).cpustat[CPUTIME_NICE];
+		system = kcpustat_cpu(i).cpustat[CPUTIME_SYSTEM];
+		idle = get_idle_time(i);
+		iowait = get_iowait_time(i);
+		irq = kcpustat_cpu(i).cpustat[CPUTIME_IRQ];
+		softirq = kcpustat_cpu(i).cpustat[CPUTIME_SOFTIRQ];
+		steal = kcpustat_cpu(i).cpustat[CPUTIME_STEAL];
+		guest = kcpustat_cpu(i).cpustat[CPUTIME_GUEST];
+		guest_nice = kcpustat_cpu(i).cpustat[CPUTIME_GUEST_NICE];
+		seq_printf(sf, "cpu%d", i);
+		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(user));
+		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(nice));
+		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(system));
+		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(idle));
+		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(iowait));
+		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(irq));
+		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(softirq));
+		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(steal));
+		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(guest));
+		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(guest_nice));
+		seq_putc(sf, '\n');
+	}
+	seq_put_decimal_ull(sf, "intr ", (unsigned long long)sum);
+
+	/* sum again ? it could be updated? */
+	for_each_irq_nr(j) {
+		sum = 0;
+		for_each_cpu(i, cs->cpus_allowed)
+			sum += kstat_irqs_cpu(j, i);
+
+		seq_put_decimal_ull(sf, " ", sum);
+	}
+	
+	n_ctx_switch = 0;
+	n_process = 0;
+	n_running = 0;
+	n_blocked = 0;
+	for_each_cpu(i, cs->cpus_allowed) {
+		n_ctx_switch += nr_context_switches_cpu(i);
+		n_process += per_cpu(process_counts, i);
+		n_running += nr_running_cpu(i);
+		n_blocked += nr_iowait_cpu(i);
+	}
+	seq_printf(sf,
+		"\nctxt %llu\n"
+		"btime %llu\n"
+		"processes %llu\n"
+		"procs_running %llu\n"
+		"procs_blocked %llu\n",
+		n_ctx_switch,
+		(unsigned long long)boottime.tv_sec,
+		n_process,
+		n_running,
+		n_blocked);
+
+	seq_put_decimal_ull(sf, "softirq ", (unsigned long long)sum_softirq);
+
+	for (i = 0; i < NR_SOFTIRQS; i++)
+		seq_put_decimal_ull(sf, " ", per_softirq_sums[i]);
+	seq_putc(sf, '\n');
+
+	return 0;
+}
+
+/*
+ *	Get CPU information for use by the procfs.
+ */
+static void show_cpuinfo_core(struct seq_file *m, struct cpuinfo_x86 *c,
+			      unsigned int cpu)
+{
+#ifdef CONFIG_SMP
+	seq_printf(m, "physical id\t: %d\n", c->phys_proc_id);
+	seq_printf(m, "siblings\t: %d\n",
+		   cpumask_weight(topology_core_cpumask(cpu)));
+	seq_printf(m, "core id\t\t: %d\n", c->cpu_core_id);
+	seq_printf(m, "cpu cores\t: %d\n", c->booted_cores);
+	seq_printf(m, "apicid\t\t: %d\n", c->apicid);
+	seq_printf(m, "initial apicid\t: %d\n", c->initial_apicid);
+#endif
+}
+
+#ifdef CONFIG_X86_32
+static void show_cpuinfo_misc(struct seq_file *m, struct cpuinfo_x86 *c)
+{
+	seq_printf(m,
+		   "fdiv_bug\t: %s\n"
+		   "f00f_bug\t: %s\n"
+		   "coma_bug\t: %s\n"
+		   "fpu\t\t: %s\n"
+		   "fpu_exception\t: %s\n"
+		   "cpuid level\t: %d\n"
+		   "wp\t\t: yes\n",
+		   static_cpu_has_bug(X86_BUG_FDIV) ? "yes" : "no",
+		   static_cpu_has_bug(X86_BUG_F00F) ? "yes" : "no",
+		   static_cpu_has_bug(X86_BUG_COMA) ? "yes" : "no",
+		   static_cpu_has(X86_FEATURE_FPU) ? "yes" : "no",
+		   static_cpu_has(X86_FEATURE_FPU) ? "yes" : "no",
+		   c->cpuid_level);
+}
+#else
+static void show_cpuinfo_misc(struct seq_file *m, struct cpuinfo_x86 *c)
+{
+	seq_printf(m,
+		   "fpu\t\t: yes\n"
+		   "fpu_exception\t: yes\n"
+		   "cpuid level\t: %d\n"
+		   "wp\t\t: yes\n",
+		   c->cpuid_level);
+}
+#endif
+
+static int cpuset_cgroup_cpuinfo_show(struct seq_file *sf, void *v)
+{
+	int i, j;
+	struct cpuset *cs = css_cs(seq_css(sf));
+	struct cpuinfo_x86 *c;
+	unsigned int cpu;
+
+	for_each_cpu(j, cs->cpus_allowed)
+	{
+		c = &cpu_data(j);
+		cpu = c->cpu_index;
+		seq_printf(sf, "processor\t: %u\n"
+				"vendor_id\t: %s\n"
+				"cpu family\t: %d\n"
+				"model\t\t: %u\n"
+				"model name\t: %s\n",
+				cpu,
+				c->x86_vendor_id[0] ? c->x86_vendor_id : "unknown",
+				c->x86,
+				c->x86_model,
+				c->x86_model_id[0] ? c->x86_model_id : "unknown");
+
+		if (c->x86_stepping || c->cpuid_level >= 0)
+			seq_printf(sf, "stepping\t: %d\n", c->x86_stepping);
+		else
+			seq_printf(sf, "stepping\t: unknown\n");
+		if (c->microcode)
+			seq_printf(sf, "microcode\t: 0x%x\n", c->microcode);
+
+		if (cpu_has(c, X86_FEATURE_TSC)) {
+			unsigned int freq = cpufreq_quick_get(cpu);
+
+			if (!freq)
+				freq = cpu_khz;
+			seq_printf(sf, "cpu MHz\t\t: %u.%03u\n",
+					freq / 1000, (freq % 1000));
+		}
+
+		/* Cache size */
+		if (c->x86_cache_size >= 0)
+			seq_printf(sf, "cache size\t: %d KB\n", c->x86_cache_size);
+
+		show_cpuinfo_core(sf, c, cpu);
+		show_cpuinfo_misc(sf, c);
+
+		seq_printf(sf, "flags\t\t:");
+		for (i = 0; i < 32*NCAPINTS; i++)
+			if (cpu_has(c, i) && x86_cap_flags[i] != NULL)
+				seq_printf(sf, " %s", x86_cap_flags[i]);
+
+		seq_puts(sf, "\nbugs\t\t:");
+		for (i = 0; i < 32*NBUGINTS; i++) {
+			unsigned int bug_bit = 32*NCAPINTS + i;
+
+			if (cpu_has_bug(c, bug_bit) && x86_bug_flags[i])
+				seq_printf(sf, " %s", x86_bug_flags[i]);
+		}
+
+		seq_printf(sf, "\nbogomips\t: %lu.%02lu\n",
+				c->loops_per_jiffy/(500000/HZ),
+				(c->loops_per_jiffy/(5000/HZ)) % 100);
+
+#ifdef CONFIG_X86_64
+		if (c->x86_tlbsize > 0)
+			seq_printf(sf, "TLB size\t: %d 4K pages\n", c->x86_tlbsize);
+#endif
+		seq_printf(sf, "clflush size\t: %u\n", c->x86_clflush_size);
+		seq_printf(sf, "cache_alignment\t: %d\n", c->x86_cache_alignment);
+		seq_printf(sf, "address sizes\t: %u bits physical, %u bits virtual\n",
+				c->x86_phys_bits, c->x86_virt_bits);
+
+		seq_printf(sf, "power management:");
+		for (i = 0; i < 32; i++) {
+			if (c->x86_power & (1 << i)) {
+				if (i < ARRAY_SIZE(x86_power_flags) &&
+						x86_power_flags[i])
+					seq_printf(sf, "%s%s",
+							x86_power_flags[i][0] ? " " : "",
+							x86_power_flags[i]);
+				else
+					seq_printf(sf, " [%d]", i);
+			}
+		}
+
+		seq_puts(sf, "\n\n");
+	}
+	return 0;
+}
 
 /*
  * for the common functions, 'private' gives the type of file
@@ -1930,6 +2221,15 @@ static struct cftype files[] = {
 		.read_u64 = cpuset_read_u64,
 		.write_u64 = cpuset_write_u64,
 		.private = FILE_MEMORY_PRESSURE_ENABLED,
+	},
+	{
+		.name = "stat",
+		.seq_show = cpuset_cgroup_stat_show,
+	},
+
+	{
+		.name = "cpuinfo",
+		.seq_show = cpuset_cgroup_cpuinfo_show,
 	},
 
 	{ }	/* terminate */
