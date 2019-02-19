@@ -144,6 +144,8 @@ extern int proc_tgid_stat(struct seq_file *, struct pid_namespace *,
 			  struct pid *, struct task_struct *);
 extern int proc_pid_status(struct seq_file *, struct pid_namespace *,
 			   struct pid *, struct task_struct *);
+extern int host_pid_info(struct seq_file *, struct pid_namespace *,
+			  struct pid *, struct task_struct *);
 extern int proc_pid_statm(struct seq_file *, struct pid_namespace *,
 			  struct pid *, struct task_struct *);
 

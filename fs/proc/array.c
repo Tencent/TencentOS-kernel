@@ -91,10 +91,14 @@
 #include <linux/string_helpers.h>
 #include <linux/user_namespace.h>
 #include <linux/fs_struct.h>
+#include <linux/sched.h>
+#include <linux/sched/sysctl.h>
 
 #include <asm/pgtable.h>
 #include <asm/processor.h>
 #include "internal.h"
+
+unsigned int sysctl_watch_host_pid;
 
 static inline void task_name(struct seq_file *m, struct task_struct *p)
 {
@@ -165,6 +169,9 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
 	const struct cred *cred;
 	pid_t ppid, tpid = 0, tgid, ngid;
 	unsigned int max_fds = 0;
+#ifdef CONFIG_PID_NS
+	struct pid_namespace *current_pid_ns = task_active_pid_ns(current);
+#endif
 
 	rcu_read_lock();
 	ppid = pid_alive(p) ?
@@ -188,6 +195,21 @@ static inline void task_state(struct seq_file *m, struct pid_namespace *ns,
 	task_unlock(p);
 	rcu_read_unlock();
 
+#ifdef CONFIG_PID_NS
+	seq_puts(m, "NStgid:");
+	for (g = current_pid_ns->level; g <= pid->level; g++)
+		seq_printf(m, "\t%d",
+			task_tgid_nr_ns(p, pid->numbers[g].ns));
+	seq_puts(m, "\nNSpid:");
+	for (g = current_pid_ns->level; g <= pid->level; g++)
+		seq_printf(m, "\t%d",
+			task_pid_nr_ns(p, pid->numbers[g].ns));
+	seq_puts(m, "\nNSsid:");
+	for (g = current_pid_ns->level; g <= pid->level; g++)
+		seq_printf(m, "\t%d",
+			task_session_nr_ns(p, pid->numbers[g].ns));
+	seq_putc(m, '\n');
+#endif
 	seq_printf(m, "State:\t%s", get_task_state(p));
 
 	seq_put_decimal_ull(m, "\nTgid:\t", tgid);
@@ -389,6 +411,35 @@ static void task_cpus_allowed(struct seq_file *m, struct task_struct *task)
 		   cpumask_pr_args(&task->cpus_allowed));
 	seq_printf(m, "Cpus_allowed_list:\t%*pbl\n",
 		   cpumask_pr_args(&task->cpus_allowed));
+}
+
+int host_pid_info(struct seq_file *m, struct pid_namespace *ns,
+			struct pid *pid, struct task_struct *task)
+{
+	if (sysctl_watch_host_pid) {
+		struct task_struct *p = task;
+		int g;
+		struct pid_namespace *current_pid_ns = task_active_pid_ns(current);
+
+		task_name(m, task);
+		rcu_read_lock();
+		seq_puts(m, "NStgid:");
+		for (g = current_pid_ns->level; g >= 0; g--)
+			seq_printf(m, "\t%d",
+				task_tgid_nr_ns(p, pid->numbers[g].ns));
+		seq_puts(m, "\nNSpid:");
+		for (g = current_pid_ns->level; g >= 0; g--)
+			seq_printf(m, "\t%d",
+				task_pid_nr_ns(p, pid->numbers[g].ns));
+		seq_puts(m, "\nNSsid:");
+		for (g = current_pid_ns->level; g >= 0; g--)
+			seq_printf(m, "\t%d",
+				task_session_nr_ns(p, pid->numbers[g].ns));
+		rcu_read_unlock();
+		seq_putc(m, '\n');
+		return 0;
+	}
+	return 0;
 }
 
 int proc_pid_status(struct seq_file *m, struct pid_namespace *ns,
