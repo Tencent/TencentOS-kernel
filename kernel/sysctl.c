@@ -66,6 +66,7 @@
 #include <linux/kexec.h>
 #include <linux/bpf.h>
 #include <linux/mount.h>
+#include <linux/shield_mounts.h>
 
 #include <linux/uaccess.h>
 #include <asm/processor.h>
@@ -1269,6 +1270,13 @@ static struct ctl_table kern_table[] = {
 		.extra2		= &one,
 	},
 #endif
+	{
+		.procname	= "shield_mounts_max",
+		.data		= &sysctl_shield_mounts_max,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
 	{ }
 };
 

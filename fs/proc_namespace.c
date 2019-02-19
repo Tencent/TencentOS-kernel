@@ -12,6 +12,9 @@
 #include <linux/security.h>
 #include <linux/fs_struct.h>
 #include <linux/sched/task.h>
+#include <linux/pid_namespace.h>
+#include <linux/bitops.h>
+#include <linux/shield_mounts.h>
 
 #include "proc/internal.h" /* only for get_proc_task() in ->open() */
 
@@ -94,6 +97,39 @@ static void show_type(struct seq_file *m, struct super_block *sb)
 	}
 }
 
+static inline bool is_in_container(void)
+{
+	if (task_active_pid_ns(current)->level)
+		return true;
+	else
+		return false;
+}
+
+static bool mnt_need_shield(struct vfsmount *mnt)
+{
+	struct mount *r = real_mount(mnt);
+	struct path mnt_path = { .dentry = mnt->mnt_root, .mnt = mnt };
+	char *p;
+	bool ret = false;
+
+	char *buf = (char *)__get_free_pages(GFP_KERNEL, 0);
+	if (!buf)
+		goto out;
+
+	p = d_path(&mnt_path, buf, PAGE_SIZE);
+	if (IS_ERR(p)) {
+		ret = PTR_ERR(p);
+		goto out;
+	}
+
+	ret = is_mount_shielded(r->mnt_devname ? r->mnt_devname : "none", p);
+
+out:
+	if (buf)
+		free_pages((unsigned long) buf, 0);
+	return ret;
+}
+
 static int show_vfsmnt(struct seq_file *m, struct vfsmount *mnt)
 {
 	struct proc_mounts *p = m->private;
@@ -101,6 +137,9 @@ static int show_vfsmnt(struct seq_file *m, struct vfsmount *mnt)
 	struct path mnt_path = { .dentry = mnt->mnt_root, .mnt = mnt };
 	struct super_block *sb = mnt_path.dentry->d_sb;
 	int err;
+
+	if (is_in_container() && mnt_need_shield(mnt))
+		goto out;
 
 	if (sb->s_op->show_devname) {
 		err = sb->s_op->show_devname(m, mnt_path.dentry);
@@ -135,6 +174,9 @@ static int show_mountinfo(struct seq_file *m, struct vfsmount *mnt)
 	struct super_block *sb = mnt->mnt_sb;
 	struct path mnt_path = { .dentry = mnt->mnt_root, .mnt = mnt };
 	int err;
+
+	if (is_in_container() && mnt_need_shield(mnt))
+		goto out;
 
 	seq_printf(m, "%i %i %u:%u ", r->mnt_id, r->mnt_parent->mnt_id,
 		   MAJOR(sb->s_dev), MINOR(sb->s_dev));

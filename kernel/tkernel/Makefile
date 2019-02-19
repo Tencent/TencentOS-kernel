@@ -1,1 +1,1 @@
-obj-y     = base.o netbind.o
+obj-y     = base.o netbind.o shield_mounts.o
