@@ -1224,6 +1224,8 @@ const char * const vmstat_text[] = {
 };
 #endif /* CONFIG_PROC_FS || CONFIG_SYSFS || CONFIG_NUMA */
 
+unsigned int vmstat_text_size = ARRAY_SIZE(vmstat_text);
+
 #if (defined(CONFIG_DEBUG_FS) && defined(CONFIG_COMPACTION)) || \
      defined(CONFIG_PROC_FS)
 static void *frag_start(struct seq_file *m, loff_t *pos)
