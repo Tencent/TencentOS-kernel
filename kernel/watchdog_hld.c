@@ -111,6 +111,8 @@ static void watchdog_overflow_callback(struct perf_event *event,
 				       struct perf_sample_data *data,
 				       struct pt_regs *regs)
 {
+	char sym[KSYM_SYMBOL_LEN];
+
 	/* Ensure the watchdog never gets throttled */
 	event->hw.interrupts = 0;
 
@@ -135,7 +137,11 @@ static void watchdog_overflow_callback(struct perf_event *event,
 		if (__this_cpu_read(hard_watchdog_warn) == true)
 			return;
 
-		pr_emerg("Watchdog detected hard LOCKUP on cpu %d", this_cpu);
+		sym[0] = 0;
+		sprint_symbol(sym, regs->ip);
+
+		pr_emerg("Watchdog detected hard LOCKUP on cpu %d, symbol: %s", 
+			this_cpu, sym);
 		print_modules();
 		print_irqtrace_events(current);
 		if (regs)
