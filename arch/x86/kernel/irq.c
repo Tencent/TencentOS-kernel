@@ -11,6 +11,7 @@
 #include <linux/delay.h>
 #include <linux/export.h>
 #include <linux/irq.h>
+#include <linux/err.h>
 
 #include <asm/apic.h>
 #include <asm/io_apic.h>
@@ -216,9 +217,11 @@ u64 arch_irq_stat(void)
 __visible unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 {
 	struct pt_regs *old_regs = set_irq_regs(regs);
-	struct irq_desc * desc;
+	struct irq_desc * desc, *desc2;
 	/* high bit used in ret_from_ code  */
 	unsigned vector = ~regs->orig_ax;
+	int i;
+	bool exist;
 
 	entering_irq();
 
@@ -231,9 +234,23 @@ __visible unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 		ack_APIC_irq();
 
 		if (desc != VECTOR_RETRIGGERED) {
-			pr_emerg_ratelimited("%s: %d.%d No irq handler for vector\n",
-					     __func__, smp_processor_id(),
-					     vector);
+			exist = false;
+			for (i = 0; i < num_online_cpus(); i++) {
+				desc2 = per_cpu(vector_irq, i)[vector];
+				if (!IS_ERR_OR_NULL(desc2)) {
+					exist = true;
+					break;
+				}
+			}
+
+			if (exist)
+				pr_emerg_ratelimited("%s: %d.%d No irq handler for vector, but cpu %d has irq for it\n",
+							__func__, smp_processor_id(),
+							vector, i);
+			else
+				pr_emerg_ratelimited("%s: %d.%d No irq handler for vector\n",
+							__func__, smp_processor_id(),
+							vector);
 		} else {
 			__this_cpu_write(vector_irq[vector], VECTOR_UNUSED);
 		}
