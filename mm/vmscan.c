@@ -155,6 +155,9 @@ unsigned long vm_pagecache_limit_reclaim_pages = 0;
 int vm_pagecache_limit_ratio __read_mostly = 0;
 int vm_pagecache_limit_reclaim_ratio __read_mostly = 0;
 unsigned int vm_pagecache_ignore_dirty __read_mostly = 1;
+unsigned int vm_pagecache_limit_async __read_mostly = 0;
+static struct task_struct *kpclimitd = NULL;
+static bool kpclimitd_context = false;
 /*
  * The total number of pages which are beyond the high watermark within all
  * zones.
@@ -3762,6 +3765,7 @@ static void pagecache_reclaim_unlock_zone(struct zone *zone)
  * So this is basically a congestion wait queue for them.
  */
 DECLARE_WAIT_QUEUE_HEAD(pagecache_reclaim_wq);
+DECLARE_WAIT_QUEUE_HEAD(kpagecache_limitd_wq);
 
 /*
  * Similar to shrink_zone but it has a different consumer - pagecache limit
@@ -3898,7 +3902,8 @@ static int shrink_all_zones(unsigned long nr_pages, int pass,
 	 * do it if there is nothing to be done.
 	 */
 	if (!nr_locked_zones) {
-		schedule();
+		if (!kpclimitd_context)
+			schedule();
 		finish_wait(&pagecache_reclaim_wq, &wait);
 		goto out;
 	}
@@ -4018,9 +4023,46 @@ out:
 	current->reclaim_state = old_rs;
 }
 
+static int kpagecache_limitd(void *data)
+{
+	DEFINE_WAIT(wait);
+	kpclimitd_context = true;
+
+	/*
+	 * make sure all work threads woken up, when switch to async mode
+	*/
+	if (waitqueue_active(&pagecache_reclaim_wq))
+		wake_up_interruptible(&pagecache_reclaim_wq);
+
+	for ( ; ; ) {
+		__shrink_page_cache(GFP_KERNEL);
+		prepare_to_wait(&kpagecache_limitd_wq, &wait, TASK_INTERRUPTIBLE);
+
+		if (!kthread_should_stop())
+			schedule();
+		else {
+			finish_wait(&kpagecache_limitd_wq, &wait);
+			break;
+		}
+		finish_wait(&kpagecache_limitd_wq, &wait);
+	}
+	kpclimitd_context = false;
+	return 0;
+}
+
+static void wakeup_kpclimitd(gfp_t mask)
+{
+	if (!waitqueue_active(&kpagecache_limitd_wq))
+		return;
+	wake_up_interruptible(&kpagecache_limitd_wq);
+}
+
 void shrink_page_cache(gfp_t mask, struct page *page)
 {
-	__shrink_page_cache(mask);
+	if (0 == vm_pagecache_limit_async)
+		__shrink_page_cache(mask);
+	else
+		wakeup_kpclimitd(mask);
 }
 
 /* It's optimal to keep kswapds on the same CPUs as their memory, but
@@ -4096,6 +4138,31 @@ static int __init kswapd_init(void)
 }
 
 module_init(kswapd_init)
+
+int kpagecache_limitd_run(void)
+{
+	int ret = 0;
+
+	if (kpclimitd)
+		return 0;
+
+	kpclimitd = kthread_run(kpagecache_limitd, NULL, "kpclimitd");
+	if (IS_ERR(kpclimitd)) {
+		pr_err("Failed to start kpagecache_limitd thread\n");
+		ret = PTR_ERR(kpclimitd);
+		kpclimitd = NULL;
+	}
+	return ret;
+
+}
+
+void kpagecache_limitd_stop(void)
+{
+	if (kpclimitd) {
+		kthread_stop(kpclimitd);
+		kpclimitd = NULL;
+	}
+}
 
 #ifdef CONFIG_NUMA
 /*

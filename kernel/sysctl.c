@@ -1280,11 +1280,14 @@ static struct ctl_table kern_table[] = {
 	{ }
 };
 
-int pc_limit_proc_dointvec(struct ctl_table *table, int write,
+static int pc_limit_proc_dointvec(struct ctl_table *table, int write,
 		     void __user *buffer, size_t *lenp, loff_t *ppos);
 
-int pc_reclaim_limit_proc_dointvec(struct ctl_table *table, int write,
+static int pc_reclaim_limit_proc_dointvec(struct ctl_table *table, int write,
 		     void __user *buffer, size_t *lenp, loff_t *ppos);
+
+static int pc_limit_async_handler(struct ctl_table *table, int write,
+ 		     void __user *buffer, size_t *lenp, loff_t *ppos);
 
 static struct ctl_table vm_table[] = {
 	{
@@ -1436,6 +1439,13 @@ static struct ctl_table vm_table[] = {
 		.maxlen		= sizeof(vm_pagecache_ignore_dirty),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
+	},
+	{
+		.procname	= "pagecache_limit_async",
+		.data		= &vm_pagecache_limit_async,
+		.maxlen		= sizeof(vm_pagecache_limit_async),
+		.mode		= 0644,
+		.proc_handler	= &pc_limit_async_handler,
 	},
 #ifdef CONFIG_HUGETLB_PAGE
 	{
@@ -2401,7 +2411,7 @@ int setup_pagecache_limit(void)
 	return 0;
 }
 
-int pc_limit_proc_dointvec(struct ctl_table *table, int write,
+static int pc_limit_proc_dointvec(struct ctl_table *table, int write,
 		     void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	int ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
@@ -2410,20 +2420,43 @@ int pc_limit_proc_dointvec(struct ctl_table *table, int write,
 	return ret;
 }
 
-int pc_reclaim_limit_proc_dointvec(struct ctl_table *table, int write,
+static int pc_reclaim_limit_proc_dointvec(struct ctl_table *table, int write,
 		     void __user *buffer, size_t *lenp, loff_t *ppos)
 {
+	int pre_reclaim_ratio = vm_pagecache_limit_reclaim_ratio;
+	int ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+
 	if (write && vm_pagecache_limit_ratio == 0)
 		return -EINVAL;
 
-	int pre_reclaim_ratio = vm_pagecache_limit_reclaim_ratio;
-	int ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
 	if (write && !ret) {
 		if (vm_pagecache_limit_reclaim_ratio - vm_pagecache_limit_ratio < ADDITIONAL_RECLAIM_RATIO) {
 			vm_pagecache_limit_reclaim_ratio = pre_reclaim_ratio;
 			return -EINVAL;
 		}
 		vm_pagecache_limit_reclaim_pages = vm_pagecache_limit_reclaim_ratio * totalram_pages / 100;
+	}
+	return ret;
+}
+
+static int pc_limit_async_handler(struct ctl_table *table, int write,
+		     void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+
+	if (write && vm_pagecache_limit_ratio == 0)
+		return -EINVAL;
+
+	if (write && !ret) {
+		if (vm_pagecache_limit_async > 0) {
+			if (kpagecache_limitd_run()) {
+				vm_pagecache_limit_async = 0;
+				return -EINVAL;
+			}
+		}
+		else {
+			kpagecache_limitd_stop();
+		}
 	}
 	return ret;
 }

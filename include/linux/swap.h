@@ -364,6 +364,9 @@ extern unsigned long vm_pagecache_limit_reclaim_pages;
 extern int vm_pagecache_limit_ratio;
 extern int vm_pagecache_limit_reclaim_ratio;
 extern unsigned int vm_pagecache_ignore_dirty;
+extern unsigned int vm_pagecache_limit_async;
+extern int kpagecache_limitd_run(void);
+extern void kpagecache_limitd_stop(void);
 extern int remove_mapping(struct address_space *mapping, struct page *page);
 extern unsigned long vm_total_pages;
 
