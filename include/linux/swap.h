@@ -356,6 +356,14 @@ extern unsigned long mem_cgroup_shrink_node(struct mem_cgroup *mem,
 						unsigned long *nr_scanned);
 extern unsigned long shrink_all_memory(unsigned long nr_pages);
 extern int vm_swappiness;
+#define ADDITIONAL_RECLAIM_RATIO 2
+extern unsigned long pagecache_over_limit(void);
+extern void shrink_page_cache(gfp_t mask, struct page *page);
+extern unsigned long vm_pagecache_limit_pages;
+extern unsigned long vm_pagecache_limit_reclaim_pages;
+extern int vm_pagecache_limit_ratio;
+extern int vm_pagecache_limit_reclaim_ratio;
+extern unsigned int vm_pagecache_ignore_dirty;
 extern int remove_mapping(struct address_space *mapping, struct page *page);
 extern unsigned long vm_total_pages;
 

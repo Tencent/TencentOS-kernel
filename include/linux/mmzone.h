@@ -375,6 +375,14 @@ struct zone {
 	 */
 	long lowmem_reserve[MAX_NR_ZONES];
 
+ 	/*
+	 * This atomic counter is set when there is pagecache limit
+	 * reclaim going on on this particular zone. Other potential
+	 * reclaiers should back off to prevent from heavy lru_lock
+	 * bouncing.
+	 */
+	atomic_t		pagecache_reclaim;
+
 #ifdef CONFIG_NUMA
 	int node;
 #endif

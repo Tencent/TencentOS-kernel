@@ -7692,6 +7692,49 @@ void zone_pcp_reset(struct zone *zone)
 	local_irq_restore(flags);
 }
 
+/* Returns a number that's positive if the pagecache is above
+ * the set limit*/
+unsigned long pagecache_over_limit()
+{
+	unsigned long should_reclaim_pages = 0;
+	unsigned long overlimit_pages = 0;
+	unsigned long delta_pages = 0;
+	/* We only want to limit unmapped and non-shmem page cache pages;
+	 * normally all shmem pages are mapped as well*/
+	unsigned long pgcache_pages = global_node_page_state(NR_FILE_PAGES)
+				    - max_t(unsigned long,
+					    global_node_page_state(NR_FILE_MAPPED),
+					    global_node_page_state(NR_SHMEM));
+	/* We certainly can't free more than what's on the LRU lists
+	 * minus the dirty ones*/
+	unsigned long pgcache_lru_pages = global_node_page_state(NR_ACTIVE_FILE)
+				        + global_node_page_state(NR_INACTIVE_FILE);
+
+	if (vm_pagecache_ignore_dirty != 0)
+		pgcache_lru_pages -= global_node_page_state(NR_FILE_DIRTY)
+				     /vm_pagecache_ignore_dirty;
+	/* Paranoia */
+	if (unlikely(pgcache_lru_pages > LONG_MAX))
+		return 0;
+
+	/* Limit it to 94% of LRU (not all there might be unmapped) */
+	pgcache_lru_pages -= pgcache_lru_pages/16;
+	pgcache_pages = min_t(unsigned long, pgcache_pages, pgcache_lru_pages);
+
+	/*
+	*delta_pages: we should reclaim at least 2% more pages than overlimit_page, values get from
+	*		/proc/vm/pagecache_limit_reclaim_pages
+	*should_reclaim_pages: the real pages we will reclaim, but it should less than pgcache_pages;
+	*/
+	if (pgcache_pages > vm_pagecache_limit_pages) {
+		overlimit_pages = pgcache_pages - vm_pagecache_limit_pages;
+		delta_pages = vm_pagecache_limit_reclaim_pages - vm_pagecache_limit_pages;
+		should_reclaim_pages = min_t(unsigned long, delta_pages, vm_pagecache_limit_pages) +  overlimit_pages;
+		return should_reclaim_pages;
+	}
+	return 0;
+}
+
 #ifdef CONFIG_MEMORY_HOTREMOVE
 /*
  * All pages in the range must be in a single zone and isolated

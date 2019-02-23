@@ -1,0 +1,49 @@
+Functionality:
+-------------
+The patch introduces three new tunables in the proc filesystem:
+
+/proc/sys/vm/pagecache_limit_ratio
+
+This tunable sets a limit ratio of totalram to the unmapped pages in the pagecache.
+If zero, it wil disable pagecache limit function. and it will work if non-zero.
+
+Examples:
+echo 50 >/proc/sys/vm/pagecache_limit_ratio
+
+This sets a baseline limits for the page cache (not the buffer cache!) of 50% totalram.
+As we only consider pagecache pages that are unmapped, currently mapped pages (files that are mmap'ed such as e.g. binaries and libraries as well as SysV shared memory) are not limited by this.
+
+/proc/sys/vm/pagecache_limit_reclaim_ratio
+
+This sets the real reclaim ratio of totalram, it defaults 2%(ADDITIONAL_RECLAIM_RATIO) larger than pagecache_limit_ratio. pagecache_limit_ratio is the check ratio of pagecache, and we will reclaim some more than this, in case of reclaim pagecache frequently.
+
+/proc/sys/vm/pagecache_limit_ignore_dirty
+
+The default for this setting is 1; this means that we don't consider dirty memory to be part of the limited pagecache, as we can not easily free up dirty memory (we'd need to do writes for this). By setting this to 0, we actually consider dirty (unampped) memory to be freeable and do a third pass in shrink_page_cache() where we schedule the pages for writeout. Values larger than 1 are also possible and result in a fraction of the dirty pages to be considered non-freeable.
+
+
+
+
+How it works:
+------------
+The heart of this patch is a new function called shrink_page_cache(). It is called from balance_pgdat (which is the worker for kswapd) or add_to_page_cache if the pagecache is above the limit.
+The balance_pgdat() is also called in __alloc_pages_slowpath.
+
+shrink_page_cache() calculates the nr of pages the cache is over its limit. It reduces this number then shrinks the pagecache (using the Kernel LRUs).
+
+shrink_page_cache does several passes:
+- Just reclaiming from inactive pagecache memory.
+  This is fast -- but it might not find enough free pages; if that happens,
+  the second pass will happen
+- In the second pass, pages from active list will also be considered.
+- The third pass will only happen if pagecacahe_limig_ignore-dirty is not 1.
+  In that case, the third pass is a repetition of the second pass, but this
+  time we allow pages to be written out.
+
+In all passes, only unmapped pages will be considered.
+
+
+Foreground vs. background shrinking:
+-----------------------------------
+
+Usually, the Linux kernel reclaims its memory using the kernel thread kswapd. It reclaims memory in the background. If it can't reclaim memory fast enough, it retries with higher priority and if this still doesn't succeed it uses a direct reclaim path.
