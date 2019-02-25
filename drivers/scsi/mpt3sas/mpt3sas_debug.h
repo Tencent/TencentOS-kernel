@@ -2,9 +2,9 @@
  * Logging Support for MPT (Message Passing Technology) based controllers
  *
  * This code is based on drivers/scsi/mpt3sas/mpt3sas_debug.c
- * Copyright (C) 2012-2014  LSI Corporation
- * Copyright (C) 2013-2014 Avago Technologies
- *  (mailto: MPT-FusionLinux.pdl@avagotech.com)
+ * Copyright (C) 2013-2016  LSI Corporation
+ * Copyright (C) 2013-2016  Avago Technologies
+ *  (mailto:MPT-FusionLinux.pdl@avagotech.com)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -54,19 +54,19 @@
 #define MPT_DEBUG_EXIT			0x00000040
 #define MPT_DEBUG_FAIL			0x00000080
 #define MPT_DEBUG_TM			0x00000100
-#define MPT_DEBUG_REPLY		0x00000200
+#define MPT_DEBUG_REPLY			0x00000200
 #define MPT_DEBUG_HANDSHAKE		0x00000400
 #define MPT_DEBUG_CONFIG		0x00000800
 #define MPT_DEBUG_DL			0x00001000
-#define MPT_DEBUG_RESET		0x00002000
+#define MPT_DEBUG_RESET			0x00002000
 #define MPT_DEBUG_SCSI			0x00004000
-#define MPT_DEBUG_IOCTL		0x00008000
+#define MPT_DEBUG_IOCTL			0x00008000
+#define MPT_DEBUG_CSMISAS		0x00010000
 #define MPT_DEBUG_SAS			0x00020000
 #define MPT_DEBUG_TRANSPORT		0x00040000
-#define MPT_DEBUG_TASK_SET_FULL	0x00080000
+#define MPT_DEBUG_TASK_SET_FULL		0x00080000
 
 #define MPT_DEBUG_TRIGGER_DIAG		0x00200000
-
 
 #define MPT_CHECK_LOGGING(IOC, CMD, BITS)			\
 {								\
@@ -123,6 +123,9 @@
 #define dctlprintk(IOC, CMD)			\
 	MPT_CHECK_LOGGING(IOC, CMD, MPT_DEBUG_IOCTL)
 
+#define dcsmisasprintk(IOC, CMD)                \
+	MPT_CHECK_LOGGING(IOC, CMD, MPT_DEBUG_CSMISAS)
+
 #define dsasprintk(IOC, CMD)			\
 	MPT_CHECK_LOGGING(IOC, CMD, MPT_DEBUG_SAS)
 
@@ -138,13 +141,15 @@
 #define dtransportprintk(IOC, CMD)			\
 	MPT_CHECK_LOGGING(IOC, CMD, MPT_DEBUG_TRANSPORT)
 
+#define dTMprintk(IOC, CMD)			\
+	MPT_CHECK_LOGGING(IOC, CMD, MPT_DEBUG_TARGET_MODE)
+
 #define dTriggerDiagPrintk(IOC, CMD)			\
 	MPT_CHECK_LOGGING(IOC, CMD, MPT_DEBUG_TRIGGER_DIAG)
 
-
+	
 
 /* inline functions for dumping debug data*/
-
 /**
  * _debug_dump_mf - print message frame contents
  * @mpi_request: pointer to message frame
@@ -156,13 +161,13 @@ _debug_dump_mf(void *mpi_request, int sz)
 	int i;
 	__le32 *mfp = (__le32 *)mpi_request;
 
-	pr_info("mf:\n\t");
+	printk(KERN_INFO "mf:\n\t");
 	for (i = 0; i < sz; i++) {
 		if (i && ((i % 8) == 0))
-			pr_info("\n\t");
-		pr_info("%08x ", le32_to_cpu(mfp[i]));
+			printk("\n\t");
+		printk("%08x ", le32_to_cpu(mfp[i]));
 	}
-	pr_info("\n");
+	printk("\n");
 }
 /**
  * _debug_dump_reply - print message frame contents
@@ -175,13 +180,13 @@ _debug_dump_reply(void *mpi_request, int sz)
 	int i;
 	__le32 *mfp = (__le32 *)mpi_request;
 
-	pr_info("reply:\n\t");
+	printk(KERN_INFO "reply:\n\t");
 	for (i = 0; i < sz; i++) {
 		if (i && ((i % 8) == 0))
-			pr_info("\n\t");
-		pr_info("%08x ", le32_to_cpu(mfp[i]));
+			printk("\n\t");
+		printk("%08x ", le32_to_cpu(mfp[i]));
 	}
-	pr_info("\n");
+	printk("\n");
 }
 /**
  * _debug_dump_config - print config page contents
@@ -194,13 +199,13 @@ _debug_dump_config(void *mpi_request, int sz)
 	int i;
 	__le32 *mfp = (__le32 *)mpi_request;
 
-	pr_info("config:\n\t");
+	printk(KERN_INFO "config:\n\t");
 	for (i = 0; i < sz; i++) {
 		if (i && ((i % 8) == 0))
-			pr_info("\n\t");
-		pr_info("%08x ", le32_to_cpu(mfp[i]));
+			printk("\n\t");
+		printk("%08x ", le32_to_cpu(mfp[i]));
 	}
-	pr_info("\n");
+	printk("\n");
 }
 
 #endif /* MPT3SAS_DEBUG_H_INCLUDED */

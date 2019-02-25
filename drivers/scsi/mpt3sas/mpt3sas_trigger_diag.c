@@ -1,11 +1,11 @@
 /*
- * This module provides common API to set Diagnostic trigger for MPT
+ * This module provides common API to set Diagnostic trigger for MPT 
  * (Message Passing Technology) based controllers
  *
  * This code is based on drivers/scsi/mpt3sas/mpt3sas_trigger_diag.c
- * Copyright (C) 2012-2014  LSI Corporation
- * Copyright (C) 2013-2014 Avago Technologies
- *  (mailto: MPT-FusionLinux.pdl@avagotech.com)
+ * Copyright (C) 2013-2016  LSI Corporation
+ * Copyright (C) 2013-2016  Avago Technologies
+ *  (mailto:MPT-FusionLinux.pdl@avagotech.com)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -43,6 +43,7 @@
  * USA.
  */
 
+#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/errno.h>
@@ -55,7 +56,7 @@
 #include <linux/poll.h>
 
 #include <linux/io.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 #include "mpt3sas_base.h"
 
@@ -72,7 +73,7 @@ _mpt3sas_raise_sigio(struct MPT3SAS_ADAPTER *ioc,
 	u16 sz, event_data_sz;
 	unsigned long flags;
 
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT "%s: enter\n",
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: enter\n",
 	    ioc->name, __func__));
 
 	sz = offsetof(Mpi2EventNotificationReply_t, EventData) +
@@ -85,22 +86,20 @@ _mpt3sas_raise_sigio(struct MPT3SAS_ADAPTER *ioc,
 	mpi_reply->EventDataLength = cpu_to_le16(event_data_sz);
 	memcpy(&mpi_reply->EventData, event_data,
 	    sizeof(struct SL_WH_TRIGGERS_EVENT_DATA_T));
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT
-		"%s: add to driver event log\n",
-		ioc->name, __func__));
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: add to driver "
+	    "event log\n", ioc->name, __func__));
 	mpt3sas_ctl_add_to_event_log(ioc, mpi_reply);
 	kfree(mpi_reply);
  out:
 
 	/* clearing the diag_trigger_active flag */
 	spin_lock_irqsave(&ioc->diag_trigger_lock, flags);
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT
-		"%s: clearing diag_trigger_active flag\n",
-		ioc->name, __func__));
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: clearing "
+	    "diag_trigger_active flag\n", ioc->name, __func__));
 	ioc->diag_trigger_active = 0;
 	spin_unlock_irqrestore(&ioc->diag_trigger_lock, flags);
 
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT "%s: exit\n", ioc->name,
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: exit\n", ioc->name,
 	    __func__));
 }
 
@@ -115,21 +114,21 @@ mpt3sas_process_trigger_data(struct MPT3SAS_ADAPTER *ioc,
 {
 	u8 issue_reset = 0;
 
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT "%s: enter\n",
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: enter\n",
 	    ioc->name, __func__));
 
 	/* release the diag buffer trace */
 	if ((ioc->diag_buffer_status[MPI2_DIAG_BUF_TYPE_TRACE] &
 	    MPT3_DIAG_BUFFER_IS_RELEASED) == 0) {
-		dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT
-		"%s: release trace diag buffer\n", ioc->name, __func__));
+		dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: release "
+		    "trace diag buffer\n", ioc->name, __func__));
 		mpt3sas_send_diag_release(ioc, MPI2_DIAG_BUF_TYPE_TRACE,
 		    &issue_reset);
 	}
 
 	_mpt3sas_raise_sigio(ioc, event_data);
 
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT "%s: exit\n", ioc->name,
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: exit\n", ioc->name,
 	    __func__));
 }
 
@@ -168,9 +167,9 @@ mpt3sas_trigger_master(struct MPT3SAS_ADAPTER *ioc, u32 trigger_bitmask)
 
  by_pass_checks:
 
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT
-		"%s: enter - trigger_bitmask = 0x%08x\n",
-		ioc->name, __func__, trigger_bitmask));
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: enter - "
+	    "trigger_bitmask = 0x%08x\n", ioc->name, __func__,
+	    trigger_bitmask));
 
 	/* don't send trigger if an trigger is currently active */
 	if (ioc->diag_trigger_active) {
@@ -182,9 +181,8 @@ mpt3sas_trigger_master(struct MPT3SAS_ADAPTER *ioc, u32 trigger_bitmask)
 	if (ioc->diag_trigger_master.MasterData & trigger_bitmask) {
 		found_match = 1;
 		ioc->diag_trigger_active = 1;
-		dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT
-		"%s: setting diag_trigger_active flag\n",
-		ioc->name, __func__));
+		dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: setting "
+		"diag_trigger_active flag\n", ioc->name, __func__));
 	}
 	spin_unlock_irqrestore(&ioc->diag_trigger_lock, flags);
 
@@ -202,7 +200,7 @@ mpt3sas_trigger_master(struct MPT3SAS_ADAPTER *ioc, u32 trigger_bitmask)
 		mpt3sas_send_trigger_data_event(ioc, &event_data);
 
  out:
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT "%s: exit\n", ioc->name,
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: exit\n", ioc->name,
 	    __func__));
 }
 
@@ -239,9 +237,9 @@ mpt3sas_trigger_event(struct MPT3SAS_ADAPTER *ioc, u16 event,
 		return;
 	}
 
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT
-		"%s: enter - event = 0x%04x, log_entry_qualifier = 0x%04x\n",
-		ioc->name, __func__, event, log_entry_qualifier));
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: enter - "
+	    "event = 0x%04x, log_entry_qualifier = 0x%04x\n", ioc->name,
+	    __func__, event, log_entry_qualifier));
 
 	/* don't send trigger if an trigger is currently active */
 	if (ioc->diag_trigger_active) {
@@ -263,25 +261,23 @@ mpt3sas_trigger_event(struct MPT3SAS_ADAPTER *ioc, u16 event,
 		}
 		found_match = 1;
 		ioc->diag_trigger_active = 1;
-		dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT
-			"%s: setting diag_trigger_active flag\n",
-			ioc->name, __func__));
+		dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: setting "
+		    "diag_trigger_active flag\n", ioc->name, __func__));
 	}
 	spin_unlock_irqrestore(&ioc->diag_trigger_lock, flags);
 
 	if (!found_match)
 		goto out;
 
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT
-		"%s: setting diag_trigger_active flag\n",
-		ioc->name, __func__));
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: setting "
+	    "diag_trigger_active flag\n", ioc->name, __func__));
 	memset(&event_data, 0, sizeof(struct SL_WH_TRIGGERS_EVENT_DATA_T));
 	event_data.trigger_type = MPT3SAS_TRIGGER_EVENT;
 	event_data.u.event.EventValue = event;
 	event_data.u.event.LogEntryQualifier = log_entry_qualifier;
 	mpt3sas_send_trigger_data_event(ioc, &event_data);
  out:
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT "%s: exit\n", ioc->name,
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: exit\n", ioc->name,
 	    __func__));
 }
 
@@ -319,9 +315,9 @@ mpt3sas_trigger_scsi(struct MPT3SAS_ADAPTER *ioc, u8 sense_key, u8 asc,
 		return;
 	}
 
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT
-		"%s: enter - sense_key = 0x%02x, asc = 0x%02x, ascq = 0x%02x\n",
-		ioc->name, __func__, sense_key, asc, ascq));
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: enter - "
+	    "sense_key = 0x%02x, asc = 0x%02x, ascq = 0x%02x\n", ioc->name,
+	    __func__, sense_key, asc, ascq));
 
 	/* don't send trigger if an trigger is currently active */
 	if (ioc->diag_trigger_active) {
@@ -347,9 +343,8 @@ mpt3sas_trigger_scsi(struct MPT3SAS_ADAPTER *ioc, u8 sense_key, u8 asc,
 	if (!found_match)
 		goto out;
 
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT
-		"%s: setting diag_trigger_active flag\n",
-		ioc->name, __func__));
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: setting "
+	    "diag_trigger_active flag\n", ioc->name, __func__));
 	memset(&event_data, 0, sizeof(struct SL_WH_TRIGGERS_EVENT_DATA_T));
 	event_data.trigger_type = MPT3SAS_TRIGGER_SCSI;
 	event_data.u.scsi.SenseKey = sense_key;
@@ -357,7 +352,7 @@ mpt3sas_trigger_scsi(struct MPT3SAS_ADAPTER *ioc, u8 sense_key, u8 asc,
 	event_data.u.scsi.ASCQ = ascq;
 	mpt3sas_send_trigger_data_event(ioc, &event_data);
  out:
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT "%s: exit\n", ioc->name,
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: exit\n", ioc->name,
 	    __func__));
 }
 
@@ -393,9 +388,9 @@ mpt3sas_trigger_mpi(struct MPT3SAS_ADAPTER *ioc, u16 ioc_status, u32 loginfo)
 		return;
 	}
 
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT
-		"%s: enter - ioc_status = 0x%04x, loginfo = 0x%08x\n",
-		ioc->name, __func__, ioc_status, loginfo));
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: enter - "
+	    "ioc_status = 0x%04x, loginfo = 0x%08x\n", ioc->name, __func__,
+	    ioc_status, loginfo));
 
 	/* don't send trigger if an trigger is currently active */
 	if (ioc->diag_trigger_active) {
@@ -420,15 +415,14 @@ mpt3sas_trigger_mpi(struct MPT3SAS_ADAPTER *ioc, u16 ioc_status, u32 loginfo)
 	if (!found_match)
 		goto out;
 
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT
-		"%s: setting diag_trigger_active flag\n",
-		ioc->name, __func__));
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: setting "
+	    "diag_trigger_active flag\n", ioc->name, __func__));
 	memset(&event_data, 0, sizeof(struct SL_WH_TRIGGERS_EVENT_DATA_T));
 	event_data.trigger_type = MPT3SAS_TRIGGER_MPI;
 	event_data.u.mpi.IOCStatus = ioc_status;
 	event_data.u.mpi.IocLogInfo = loginfo;
 	mpt3sas_send_trigger_data_event(ioc, &event_data);
  out:
-	dTriggerDiagPrintk(ioc, pr_info(MPT3SAS_FMT "%s: exit\n", ioc->name,
+	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: exit\n", ioc->name,
 	    __func__));
 }

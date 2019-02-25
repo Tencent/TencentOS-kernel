@@ -1,12 +1,12 @@
 /*
  * This is the Fusion MPT base driver providing common API layer interface
- * to set Diagnostic triggers for MPT (Message Passing Technology) based
+ * to set Diagnostic triggers for MPT (Message Passing Technology) based 
  * controllers
  *
  * This code is based on drivers/scsi/mpt3sas/mpt3sas_base.h
- * Copyright (C) 2012-2014  LSI Corporation
- * Copyright (C) 2013-2014 Avago Technologies
- *  (mailto: MPT-FusionLinux.pdl@avagotech.com)
+ * Copyright (C) 2013-2016  LSI Corporation
+ * Copyright (C) 2013-2016  Avago Technologies
+ *  (mailto:MPT-FusionLinux.pdl@avagotech.com)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License

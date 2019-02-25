@@ -2,8 +2,9 @@
 # Kernel configuration file for the MPT3SAS
 #
 # This code is based on drivers/scsi/mpt3sas/Kconfig
-# Copyright (C) 2012-2014  LSI Corporation
-#  (mailto:DL-MPTFusionLinux@lsi.com)
+# Copyright (C) 2012-2016  LSI Corporation
+# Copyright (C) 2013-2016  Avago Technologies
+#  (mailto:MPT-FusionLinux.pdl@avagotech.com)
 
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -49,16 +50,16 @@ config SCSI_MPT3SAS
 	This driver supports PCI-Express SAS 12Gb/s Host Adapters.
 
 config SCSI_MPT2SAS_MAX_SGE
-	int "LSI MPT Fusion SAS 2.0 Max number of SG Entries (16 - 256)"
-	depends on PCI && SCSI && SCSI_MPT3SAS
-	default "128"
-	range 16 256
-	---help---
-	This option allows you to specify the maximum number of scatter-
-	gather entries per I/O. The driver default is 128, which matches
-	MAX_PHYS_SEGMENTS in most kernels.  However in SuSE kernels this
-	can be 256. However, it may decreased down to 16.  Decreasing this
-	parameter will reduce memory requirements on a per controller instance.
+       	int "LSI MPT Fusion SAS 2.0 Max number of SG Entries (16 - 256)"
+       	depends on PCI && SCSI && SCSI_MPT3SAS
+       	default "128"
+       	range 16 256
+       	---help---
+       	This option allows you to specify the maximum number of scatter-
+       	gather entries per I/O. The driver default is 128, which matches
+       	MAX_PHYS_SEGMENTS in most kernels.  However in SuSE kernels this
+       	can be 256. However, it may decreased down to 16.  Decreasing this
+       	parameter will reduce memory requirements on a per controller instance.
 
 config SCSI_MPT3SAS_MAX_SGE
 	int "LSI MPT Fusion SAS 3.0 Max number of SG Entries (16 - 256)"
@@ -71,12 +72,3 @@ config SCSI_MPT3SAS_MAX_SGE
 	MAX_PHYS_SEGMENTS in most kernels.  However in SuSE kernels this
 	can be 256. However, it may decreased down to 16.  Decreasing this
 	parameter will reduce memory requirements on a per controller instance.
-
-config SCSI_MPT2SAS
-	tristate "Legacy MPT2SAS config option"
-	default n
-	select SCSI_MPT3SAS
-	depends on PCI && SCSI
-	---help---
-	Dummy config option for backwards compatiblity: configure the MPT3SAS
-	driver instead.

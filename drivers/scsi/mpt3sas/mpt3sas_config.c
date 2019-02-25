@@ -2,9 +2,9 @@
  * This module provides common API for accessing firmware configuration pages
  *
  * This code is based on drivers/scsi/mpt3sas/mpt3sas_base.c
- * Copyright (C) 2012-2014  LSI Corporation
- * Copyright (C) 2013-2014 Avago Technologies
- *  (mailto: MPT-FusionLinux.pdl@avagotech.com)
+ * Copyright (C) 2013-2016  LSI Corporation
+ * Copyright (C) 2013-2016  Avago Technologies
+ *  (mailto:MPT-FusionLinux.pdl@avagotech.com)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -42,6 +42,7 @@
  * USA.
  */
 
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -91,7 +92,7 @@ struct config_request {
  * @mpi_reply: reply message frame
  * Context: none.
  *
- * Function for displaying debug info helpful when debugging issues
+ * Function for displaying debug info helpfull when debugging issues
  * in this module.
  */
 static void
@@ -119,7 +120,7 @@ _config_display_some_debug(struct MPT3SAS_ADAPTER *ioc, u16 smid,
 		desc = "raid_volume";
 		break;
 	case MPI2_CONFIG_PAGETYPE_MANUFACTURING:
-		desc = "manufaucturing";
+		desc = "manufacturing";
 		break;
 	case MPI2_CONFIG_PAGETYPE_RAID_PHYSDISK:
 		desc = "physdisk";
@@ -148,7 +149,25 @@ _config_display_some_debug(struct MPT3SAS_ADAPTER *ioc, u16 smid,
 			desc = "raid_config";
 			break;
 		case MPI2_CONFIG_EXTPAGETYPE_DRIVER_MAPPING:
-			desc = "driver_mapping";
+			desc = "driver_mappping";
+			break;
+		case MPI2_CONFIG_EXTPAGETYPE_SAS_PORT:
+			desc = "sas_port";
+			break;
+		case MPI2_CONFIG_EXTPAGETYPE_EXT_MANUFACTURING:
+			desc = "ext_manufacturing";
+			break;
+		case MPI2_CONFIG_EXTPAGETYPE_PCIE_IO_UNIT:
+			desc = "pcie_io_unit";
+			break;
+		case MPI2_CONFIG_EXTPAGETYPE_PCIE_SWITCH:
+			desc = "pcie_switch";
+			break;
+		case MPI2_CONFIG_EXTPAGETYPE_PCIE_DEVICE:
+			desc = "pcie_device";
+			break;
+		case MPI2_CONFIG_EXTPAGETYPE_PCIE_LINK:
+			desc = "pcie_link";
 			break;
 		}
 		break;
@@ -157,9 +176,8 @@ _config_display_some_debug(struct MPT3SAS_ADAPTER *ioc, u16 smid,
 	if (!desc)
 		return;
 
-	pr_info(MPT3SAS_FMT
-		"%s: %s(%d), action(%d), form(0x%08x), smid(%d)\n",
-		ioc->name, calling_function_name, desc,
+	printk(MPT3SAS_INFO_FMT "%s: %s(%d), action(%d), form(0x%08x), "
+	    "smid(%d)\n", ioc->name, calling_function_name, desc,
 	    mpi_request->Header.PageNumber, mpi_request->Action,
 	    le32_to_cpu(mpi_request->PageAddress), smid);
 
@@ -167,7 +185,7 @@ _config_display_some_debug(struct MPT3SAS_ADAPTER *ioc, u16 smid,
 		return;
 
 	if (mpi_reply->IOCStatus || mpi_reply->IOCLogInfo)
-		pr_info(MPT3SAS_FMT
+		printk(MPT3SAS_INFO_FMT
 		    "\tiocstatus(0x%04x), loginfo(0x%08x)\n",
 		    ioc->name, le16_to_cpu(mpi_reply->IOCStatus),
 		    le32_to_cpu(mpi_reply->IOCLogInfo));
@@ -192,8 +210,8 @@ _config_alloc_config_dma_memory(struct MPT3SAS_ADAPTER *ioc,
 		mem->page = dma_alloc_coherent(&ioc->pdev->dev, mem->sz,
 		    &mem->page_dma, GFP_KERNEL);
 		if (!mem->page) {
-			pr_err(MPT3SAS_FMT
-				"%s: dma_alloc_coherent failed asking for (%d) bytes!!\n",
+			printk(MPT3SAS_ERR_FMT "%s: dma_alloc_coherent"
+			    " failed asking for (%d) bytes!!\n",
 			    ioc->name, __func__, mem->sz);
 			r = -ENOMEM;
 		}
@@ -201,6 +219,7 @@ _config_alloc_config_dma_memory(struct MPT3SAS_ADAPTER *ioc,
 		mem->page = ioc->config_page;
 		mem->page_dma = ioc->config_page_dma;
 	}
+	ioc->config_vaddr = mem->page;
 	return r;
 }
 
@@ -254,7 +273,7 @@ mpt3sas_config_done(struct MPT3SAS_ADAPTER *ioc, u16 smid, u8 msix_index,
 	}
 	ioc->config_cmds.status &= ~MPT3_CMD_PENDING;
 	_config_display_some_debug(ioc, smid, "config_done", mpi_reply);
-	ioc->config_cmds.smid = USHRT_MAX;
+	ioc->config_cmds.smid = USHORT_MAX;
 	complete(&ioc->config_cmds.done);
 	return 1;
 }
@@ -294,7 +313,7 @@ _config_request(struct MPT3SAS_ADAPTER *ioc, Mpi2ConfigRequest_t
 
 	mutex_lock(&ioc->config_cmds.mutex);
 	if (ioc->config_cmds.status != MPT3_CMD_NOT_USED) {
-		pr_err(MPT3SAS_FMT "%s: config_cmd in use\n",
+		printk(MPT3SAS_ERR_FMT "%s: config_cmd in use\n",
 		    ioc->name, __func__);
 		mutex_unlock(&ioc->config_cmds.mutex);
 		return -EAGAIN;
@@ -343,14 +362,14 @@ _config_request(struct MPT3SAS_ADAPTER *ioc, Mpi2ConfigRequest_t
 			r = -EFAULT;
 			goto free_mem;
 		}
-		pr_info(MPT3SAS_FMT "%s: attempting retry (%d)\n",
+		printk(MPT3SAS_INFO_FMT "%s: attempting retry (%d)\n",
 		    ioc->name, __func__, retry_count);
 	}
 	wait_state_count = 0;
 	ioc_state = mpt3sas_base_get_iocstate(ioc, 1);
 	while (ioc_state != MPI2_IOC_STATE_OPERATIONAL) {
 		if (wait_state_count++ == MPT3_CONFIG_PAGE_DEFAULT_TIMEOUT) {
-			pr_err(MPT3SAS_FMT
+			printk(MPT3SAS_ERR_FMT
 			    "%s: failed due to ioc not operational\n",
 			    ioc->name, __func__);
 			ioc->config_cmds.status = MPT3_CMD_NOT_USED;
@@ -359,17 +378,17 @@ _config_request(struct MPT3SAS_ADAPTER *ioc, Mpi2ConfigRequest_t
 		}
 		ssleep(1);
 		ioc_state = mpt3sas_base_get_iocstate(ioc, 1);
-		pr_info(MPT3SAS_FMT
-			"%s: waiting for operational state(count=%d)\n",
-			ioc->name, __func__, wait_state_count);
+		printk(MPT3SAS_INFO_FMT "%s: waiting for "
+		    "operational state(count=%d)\n", ioc->name,
+		    __func__, wait_state_count);
 	}
 	if (wait_state_count)
-		pr_info(MPT3SAS_FMT "%s: ioc is operational\n",
+		printk(MPT3SAS_INFO_FMT "%s: ioc is operational\n",
 		    ioc->name, __func__);
 
 	smid = mpt3sas_base_get_smid(ioc, ioc->config_cb_idx);
 	if (!smid) {
-		pr_err(MPT3SAS_FMT "%s: failed obtaining a smid\n",
+		printk(MPT3SAS_ERR_FMT "%s: failed obtaining a smid\n",
 		    ioc->name, __func__);
 		ioc->config_cmds.status = MPT3_CMD_NOT_USED;
 		r = -EAGAIN;
@@ -385,17 +404,18 @@ _config_request(struct MPT3SAS_ADAPTER *ioc, Mpi2ConfigRequest_t
 	_config_display_some_debug(ioc, smid, "config_request", NULL);
 	init_completion(&ioc->config_cmds.done);
 	ioc->put_smid_default(ioc, smid);
-	wait_for_completion_timeout(&ioc->config_cmds.done, timeout*HZ);
+	wait_for_completion_timeout(&ioc->config_cmds.done,
+	    timeout*HZ);
 	if (!(ioc->config_cmds.status & MPT3_CMD_COMPLETE)) {
-		pr_err(MPT3SAS_FMT "%s: timeout\n",
-		    ioc->name, __func__);
-		_debug_dump_mf(mpi_request,
-		    sizeof(Mpi2ConfigRequest_t)/4);
+		mpt3sas_base_check_cmd_timeout(ioc,
+			ioc->config_cmds.status, mpi_request,
+			sizeof(Mpi2ConfigRequest_t)/4);
 		retry_count++;
 		if (ioc->config_cmds.smid == smid)
 			mpt3sas_base_free_smid(ioc, smid);
-		if ((ioc->shost_recovery) || (ioc->config_cmds.status &
-		    MPT3_CMD_RESET) || ioc->pci_error_recovery)
+		if (ioc->shost_recovery ||
+		    (ioc->config_cmds.status & MPT3_CMD_RESET) ||
+		    ioc->pci_error_recovery)
 			goto retry_config;
 		issue_host_reset = 1;
 		r = -EFAULT;
@@ -411,9 +431,9 @@ _config_request(struct MPT3SAS_ADAPTER *ioc, Mpi2ConfigRequest_t
 		    (mpi_reply->Header.PageType & 0xF)) {
 			_debug_dump_mf(mpi_request, ioc->request_sz/4);
 			_debug_dump_reply(mpi_reply, ioc->request_sz/4);
-			panic(KERN_WARNING MPT3SAS_FMT "%s: Firmware BUG:" \
-			    " mpi_reply mismatch: Requested PageType(0x%02x)" \
-			    " Reply PageType(0x%02x)\n", \
+			panic(MPT3SAS_WARN_FMT "%s: Firmware BUG:"
+			    " mpi_reply mismatch: Requested PageType(0x%02x)"
+			    " Reply PageType(0x%02x)\n",
 			    ioc->name, __func__,
 			    (mpi_request->Header.PageType & 0xF),
 			    (mpi_reply->Header.PageType & 0xF));
@@ -424,7 +444,7 @@ _config_request(struct MPT3SAS_ADAPTER *ioc, Mpi2ConfigRequest_t
 		    mpi_request->ExtPageType != mpi_reply->ExtPageType) {
 			_debug_dump_mf(mpi_request, ioc->request_sz/4);
 			_debug_dump_reply(mpi_reply, ioc->request_sz/4);
-			panic(KERN_WARNING MPT3SAS_FMT "%s: Firmware BUG:" \
+			panic(MPT3SAS_WARN_FMT "%s: Firmware BUG:"
 			    " mpi_reply mismatch: Requested ExtPageType(0x%02x)"
 			    " Reply ExtPageType(0x%02x)\n",
 			    ioc->name, __func__, mpi_request->ExtPageType,
@@ -435,7 +455,7 @@ _config_request(struct MPT3SAS_ADAPTER *ioc, Mpi2ConfigRequest_t
 	}
 
 	if (retry_count)
-		pr_info(MPT3SAS_FMT "%s: retry (%d) completed!!\n", \
+		printk(MPT3SAS_INFO_FMT "%s: retry (%d) completed!!\n",
 		    ioc->name, __func__, retry_count);
 
 	if ((ioc_status == MPI2_IOCSTATUS_SUCCESS) &&
@@ -451,8 +471,7 @@ _config_request(struct MPT3SAS_ADAPTER *ioc, Mpi2ConfigRequest_t
 				_debug_dump_reply(mpi_reply, ioc->request_sz/4);
 				_debug_dump_config(p, min_t(u16, mem.sz,
 				    config_page_sz)/4);
-				panic(KERN_WARNING MPT3SAS_FMT
-					"%s: Firmware BUG:" \
+				panic(MPT3SAS_WARN_FMT "%s: Firmware BUG:"
 				    " config page mismatch:"
 				    " Requested PageType(0x%02x)"
 				    " Reply PageType(0x%02x)\n",
@@ -468,8 +487,7 @@ _config_request(struct MPT3SAS_ADAPTER *ioc, Mpi2ConfigRequest_t
 				_debug_dump_reply(mpi_reply, ioc->request_sz/4);
 				_debug_dump_config(p, min_t(u16, mem.sz,
 				    config_page_sz)/4);
-				panic(KERN_WARNING MPT3SAS_FMT
-					"%s: Firmware BUG:" \
+				panic(MPT3SAS_WARN_FMT "%s: Firmware BUG:"
 				    " config page mismatch:"
 				    " Requested ExtPageType(0x%02x)"
 				    " Reply ExtPageType(0x%02x)\n",
@@ -1052,6 +1070,88 @@ mpt3sas_config_get_sas_device_pg1(struct MPT3SAS_ADAPTER *ioc,
 	return r;
 }
 
+/*
+ * mpt3sas_config_get_pcie_device_pg0 - obtain pcie device page 0
+ * @ioc: per adapter object
+ * @mpi_reply: reply mf payload returned from firmware
+ * @config_page: contents of the config page
+ * @form: GET_NEXT_HANDLE or HANDLE
+ * @handle: device handle
+ * Context: sleep.
+ *
+ * Returns 0 for success, non-zero for failure.
+ */
+int
+mpt3sas_config_get_pcie_device_pg0(struct MPT3SAS_ADAPTER *ioc,
+       Mpi2ConfigReply_t *mpi_reply, Mpi26PCIeDevicePage0_t *config_page,
+       u32 form, u32 handle)
+{
+       Mpi2ConfigRequest_t mpi_request;
+       int r;
+
+       memset(&mpi_request, 0, sizeof(Mpi2ConfigRequest_t));
+       mpi_request.Function = MPI2_FUNCTION_CONFIG;
+       mpi_request.Action = MPI2_CONFIG_ACTION_PAGE_HEADER;
+       mpi_request.Header.PageType = MPI2_CONFIG_PAGETYPE_EXTENDED;
+       mpi_request.ExtPageType = MPI2_CONFIG_EXTPAGETYPE_PCIE_DEVICE;
+       mpi_request.Header.PageVersion = MPI26_PCIEDEVICE0_PAGEVERSION;
+       mpi_request.Header.PageNumber = 0;
+       ioc->build_zero_len_sge_mpi(ioc, &mpi_request.PageBufferSGE);
+       r = _config_request(ioc, &mpi_request, mpi_reply,
+           MPT3_CONFIG_PAGE_DEFAULT_TIMEOUT, NULL, 0);
+       if (r)
+               goto out;
+
+       mpi_request.PageAddress = cpu_to_le32(form | handle);
+       mpi_request.Action = MPI2_CONFIG_ACTION_PAGE_READ_CURRENT;
+       r = _config_request(ioc, &mpi_request, mpi_reply,
+           MPT3_CONFIG_PAGE_DEFAULT_TIMEOUT, config_page,
+           sizeof(*config_page));
+ out:
+       return r;
+}
+
+/**
+ * mpt3sas_config_get_pcie_device_pg2 - obtain pcie device page 2
+ * @ioc: per adapter object
+ * @mpi_reply: reply mf payload returned from firmware
+ * @config_page: contents of the config page
+ * @form: GET_NEXT_HANDLE or HANDLE
+ * @handle: device handle
+ * Context: sleep.
+ *
+ * Returns 0 for success, non-zero for failure.
+ */
+int
+mpt3sas_config_get_pcie_device_pg2(struct MPT3SAS_ADAPTER *ioc,
+       Mpi2ConfigReply_t *mpi_reply, Mpi26PCIeDevicePage2_t *config_page,
+       u32 form, u32 handle)
+{
+       Mpi2ConfigRequest_t mpi_request;
+       int r;
+
+       memset(&mpi_request, 0, sizeof(Mpi2ConfigRequest_t));
+       mpi_request.Function = MPI2_FUNCTION_CONFIG;
+       mpi_request.Action = MPI2_CONFIG_ACTION_PAGE_HEADER;
+       mpi_request.Header.PageType = MPI2_CONFIG_PAGETYPE_EXTENDED;
+       mpi_request.ExtPageType = MPI2_CONFIG_EXTPAGETYPE_PCIE_DEVICE;
+       mpi_request.Header.PageVersion = MPI26_PCIEDEVICE2_PAGEVERSION;
+       mpi_request.Header.PageNumber = 2;
+       ioc->build_zero_len_sge_mpi(ioc, &mpi_request.PageBufferSGE);
+       r = _config_request(ioc, &mpi_request, mpi_reply,
+           MPT3_CONFIG_PAGE_DEFAULT_TIMEOUT, NULL, 0);
+       if (r)
+               goto out;
+
+       mpi_request.PageAddress = cpu_to_le32(form | handle);
+       mpi_request.Action = MPI2_CONFIG_ACTION_PAGE_READ_CURRENT;
+       r = _config_request(ioc, &mpi_request, mpi_reply,
+           MPT3_CONFIG_PAGE_DEFAULT_TIMEOUT, config_page,
+           sizeof(*config_page));
+ out:
+       return r;
+}
+
 /**
  * mpt3sas_config_get_number_hba_phys - obtain number of phys on the host
  * @ioc: per adapter object
@@ -1178,6 +1278,9 @@ mpt3sas_config_get_sas_iounit_pg1(struct MPT3SAS_ADAPTER *ioc,
  out:
 	return r;
 }
+#if defined(TARGET_MODE)
+EXPORT_SYMBOL(mpt3sas_config_get_sas_iounit_pg1);
+#endif
 
 /**
  * mpt3sas_config_set_sas_iounit_pg1 - send sas iounit page 1
@@ -1222,6 +1325,9 @@ mpt3sas_config_set_sas_iounit_pg1(struct MPT3SAS_ADAPTER *ioc,
  out:
 	return r;
 }
+#if defined(TARGET_MODE)
+EXPORT_SYMBOL(mpt3sas_config_set_sas_iounit_pg1);
+#endif
 
 /**
  * mpt3sas_config_get_expander_pg0 - obtain expander page 0
@@ -1711,3 +1817,41 @@ mpt3sas_config_get_volume_wwid(struct MPT3SAS_ADAPTER *ioc, u16 volume_handle,
 	} else
 		return -1;
 }
+
+#if defined(CPQ_CIM)
+/**
+ * mpt3sas_config_get_ioc_pg1 - obtain ioc page 8
+ * @ioc: per adapter object
+ * @mpi_reply: reply mf payload returned from firmware
+ * @config_page: contents of the config page
+ * Context: sleep.
+ *
+ * Returns 0 for success, non-zero for failure.
+ */
+int
+mpt3sas_config_get_ioc_pg1(struct MPT3SAS_ADAPTER *ioc,
+	Mpi2ConfigReply_t *mpi_reply, Mpi2IOCPage1_t *config_page)
+{
+	Mpi2ConfigRequest_t mpi_request;
+	int r;
+
+	memset(&mpi_request, 0, sizeof(Mpi2ConfigRequest_t));
+	mpi_request.Function = MPI2_FUNCTION_CONFIG;
+	mpi_request.Action = MPI2_CONFIG_ACTION_PAGE_HEADER;
+	mpi_request.Header.PageType = MPI2_CONFIG_PAGETYPE_IOC;
+	mpi_request.Header.PageNumber = 1;
+	mpi_request.Header.PageVersion = MPI2_IOCPAGE1_PAGEVERSION;
+	ioc->build_zero_len_sge_mpi(ioc, &mpi_request.PageBufferSGE);
+	r = _config_request(ioc, &mpi_request, mpi_reply,
+	    MPT3_CONFIG_PAGE_DEFAULT_TIMEOUT, NULL, 0);
+	if (r)
+		goto out;
+
+	mpi_request.Action = MPI2_CONFIG_ACTION_PAGE_READ_CURRENT;
+	r = _config_request(ioc, &mpi_request, mpi_reply,
+	    MPT3_CONFIG_PAGE_DEFAULT_TIMEOUT, config_page,
+	    sizeof(*config_page));
+ out:
+	return r;
+}
+#endif
