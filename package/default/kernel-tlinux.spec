@@ -52,6 +52,8 @@ This package contains tlinux kernel for bare metal, virtulization
 Summary: tlinux kernel vmlinux for crash debug
 Release: %{release}
 Group: System Environment/Kernel
+Provides: kernel-debuginfo
+Obsoletes: kernel-debuginfo
 
 %description debuginfo
 This package container vmlinux, System.map and config files for kernel
@@ -61,6 +63,8 @@ debugging.
 Summary: Development package for building kernel modules to match the %{version}-%{release} kernel
 Release: %{release}
 Group: System Environment/Kernel
+Provides: kernel-devel
+Obsoletes: kernel-devel
 
 %description devel
 This package provides kernel headers and makefiles sufficient to build modules
@@ -72,6 +76,8 @@ Summary: Header files for the Linux kernel for use by glibc
 Group: Development/System
 Obsoletes: glibc-kernheaders
 Provides: glibc-kernheaders = 3.0-46
+Provides: kernel-headers
+Obsoletes: kernel-headers
 %description headers
 Kernel-headers includes the C header files that specify the interface
 between the Linux kernel and userspace libraries and programs.  The
