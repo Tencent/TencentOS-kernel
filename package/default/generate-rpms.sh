@@ -109,10 +109,10 @@ get_tlinux_name()
 	if [ "$build_perf" = "yes" ]; then
 		rpm_name="perf"
 	else
-		rpm_name="kernel"-${tlinux_branch}
+		rpm_name="kernel"
 	fi
 	#tlinux_release=${tagged_name#*-}
-	tlinux_release=`echo $tagged_name|cut -d- -f2`.`echo $tagged_name|cut -d- -f4`
+	tlinux_release=`echo $tagged_name|cut -d- -f2`.`echo $tagged_name|cut -d- -f3`
 	kernel_full_name=${rpm_name}-${kernel_version}
 }
 
