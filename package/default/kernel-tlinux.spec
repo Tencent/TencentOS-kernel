@@ -401,93 +401,19 @@ fi;
 
 %post
 # post #########################################################################
-echo "Install tkernel3-public"
-%if 0%{?rhel} == 7
-/sbin/new-kernel-pkg --package kernel-tlinux3-public --mkinitrd --dracut --depmod --install %{tagged_name}%{?dist} --kernel-args="crashkernel=512M-2G:64M,2G-12G:128M,12G-:256M" --make-default|| exit $?
-%else
-/sbin/new-kernel-pkg --mkinitrd --dracut --depmod --install %{tagged_name}%{?dist} --kernel-args="crashkernel=512M-2G:64M,2G-12G:128M,12G-:256M" --banner="tkernel-public 3.0" || exit $?
-
-# check relase info to get suffix 
-suffix=default
-
-# modify boot menu
-grubconfig=/boot/grub/grub.conf
-if [ -d /sys/firmware/efi -a -f /boot/efi/EFI/tencent/grub.efi ]; then
-	grubconfig=/boot/efi/EFI/tencent/grub.conf
-fi
-
-# reduce multiple blank lines to one
-sed '/^$/{
-        N
-        /^\n$/D
-}' ${grubconfig} > ${grubconfig}.tmp
-mv ${grubconfig}.tmp ${grubconfig}
-rm -f ${grubconfig}.tmp
-
-# set grub default according to $suffix we already got
-count=-1
-defcount=0
-while read line
-do
-    echo $line | grep -q "title"
-    if [ $? -eq 0 ]; then
-        (( count++ ))
-    fi
-    if [ -f /etc/SuSE-release ]; then
-        echo $line | grep -q "%{tagged_name}%{?dist}"
-    elif [ -f /etc/redhat-release ]; then
-        echo $line | grep -q "title.*\(%{tagged_name}%{?dist}\).*"
-    fi
-    result=$?
-    if [ $result -eq 0 ] ; then
-        break
-    fi
-    if [ -f /etc/SuSE-release ]; then
-        echo $line | grep -q "title %{tagged_name}%{?dist}"
-    elif [ -f /etc/redhat-release ]; then
-        echo $line | grep -q "title.*(%{tagged_name}%{?dist}).*"
-    fi
-    if [ $? -eq 0 ] ; then
-        defcount=$count
-    fi
-done < $grubconfig
-
-if [ $result -eq 0 ] ; then
-    index=$count
-else
-    index=$defcount
-fi
-
-if [ -f /etc/SuSE-release ]; then
-    sed -n "/^default /!p;
-        {/^default /c\
-        \default $index
-        }
-        " $grubconfig > $grubconfig.NEW
-    mv $grubconfig.NEW $grubconfig
-elif [ -f /etc/redhat-release ]; then
-    sed -n "/^default=/!p;
-        {/^default=/c\
-        \default=$index
-        }
-        " $grubconfig > $grubconfig.NEW
-    mv $grubconfig.NEW $grubconfig
-fi
-%endif
+echo "Install tlinux kernel"
+/sbin/new-kernel-pkg --package kernel --install %{tagged_name}%{?dist} --make-default|| exit $?
 echo -e "Set Grub default to \"%{tagged_name}%{?dist}\" Done."
 
-%postun
-# postun #######################################################################
-/sbin/new-kernel-pkg --remove %{tagged_name}%{?dist} || exit $?
+%preun
+# preun #######################################################################
+/sbin/new-kernel-pkg --rminitrd --dracut --remove %{tagged_name}%{?dist} || exit $?
 echo -e "Remove \"%{tagged_name}%{?dist}\" Done."
 
-
-%if 0%{?rhel} == 7
 %posttrans
 # posttrans ####################################################################
-/sbin/new-kernel-pkg --package kernel-tlinux3-public --depmod --update %{tagged_name}%{?dist} || exit $?
-/sbin/new-kernel-pkg --package kernel-tlinux3-public --rpmposttrans %{tagged_name}%{?dist} || exit $?
-%endif
+/sbin/new-kernel-pkg --package kernel --mkinitrd --dracut --depmod --update %{tagged_name}%{?dist} || exit $?
+/sbin/new-kernel-pkg --package kernel --rpmposttrans %{tagged_name}%{?dist} || exit $?
 
 %files -f core.list
 # files ########################################################################
