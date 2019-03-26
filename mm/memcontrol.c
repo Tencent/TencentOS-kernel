@@ -3957,24 +3957,23 @@ static int mem_cgroup_meminfo_read(struct seq_file *m, void *v)
 {
 	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
 	u64 mem_limit, mem_usage;
-	u64 mem_swap, mem_swap_usage, mem_swap_free;
+	u64 mem_swap, mem_swap_usage;
 
 	mem_limit = memcg->memory.limit;
 	/* if limit not set, use host ram total size*/
-	if (mem_limit == PAGE_COUNTER_MAX) {
-		mem_limit = totalram_pages << PAGE_SHIFT;
-	}
-	mem_usage = page_counter_read(&memcg->memory) * PAGE_SIZE;
-	mem_swap = mem_cgroup_get_limit(memcg);
-	if (mem_swap == PAGE_COUNTER_MAX) {
-		mem_swap = (totalram_pages + total_swap_pages) << PAGE_SHIFT;
-	}
-	mem_swap_usage = page_counter_read(&memcg->memsw) * PAGE_SIZE;
-
-	if (mem_swap == mem_limit)
-		mem_swap_free = 0;
+	if (mem_limit == PAGE_COUNTER_MAX)
+		mem_limit = totalram_pages * PAGE_SIZE;
 	else
-		mem_swap_free = (mem_swap - mem_limit - (mem_swap_usage - mem_usage)) / 1024;
+		mem_limit = mem_limit * PAGE_SIZE;
+	mem_usage = (u64)mem_cgroup_usage(memcg, false) * PAGE_SIZE;
+	mem_swap = memcg->memsw.limit;
+
+	if (mem_swap == PAGE_COUNTER_MAX)
+		mem_swap = total_swap_pages * PAGE_SIZE;
+	else
+		mem_swap = mem_swap * PAGE_SIZE;	
+	mem_swap_usage = (u64)mem_cgroup_usage(memcg, true) * PAGE_SIZE - mem_usage;
+
 	/*
 	 * Tagged format, for easy grepping and expansion.
 	 */
@@ -4055,8 +4054,8 @@ static int mem_cgroup_meminfo_read(struct seq_file *m, void *v)
 #ifndef CONFIG_MMU
 		(unsigned long)0,//K((unsigned long) atomic_long_read(&mmap_pages_allocated)),
 #endif
-		(unsigned long)((mem_swap - mem_limit) / 1024),
-		(unsigned long)mem_swap_free,
+		(unsigned long)(mem_swap / 1024),
+		(unsigned long)((mem_swap - mem_swap_usage) / 1024),
 		(unsigned long)0,//K(global_page_state(NR_FILE_DIRTY)),
 		(unsigned long)0,//K(global_page_state(NR_WRITEBACK)),
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
@@ -4113,17 +4112,13 @@ static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
 	int i, stat_items_size;
 	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
 	u64 mem_limit, mem_usage;
-	u64 mem_swap, mem_swap_usage;
 
 	mem_limit = memcg->memory.limit;
-	if (mem_limit == PAGE_COUNTER_MAX) {
-		mem_limit = totalram_pages << PAGE_SHIFT;
-	}
-	mem_usage = page_counter_read(&memcg->memory) * PAGE_SIZE;
-	mem_swap = mem_cgroup_get_limit(memcg);
-	if (mem_swap == PAGE_COUNTER_MAX)
-		mem_swap = (totalram_pages + total_swap_pages) << PAGE_SHIFT;
-	mem_swap_usage = page_counter_read(&memcg->memsw) * PAGE_SIZE;
+	if (mem_limit == PAGE_COUNTER_MAX)
+		mem_limit = totalram_pages *PAGE_SIZE;
+	else
+		mem_limit = mem_limit * PAGE_SIZE;	
+	mem_usage = (u64)mem_cgroup_usage(memcg, false) * PAGE_SIZE;
 
 	stat_items_size = vmstat_text_size * sizeof(unsigned long);
 
