@@ -1,28 +1,5 @@
-/*******************************************************************************
- *
- * Intel Ethernet Controller XL710 Family Linux Virtual Function Driver
- * Copyright(c) 2013 - 2016 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
- * Contact Information:
- * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
- * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
- *
- ******************************************************************************/
+/* SPDX-License-Identifier: GPL-2.0 */
+/* Copyright(c) 2013 - 2018 Intel Corporation. */
 
 #ifndef _I40EVF_H_
 #define _I40EVF_H_
@@ -51,11 +28,22 @@
 #include <linux/etherdevice.h>
 #include <linux/socket.h>
 #include <linux/jiffies.h>
+#include <net/ipv6.h>
 #include <net/ip6_checksum.h>
 #include <net/udp.h>
+#ifdef HAVE_SCTP
+#include <linux/sctp.h>
+#endif
+#ifdef __TC_MQPRIO_MODE_MAX
+#include <net/pkt_cls.h>
+#include <net/tc_act/tc_gact.h>
+#include <net/tc_act/tc_mirred.h>
+#endif /* __TC_MQPRIO_MODE_MAX */
+
+#include "kcompat.h"
 
 #include "i40e_type.h"
-#include <linux/avf/virtchnl.h>
+#include "virtchnl.h"
 #include "i40e_txrx.h"
 
 #define DEFAULT_DEBUG_LEVEL_SHIFT 3
@@ -72,14 +60,20 @@ enum i40evf_vsi_state_t {
 struct i40e_vsi {
 	struct i40evf_adapter *back;
 	struct net_device *netdev;
+#ifdef HAVE_VLAN_RX_REGISTER
+	struct vlan_group *vlgrp;
+#else
 	unsigned long active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
+#endif
+	/* dummy pointer - VF plans to add this functionality in the future */
+	struct i40e_ring **xdp_rings;
 	u16 seid;
 	u16 id;
 	DECLARE_BITMAP(state, __I40E_VSI_STATE_SIZE__);
 	int base_vector;
 	u16 work_limit;
 	u16 qs_handle;
-	void *priv;     /* client driver data reference. */
+	void *priv;	/* client driver data reference. */
 };
 
 /* How many Rx Buffers do we bundle into one write to the hardware ? */
@@ -101,10 +95,11 @@ struct i40e_vsi {
 #define I40E_TX_DESC(R, i) (&(((struct i40e_tx_desc *)((R)->desc))[i]))
 #define I40E_TX_CTXTDESC(R, i) \
 	(&(((struct i40e_tx_context_desc *)((R)->desc))[i]))
-#define MAX_QUEUES 16
+#define I40EVF_MAX_REQ_QUEUES 4
 
 #define I40EVF_HKEY_ARRAY_SIZE ((I40E_VFQF_HKEY_MAX_INDEX + 1) * 4)
 #define I40EVF_HLUT_ARRAY_SIZE ((I40E_VFQF_HLUT_MAX_INDEX + 1) * 4)
+#define I40EVF_MBPS_DIVISOR	125000 /* divisor to convert to Mbps */
 
 /* MAX_MSIX_Q_VECTORS of these are allocated,
  * but we only use one per queue-specific vector.
@@ -113,18 +108,19 @@ struct i40e_q_vector {
 	struct i40evf_adapter *adapter;
 	struct i40e_vsi *vsi;
 	struct napi_struct napi;
-	unsigned long reg_idx;
 	struct i40e_ring_container rx;
 	struct i40e_ring_container tx;
 	u32 ring_mask;
+	u8 itr_countdown;	/* when 0 should adjust adaptive ITR */
 	u8 num_ringpairs;	/* total number of ring pairs in vector */
-#define ITR_COUNTDOWN_START 100
-	u8 itr_countdown;	/* when 0 or 1 update ITR */
-	int v_idx;	/* vector index in list */
+	u16 v_idx;		/* index in the vsi->q_vector array. */
+	u16 reg_idx;		/* register index of the interrupt */
 	char name[IFNAMSIZ + 15];
 	bool arm_wb_state;
+#ifdef HAVE_IRQ_AFFINITY_NOTIFY
 	cpumask_t affinity_mask;
 	struct irq_affinity_notify affinity_notify;
+#endif
 };
 
 /* Helper macros to switch between ints/sec and what the register uses.
@@ -168,6 +164,28 @@ struct i40evf_vlan_filter {
 	bool add;		/* filter needs to be added */
 };
 
+#define I40EVF_MAX_TRAFFIC_CLASS	4
+/* State of traffic class creation */
+enum i40evf_tc_state_t {
+	__I40EVF_TC_INVALID, /* no traffic class, default state */
+	__I40EVF_TC_RUNNING, /* traffic classes have been created */
+};
+
+/* channel info */
+struct i40evf_channel_config {
+	struct virtchnl_channel_info ch_info[I40EVF_MAX_TRAFFIC_CLASS];
+	enum i40evf_tc_state_t state;
+	u8 total_qps;
+};
+
+/* State of cloud filter */
+enum i40evf_cloud_filter_state_t {
+	__I40EVF_CF_INVALID,	 /* cloud filter not added */
+	__I40EVF_CF_ADD_PENDING, /* cloud filter pending add by the PF */
+	__I40EVF_CF_DEL_PENDING, /* cloud filter pending del by the PF */
+	__I40EVF_CF_ACTIVE,	 /* cloud filter is active */
+};
+
 /* Driver state. The order of these is important! */
 enum i40evf_state_t {
 	__I40EVF_STARTUP,		/* driver loaded, probe complete */
@@ -189,6 +207,36 @@ enum i40evf_critical_section_t {
 	__I40EVF_IN_REMOVE_TASK,	/* device being removed */
 };
 
+#define I40EVF_CLOUD_FIELD_OMAC		0x01
+#define I40EVF_CLOUD_FIELD_IMAC		0x02
+#define I40EVF_CLOUD_FIELD_IVLAN	0x04
+#define I40EVF_CLOUD_FIELD_TEN_ID	0x08
+#define I40EVF_CLOUD_FIELD_IIP		0x10
+
+#define I40EVF_CF_FLAGS_OMAC	I40EVF_CLOUD_FIELD_OMAC
+#define I40EVF_CF_FLAGS_IMAC	I40EVF_CLOUD_FIELD_IMAC
+#define I40EVF_CF_FLAGS_IMAC_IVLAN	(I40EVF_CLOUD_FIELD_IMAC |\
+					 I40EVF_CLOUD_FIELD_IVLAN)
+#define I40EVF_CF_FLAGS_IMAC_TEN_ID	(I40EVF_CLOUD_FIELD_IMAC |\
+					 I40EVF_CLOUD_FIELD_TEN_ID)
+#define I40EVF_CF_FLAGS_OMAC_TEN_ID_IMAC	(I40EVF_CLOUD_FIELD_OMAC |\
+						 I40EVF_CLOUD_FIELD_IMAC |\
+						 I40EVF_CLOUD_FIELD_TEN_ID)
+#define I40EVF_CF_FLAGS_IMAC_IVLAN_TEN_ID	(I40EVF_CLOUD_FIELD_IMAC |\
+						 I40EVF_CLOUD_FIELD_IVLAN |\
+						 I40EVF_CLOUD_FIELD_TEN_ID)
+#define I40EVF_CF_FLAGS_IIP	I40E_CLOUD_FIELD_IIP
+
+/* bookkeeping of cloud filters */
+struct i40evf_cloud_filter {
+	enum i40evf_cloud_filter_state_t state;
+	struct list_head list;
+	struct virtchnl_filter f;
+	unsigned long cookie;
+	bool del;		/* filter needs to be deleted */
+	bool add;		/* filter needs to be added */
+};
+
 /* board specific private data structure */
 struct i40evf_adapter {
 	struct timer_list watchdog_timer;
@@ -199,13 +247,16 @@ struct i40evf_adapter {
 	wait_queue_head_t down_waitqueue;
 	struct i40e_q_vector *q_vectors;
 	struct list_head vlan_filter_list;
+	struct list_head mac_filter_list;
+	/* Lock to protect accesses to MAC and VLAN lists */
+	spinlock_t mac_vlan_list_lock;
 	char misc_vector_name[IFNAMSIZ + 9];
 	int num_active_queues;
+	int num_req_queues;
 
 	/* TX */
 	struct i40e_ring *tx_rings;
 	u32 tx_timeout_count;
-	struct list_head mac_filter_list;
 	u32 tx_desc_count;
 
 	/* RX */
@@ -221,21 +272,19 @@ struct i40evf_adapter {
 
 	u32 flags;
 #define I40EVF_FLAG_RX_CSUM_ENABLED		BIT(0)
-#define I40EVF_FLAG_IMIR_ENABLED		BIT(5)
-#define I40EVF_FLAG_MQ_CAPABLE			BIT(6)
-#define I40EVF_FLAG_PF_COMMS_FAILED		BIT(8)
-#define I40EVF_FLAG_RESET_PENDING		BIT(9)
-#define I40EVF_FLAG_RESET_NEEDED		BIT(10)
-#define I40EVF_FLAG_WB_ON_ITR_CAPABLE		BIT(11)
-#define I40EVF_FLAG_OUTER_UDP_CSUM_CAPABLE	BIT(12)
-#define I40EVF_FLAG_ADDR_SET_BY_PF		BIT(13)
-#define I40EVF_FLAG_SERVICE_CLIENT_REQUESTED	BIT(14)
-#define I40EVF_FLAG_CLIENT_NEEDS_OPEN		BIT(15)
-#define I40EVF_FLAG_CLIENT_NEEDS_CLOSE		BIT(16)
-#define I40EVF_FLAG_CLIENT_NEEDS_L2_PARAMS	BIT(17)
-#define I40EVF_FLAG_PROMISC_ON			BIT(18)
-#define I40EVF_FLAG_ALLMULTI_ON			BIT(19)
-#define I40EVF_FLAG_LEGACY_RX			BIT(20)
+#define I40EVF_FLAG_PF_COMMS_FAILED		BIT(3)
+#define I40EVF_FLAG_RESET_PENDING		BIT(4)
+#define I40EVF_FLAG_RESET_NEEDED		BIT(5)
+#define I40EVF_FLAG_WB_ON_ITR_CAPABLE		BIT(6)
+#define I40EVF_FLAG_ADDR_SET_BY_PF		BIT(8)
+#define I40EVF_FLAG_SERVICE_CLIENT_REQUESTED	BIT(9)
+#define I40EVF_FLAG_CLIENT_NEEDS_OPEN		BIT(10)
+#define I40EVF_FLAG_CLIENT_NEEDS_CLOSE		BIT(11)
+#define I40EVF_FLAG_CLIENT_NEEDS_L2_PARAMS	BIT(12)
+#define I40EVF_FLAG_PROMISC_ON			BIT(13)
+#define I40EVF_FLAG_ALLMULTI_ON			BIT(14)
+#define I40EVF_FLAG_LEGACY_RX			BIT(15)
+#define I40EVF_FLAG_REINIT_ITR_NEEDED		BIT(16)
 /* duplicates for common code */
 #define I40E_FLAG_DCB_ENABLED			0
 #define I40E_FLAG_RX_CSUM_ENABLED		I40EVF_FLAG_RX_CSUM_ENABLED
@@ -263,11 +312,16 @@ struct i40evf_adapter {
 #define I40EVF_FLAG_AQ_REQUEST_ALLMULTI		BIT(17)
 #define I40EVF_FLAG_AQ_RELEASE_ALLMULTI		BIT(18)
 #define I40EVF_FLAG_AQ_ENABLE_VLAN_STRIPPING	BIT(19)
-#define I40EVF_FLAG_AQ_DISABLE_VLAN_STRIPPING	BIT(20)
+#define I40EVF_FLAG_AQ_DISABLE_VLAN_STRIPPING   BIT(20)
+#define I40EVF_FLAG_AQ_ENABLE_CHANNELS		BIT(21)
+#define I40EVF_FLAG_AQ_DISABLE_CHANNELS		BIT(22)
+#define I40EVF_FLAG_AQ_ADD_CLOUD_FILTER		BIT(23)
+#define I40EVF_FLAG_AQ_DEL_CLOUD_FILTER		BIT(24)
 
 	/* OS defined structs */
 	struct net_device *netdev;
 	struct pci_dev *pdev;
+	struct net_device_stats net_stats;
 
 	struct i40e_hw hw; /* defined in i40e_type.h */
 
@@ -278,12 +332,22 @@ struct i40evf_adapter {
 	bool netdev_registered;
 	bool link_up;
 	enum virtchnl_link_speed link_speed;
+#ifdef VIRTCHNL_VF_CAP_ADV_LINK_SPEED
+	/* This is only populated if the VIRTCHNL_VF_CAP_ADV_LINK_SPEED is set
+	 * in vf_res->vf_cap_flags. Use ADV_LINK_SUPPORT macro to determine if
+	 * this field is valid. This field should be used going forward and the
+	 * enum virtchnl_link_speed above should be considered the legacy way of
+	 * storing/communicating link speeds.
+	 */
+	u32 link_speed_mbps;
+#endif /* VIRTCHNL_VF_CAP_ADV_LINK_SPEED */
+
 	enum virtchnl_ops current_op;
 #define CLIENT_ALLOWED(_a) ((_a)->vf_res ? \
 			    (_a)->vf_res->vf_cap_flags & \
 				VIRTCHNL_VF_OFFLOAD_IWARP : \
 			    0)
-#define CLIENT_ENABLED(_a) ((_a)->cinst)
+#define CLIENT_ENABLED(_a) ((_a)->cinst != NULL)
 /* RSS by the PF should be preferred over RSS via other methods. */
 #define RSS_PF(_a) ((_a)->vf_res->vf_cap_flags & \
 		    VIRTCHNL_VF_OFFLOAD_RSS_PF)
@@ -294,6 +358,18 @@ struct i40evf_adapter {
 			VIRTCHNL_VF_OFFLOAD_RSS_PF)))
 #define VLAN_ALLOWED(_a) ((_a)->vf_res->vf_cap_flags & \
 			  VIRTCHNL_VF_OFFLOAD_VLAN)
+#ifdef VIRTCHNL_VF_CAP_ADV_LINK_SPEED
+#define ADV_LINK_SUPPORT(_a) ((_a)->vf_res->vf_cap_flags & \
+			      VIRTCHNL_VF_CAP_ADV_LINK_SPEED)
+#ifdef SPEED_25000
+#define ALL_SPEEDS (SPEED_100000 | SPEED_50000 | SPEED_25000 | SPEED_10000 | \
+		    SPEED_5000 | SPEED_2500 | SPEED_1000 | SPEED_100 | SPEED_10)
+#else
+#define ALL_SPEEDS (SPEED_100000 | SPEED_50000 | SPEED_10000 | SPEED_5000 | \
+		    SPEED_2500 | SPEED_1000 | SPEED_100 | SPEED_10)
+#endif
+#define SUPPORTED_SPEED(_s) ((_s) & ALL_SPEEDS)
+#endif /* VIRTCHNL_VF_CAP_ADV_LINK_SPEED */
 	struct virtchnl_vf_resource *vf_res; /* incl. all VSIs */
 	struct virtchnl_vsi_resource *vsi_res; /* our LAN VSI */
 	struct virtchnl_version_info pf_version;
@@ -309,8 +385,32 @@ struct i40evf_adapter {
 	u16 rss_lut_size;
 	u8 *rss_key;
 	u8 *rss_lut;
+	/* ADQ related members */
+	struct i40evf_channel_config ch_config;
+	u8 num_tc;
+	struct list_head cloud_filter_list;
+	/* lock to protest access to the cloud filter list */
+	spinlock_t cloud_filter_list_lock;
+	u16 num_cloud_filters;
+#ifdef I40E_ADD_PROBES
+	u64 tcp_segs;
+	u64 tx_tcp_cso;
+	u64 tx_udp_cso;
+	u64 tx_sctp_cso;
+	u64 tx_ip4_cso;
+	u64 rx_tcp_cso;
+	u64 rx_udp_cso;
+	u64 rx_sctp_cso;
+	u64 rx_ip4_cso;
+	u64 rx_tcp_cso_err;
+	u64 hw_csum_rx_vxlan;
+	u64 hw_csum_rx_geneve;
+	u64 hw_csum_rx_outer;
+	u64 rx_udp_cso_err;
+	u64 rx_sctp_cso_err;
+	u64 rx_ip4_cso_err;
+#endif
 };
-
 
 /* Ethtool Private Flags */
 
@@ -350,6 +450,7 @@ void i40evf_deconfigure_queues(struct i40evf_adapter *adapter);
 void i40evf_enable_queues(struct i40evf_adapter *adapter);
 void i40evf_disable_queues(struct i40evf_adapter *adapter);
 void i40evf_map_queues(struct i40evf_adapter *adapter);
+int i40evf_request_queues(struct i40evf_adapter *adapter, int num);
 void i40evf_add_ether_addrs(struct i40evf_adapter *adapter);
 void i40evf_del_ether_addrs(struct i40evf_adapter *adapter);
 void i40evf_add_vlans(struct i40evf_adapter *adapter);
@@ -367,6 +468,10 @@ void i40evf_virtchnl_completion(struct i40evf_adapter *adapter,
 				enum virtchnl_ops v_opcode,
 				i40e_status v_retval, u8 *msg, u16 msglen);
 int i40evf_config_rss(struct i40evf_adapter *adapter);
+void i40evf_enable_channels(struct i40evf_adapter *adapter);
+void i40evf_disable_channels(struct i40evf_adapter *adapter);
+void i40evf_add_cloud_filter(struct i40evf_adapter *adapter);
+void i40evf_del_cloud_filter(struct i40evf_adapter *adapter);
 int i40evf_lan_add_device(struct i40evf_adapter *adapter);
 int i40evf_lan_del_device(struct i40evf_adapter *adapter);
 void i40evf_client_subtask(struct i40evf_adapter *adapter);

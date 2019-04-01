@@ -1,52 +1,29 @@
-/*******************************************************************************
- *
- * Intel Ethernet Controller XL710 Family Linux Virtual Function Driver
- * Copyright(c) 2013 - 2014 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
- * Contact Information:
- * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
- * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
- *
- ******************************************************************************/
+/* SPDX-License-Identifier: GPL-2.0 */
+/* Copyright(c) 2013 - 2018 Intel Corporation. */
 
 #ifndef _I40E_REGISTER_H_
 #define _I40E_REGISTER_H_
 
-#define I40E_VFMSIX_PBA1(_i) (0x00002000 + ((_i) * 4)) /* _i=0...19 */ /* Reset: VFLR */
-#define I40E_VFMSIX_PBA1_MAX_INDEX 19
+#define I40E_VFMSIX_PBA1(_i)          (0x00002000 + ((_i) * 4)) /* _i=0...19 */ /* Reset: VFLR */
+#define I40E_VFMSIX_PBA1_MAX_INDEX    19
 #define I40E_VFMSIX_PBA1_PENBIT_SHIFT 0
-#define I40E_VFMSIX_PBA1_PENBIT_MASK I40E_MASK(0xFFFFFFFF, I40E_VFMSIX_PBA1_PENBIT_SHIFT)
-#define I40E_VFMSIX_TADD1(_i) (0x00002100 + ((_i) * 16)) /* _i=0...639 */ /* Reset: VFLR */
-#define I40E_VFMSIX_TADD1_MAX_INDEX 639
+#define I40E_VFMSIX_PBA1_PENBIT_MASK  I40E_MASK(0xFFFFFFFF, I40E_VFMSIX_PBA1_PENBIT_SHIFT)
+#define I40E_VFMSIX_TADD1(_i)              (0x00002100 + ((_i) * 16)) /* _i=0...639 */ /* Reset: VFLR */
+#define I40E_VFMSIX_TADD1_MAX_INDEX        639
 #define I40E_VFMSIX_TADD1_MSIXTADD10_SHIFT 0
-#define I40E_VFMSIX_TADD1_MSIXTADD10_MASK I40E_MASK(0x3, I40E_VFMSIX_TADD1_MSIXTADD10_SHIFT)
-#define I40E_VFMSIX_TADD1_MSIXTADD_SHIFT 2
-#define I40E_VFMSIX_TADD1_MSIXTADD_MASK I40E_MASK(0x3FFFFFFF, I40E_VFMSIX_TADD1_MSIXTADD_SHIFT)
-#define I40E_VFMSIX_TMSG1(_i) (0x00002108 + ((_i) * 16)) /* _i=0...639 */ /* Reset: VFLR */
-#define I40E_VFMSIX_TMSG1_MAX_INDEX 639
+#define I40E_VFMSIX_TADD1_MSIXTADD10_MASK  I40E_MASK(0x3, I40E_VFMSIX_TADD1_MSIXTADD10_SHIFT)
+#define I40E_VFMSIX_TADD1_MSIXTADD_SHIFT   2
+#define I40E_VFMSIX_TADD1_MSIXTADD_MASK    I40E_MASK(0x3FFFFFFF, I40E_VFMSIX_TADD1_MSIXTADD_SHIFT)
+#define I40E_VFMSIX_TMSG1(_i)            (0x00002108 + ((_i) * 16)) /* _i=0...639 */ /* Reset: VFLR */
+#define I40E_VFMSIX_TMSG1_MAX_INDEX      639
 #define I40E_VFMSIX_TMSG1_MSIXTMSG_SHIFT 0
-#define I40E_VFMSIX_TMSG1_MSIXTMSG_MASK I40E_MASK(0xFFFFFFFF, I40E_VFMSIX_TMSG1_MSIXTMSG_SHIFT)
-#define I40E_VFMSIX_TUADD1(_i) (0x00002104 + ((_i) * 16)) /* _i=0...639 */ /* Reset: VFLR */
-#define I40E_VFMSIX_TUADD1_MAX_INDEX 639
+#define I40E_VFMSIX_TMSG1_MSIXTMSG_MASK  I40E_MASK(0xFFFFFFFF, I40E_VFMSIX_TMSG1_MSIXTMSG_SHIFT)
+#define I40E_VFMSIX_TUADD1(_i)             (0x00002104 + ((_i) * 16)) /* _i=0...639 */ /* Reset: VFLR */
+#define I40E_VFMSIX_TUADD1_MAX_INDEX       639
 #define I40E_VFMSIX_TUADD1_MSIXTUADD_SHIFT 0
-#define I40E_VFMSIX_TUADD1_MSIXTUADD_MASK I40E_MASK(0xFFFFFFFF, I40E_VFMSIX_TUADD1_MSIXTUADD_SHIFT)
-#define I40E_VFMSIX_TVCTRL1(_i) (0x0000210C + ((_i) * 16)) /* _i=0...639 */ /* Reset: VFLR */
-#define I40E_VFMSIX_TVCTRL1_MAX_INDEX 639
+#define I40E_VFMSIX_TUADD1_MSIXTUADD_MASK  I40E_MASK(0xFFFFFFFF, I40E_VFMSIX_TUADD1_MSIXTUADD_SHIFT)
+#define I40E_VFMSIX_TVCTRL1(_i)        (0x0000210C + ((_i) * 16)) /* _i=0...639 */ /* Reset: VFLR */
+#define I40E_VFMSIX_TVCTRL1_MAX_INDEX  639
 #define I40E_VFMSIX_TVCTRL1_MASK_SHIFT 0
 #define I40E_VFMSIX_TVCTRL1_MASK_MASK I40E_MASK(0x1, I40E_VFMSIX_TVCTRL1_MASK_SHIFT)
 #define I40E_VF_ARQBAH1 0x00006000 /* Reset: EMPR */
@@ -273,6 +250,7 @@
 #define I40E_VFQF_HREGION_OVERRIDE_ENA_7_MASK I40E_MASK(0x1, I40E_VFQF_HREGION_OVERRIDE_ENA_7_SHIFT)
 #define I40E_VFQF_HREGION_REGION_7_SHIFT 29
 #define I40E_VFQF_HREGION_REGION_7_MASK I40E_MASK(0x7, I40E_VFQF_HREGION_REGION_7_SHIFT)
+
 #define I40E_VFINT_DYN_CTL01_WB_ON_ITR_SHIFT 30
 #define I40E_VFINT_DYN_CTL01_WB_ON_ITR_MASK I40E_MASK(0x1, I40E_VFINT_DYN_CTL01_WB_ON_ITR_SHIFT)
 #define I40E_VFINT_DYN_CTLN1_WB_ON_ITR_SHIFT 30
@@ -333,4 +311,5 @@
 #define I40E_VFPE_WQEALLOC1_PEQPID_MASK I40E_MASK(0x3FFFF, I40E_VFPE_WQEALLOC1_PEQPID_SHIFT)
 #define I40E_VFPE_WQEALLOC1_WQE_DESC_INDEX_SHIFT 20
 #define I40E_VFPE_WQEALLOC1_WQE_DESC_INDEX_MASK I40E_MASK(0xFFF, I40E_VFPE_WQEALLOC1_WQE_DESC_INDEX_SHIFT)
+
 #endif /* _I40E_REGISTER_H_ */

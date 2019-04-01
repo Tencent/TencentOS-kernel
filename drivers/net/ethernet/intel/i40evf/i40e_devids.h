@@ -1,30 +1,6 @@
-/*******************************************************************************
- *
- * Intel Ethernet Controller XL710 Family Linux Virtual Function Driver
- * Copyright(c) 2013 - 2015 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
- * Contact Information:
- * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
- * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
- *
- ******************************************************************************/
+/* SPDX-License-Identifier: GPL-2.0 */
+/* Copyright(c) 2013 - 2018 Intel Corporation. */
 
-#ifndef _I40E_DEVIDS_H_
 #define _I40E_DEVIDS_H_
 
 /* Device IDs */
@@ -41,9 +17,12 @@
 #define I40E_DEV_ID_10G_BASE_T4		0x1589
 #define I40E_DEV_ID_25G_B		0x158A
 #define I40E_DEV_ID_25G_SFP28		0x158B
+#define I40E_DEV_ID_10G_BASE_T_BC	0x15FF
 #define I40E_DEV_ID_VF			0x154C
 #define I40E_DEV_ID_VF_HV		0x1571
 #define I40E_DEV_ID_ADAPTIVE_VF		0x1889
+#define I40E_DEV_ID_KX_X722		0x37CE
+#define I40E_DEV_ID_QSFP_X722		0x37CF
 #define I40E_DEV_ID_SFP_X722		0x37D0
 #define I40E_DEV_ID_1G_BASE_T_X722	0x37D1
 #define I40E_DEV_ID_10G_BASE_T_X722	0x37D2
@@ -54,4 +33,6 @@
 					 (d) == I40E_DEV_ID_QSFP_B  || \
 					 (d) == I40E_DEV_ID_QSFP_C)
 
-#endif /* _I40E_DEVIDS_H_ */
+#define i40e_is_25G_device(d)		((d) == I40E_DEV_ID_25G_B  || \
+					 (d) == I40E_DEV_ID_25G_SFP28)
+
