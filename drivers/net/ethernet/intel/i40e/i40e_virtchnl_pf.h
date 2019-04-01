@@ -1,28 +1,5 @@
-/*******************************************************************************
- *
- * Intel Ethernet Controller XL710 Family Linux Driver
- * Copyright(c) 2013 - 2015 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
- * Contact Information:
- * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
- * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
- *
- ******************************************************************************/
+/* SPDX-License-Identifier: GPL-2.0 */
+/* Copyright(c) 2013 - 2018 Intel Corporation. */
 
 #ifndef _I40E_VIRTCHNL_PF_H_
 #define _I40E_VIRTCHNL_PF_H_
@@ -36,9 +13,9 @@
 #define I40E_DEFAULT_NUM_MDD_EVENTS_ALLOWED	3
 #define I40E_DEFAULT_NUM_INVALID_MSGS_ALLOWED	10
 
-#define I40E_VLAN_PRIORITY_SHIFT	12
+#define I40E_VLAN_PRIORITY_SHIFT	13
 #define I40E_VLAN_MASK			0xFFF
-#define I40E_PRIORITY_MASK		0x7000
+#define I40E_PRIORITY_MASK		0xE000
 
 /* Various queue ctrls */
 enum i40e_queue_ctrl {
@@ -56,7 +33,6 @@ enum i40e_vf_states {
 	I40E_VF_STATE_INIT = 0,
 	I40E_VF_STATE_ACTIVE,
 	I40E_VF_STATE_IWARPENA,
-	I40E_VF_STATE_FCOEENA,
 	I40E_VF_STATE_DISABLED,
 	I40E_VF_STATE_MC_PROMISC,
 	I40E_VF_STATE_UC_PROMISC,
@@ -68,6 +44,19 @@ enum i40e_vf_capabilities {
 	I40E_VIRTCHNL_VF_CAP_PRIVILEGE = 0,
 	I40E_VIRTCHNL_VF_CAP_L2,
 	I40E_VIRTCHNL_VF_CAP_IWARP,
+};
+
+/* In ADq, max 4 VSI's can be allocated per VF including primary VF VSI.
+ * These variables are used to store indices, id's and number of queues
+ * for each VSI including that of primary VF VSI. Each Traffic class is
+ * termed as channel and each channel can in-turn have 4 queues which
+ * means max 16 queues overall per VF.
+ */
+struct i40evf_channel {
+	u16 vsi_idx; /* index in PF struct for all channel VSIs */
+	u16 vsi_id; /* VSI ID used by firmware */
+	u16 num_qps; /* number of queue pairs requested by user */
+	u64 max_tx_rate; /* bandwidth rate allocation for VSIs */
 };
 
 /* VF information structure */
@@ -97,6 +86,7 @@ struct i40e_vf {
 	u16 lan_vsi_id;		/* ID as used by firmware */
 
 	u8 num_queue_pairs;	/* num of qps assigned to VF vsis */
+	u8 num_req_queues;	/* num of requested qps */
 	u64 num_mdd_events;	/* num of mdd events detected */
 	/* num of continuous malformed or invalid msgs detected */
 	u64 num_invalid_msgs;
@@ -105,39 +95,84 @@ struct i40e_vf {
 	unsigned long vf_caps;	/* vf's adv. capabilities */
 	unsigned long vf_states;	/* vf's runtime states */
 	unsigned int tx_rate;	/* Tx bandwidth limit in Mbps */
+#ifdef HAVE_NDO_SET_VF_LINK_STATE
 	bool link_forced;
 	bool link_up;		/* only valid if VF link is forced */
+#endif
 	bool spoofchk;
 	u16 num_mac;
 	u16 num_vlan;
+	DECLARE_BITMAP(mirror_vlans, VLAN_N_VID);
+	u16 vlan_rule_id;
+#define I40E_NO_VF_MIRROR	-1
+	u16 ingress_rule_id;
+	int ingress_vlan;
+	u16 egress_rule_id;
+	int egress_vlan;
+	DECLARE_BITMAP(trunk_vlans, VLAN_N_VID);
+	bool mac_anti_spoof;
+	bool vlan_anti_spoof;
+	bool allow_untagged;
+	bool loopback;
+	bool vlan_stripping;
+	u8 promisc_mode;
+
+	/* ADq related variables */
+	bool adq_enabled; /* flag to enable adq */
+	u8 num_tc;
+	struct i40evf_channel ch[I40E_MAX_VF_VSI];
+	struct hlist_head cloud_filter_list;
+	u16 num_cloud_filters;
 
 	/* RDMA Client */
 	struct virtchnl_iwarp_qvlist_info *qvlist_info;
 };
 
 void i40e_free_vfs(struct i40e_pf *pf);
+#if defined(HAVE_SRIOV_CONFIGURE) || defined(HAVE_RHEL6_SRIOV_CONFIGURE)
 int i40e_pci_sriov_configure(struct pci_dev *dev, int num_vfs);
+#endif
 int i40e_alloc_vfs(struct i40e_pf *pf, u16 num_alloc_vfs);
 int i40e_vc_process_vf_msg(struct i40e_pf *pf, s16 vf_id, u32 v_opcode,
 			   u32 v_retval, u8 *msg, u16 msglen);
 int i40e_vc_process_vflr_event(struct i40e_pf *pf);
-void i40e_reset_vf(struct i40e_vf *vf, bool flr);
-void i40e_reset_all_vfs(struct i40e_pf *pf, bool flr);
+bool i40e_reset_vf(struct i40e_vf *vf, bool flr);
+bool i40e_reset_all_vfs(struct i40e_pf *pf, bool flr);
 void i40e_vc_notify_vf_reset(struct i40e_vf *vf);
 
 /* VF configuration related iplink handlers */
 int i40e_ndo_set_vf_mac(struct net_device *netdev, int vf_id, u8 *mac);
+#ifdef IFLA_VF_VLAN_INFO_MAX
 int i40e_ndo_set_vf_port_vlan(struct net_device *netdev, int vf_id,
 			      u16 vlan_id, u8 qos, __be16 vlan_proto);
+#else
+int i40e_ndo_set_vf_port_vlan(struct net_device *netdev,
+			      int vf_id, u16 vlan_id, u8 qos);
+#endif
+#ifdef HAVE_NDO_SET_VF_MIN_MAX_TX_RATE
 int i40e_ndo_set_vf_bw(struct net_device *netdev, int vf_id, int min_tx_rate,
 		       int max_tx_rate);
+#else
+int i40e_ndo_set_vf_bw(struct net_device *netdev, int vf_id, int tx_rate);
+#endif
+#ifdef HAVE_NDO_SET_VF_TRUST
 int i40e_ndo_set_vf_trust(struct net_device *netdev, int vf_id, bool setting);
+#endif
+int i40e_ndo_enable_vf(struct net_device *netdev, int vf_id, bool enable);
+#ifdef IFLA_VF_MAX
 int i40e_ndo_get_vf_config(struct net_device *netdev,
 			   int vf_id, struct ifla_vf_info *ivi);
+#ifdef HAVE_NDO_SET_VF_LINK_STATE
 int i40e_ndo_set_vf_link_state(struct net_device *netdev, int vf_id, int link);
+#endif
+#ifdef HAVE_VF_SPOOFCHK_CONFIGURE
 int i40e_ndo_set_vf_spoofchk(struct net_device *netdev, int vf_id, bool enable);
+#endif
+#endif
 
 void i40e_vc_notify_link_state(struct i40e_pf *pf);
 void i40e_vc_notify_reset(struct i40e_pf *pf);
+
+extern const struct vfd_ops i40e_vfd_ops;
 
 #endif /* _I40E_VIRTCHNL_PF_H_ */

@@ -1,28 +1,5 @@
-/*******************************************************************************
- *
- * Intel Ethernet Controller XL710 Family Linux Driver
- * Copyright(c) 2013 - 2017 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
- * Contact Information:
- * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
- * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
- *
- ******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0
+/* Copyright(c) 2013 - 2018 Intel Corporation. */
 
 #include "i40e_adminq.h"
 #include "i40e_prototype.h"
@@ -46,7 +23,7 @@ i40e_status i40e_get_dcbx_status(struct i40e_hw *hw, u16 *status)
 	*status = (u16)((reg & I40E_PRTDCB_GENS_DCBX_STATUS_MASK) >>
 			I40E_PRTDCB_GENS_DCBX_STATUS_SHIFT);
 
-	return 0;
+	return I40E_SUCCESS;
 }
 
 /**
@@ -387,7 +364,6 @@ static void i40e_parse_cee_app_tlv(struct i40e_cee_feat_tlv *tlv,
 		       I40E_LLDP_TLV_LEN_SHIFT);
 
 	dcbcfg->numapps = length / sizeof(*app);
-
 	if (!dcbcfg->numapps)
 		return;
 	if (dcbcfg->numapps > I40E_DCBX_MAX_APPS)
@@ -523,7 +499,7 @@ static void i40e_parse_org_tlv(struct i40e_lldp_org_tlv *tlv,
 i40e_status i40e_lldp_to_dcb_config(u8 *lldpmib,
 				    struct i40e_dcbx_config *dcbcfg)
 {
-	i40e_status ret = 0;
+	i40e_status ret = I40E_SUCCESS;
 	struct i40e_lldp_org_tlv *tlv;
 	u16 type;
 	u16 length;
@@ -578,7 +554,7 @@ i40e_status i40e_aq_get_dcb_config(struct i40e_hw *hw, u8 mib_type,
 				   u8 bridgetype,
 				   struct i40e_dcbx_config *dcbcfg)
 {
-	i40e_status ret = 0;
+	i40e_status ret = I40E_SUCCESS;
 	struct i40e_virt_mem mem;
 	u8 *lldpmib;
 
@@ -613,8 +589,8 @@ static void i40e_cee_to_dcb_v1_config(
 			struct i40e_aqc_get_cee_dcb_cfg_v1_resp *cee_cfg,
 			struct i40e_dcbx_config *dcbcfg)
 {
-	u16 status, tlv_status = le16_to_cpu(cee_cfg->tlv_status);
-	u16 app_prio = le16_to_cpu(cee_cfg->oper_app_prio);
+	u16 status, tlv_status = LE16_TO_CPU(cee_cfg->tlv_status);
+	u16 app_prio = LE16_TO_CPU(cee_cfg->oper_app_prio);
 	u8 i, tc, err;
 
 	/* CEE PG data to ETS config */
@@ -627,7 +603,7 @@ static void i40e_cee_to_dcb_v1_config(
 		tc = (u8)((cee_cfg->oper_prio_tc[i] &
 			 I40E_CEE_PGID_PRIO_0_MASK) >>
 			 I40E_CEE_PGID_PRIO_0_SHIFT);
-		dcbcfg->etscfg.prioritytable[i * 2] =  tc;
+		dcbcfg->etscfg.prioritytable[i*2] =  tc;
 		tc = (u8)((cee_cfg->oper_prio_tc[i] &
 			 I40E_CEE_PGID_PRIO_1_MASK) >>
 			 I40E_CEE_PGID_PRIO_1_SHIFT);
@@ -694,8 +670,8 @@ static void i40e_cee_to_dcb_config(
 				struct i40e_aqc_get_cee_dcb_cfg_resp *cee_cfg,
 				struct i40e_dcbx_config *dcbcfg)
 {
-	u32 status, tlv_status = le32_to_cpu(cee_cfg->tlv_status);
-	u16 app_prio = le16_to_cpu(cee_cfg->oper_app_prio);
+	u32 status, tlv_status = LE32_TO_CPU(cee_cfg->tlv_status);
+	u16 app_prio = LE16_TO_CPU(cee_cfg->oper_app_prio);
 	u8 i, tc, err, sync, oper;
 
 	/* CEE PG data to ETS config */
@@ -708,11 +684,11 @@ static void i40e_cee_to_dcb_config(
 		tc = (u8)((cee_cfg->oper_prio_tc[i] &
 			 I40E_CEE_PGID_PRIO_0_MASK) >>
 			 I40E_CEE_PGID_PRIO_0_SHIFT);
-		dcbcfg->etscfg.prioritytable[i * 2] =  tc;
+		dcbcfg->etscfg.prioritytable[i*2] =  tc;
 		tc = (u8)((cee_cfg->oper_prio_tc[i] &
 			 I40E_CEE_PGID_PRIO_1_MASK) >>
 			 I40E_CEE_PGID_PRIO_1_SHIFT);
-		dcbcfg->etscfg.prioritytable[i * 2 + 1] = tc;
+		dcbcfg->etscfg.prioritytable[i*2 + 1] = tc;
 	}
 
 	for (i = 0; i < I40E_MAX_TRAFFIC_CLASS; i++)
@@ -792,7 +768,7 @@ static void i40e_cee_to_dcb_config(
  **/
 static i40e_status i40e_get_ieee_dcb_config(struct i40e_hw *hw)
 {
-	i40e_status ret = 0;
+	i40e_status ret = I40E_SUCCESS;
 
 	/* IEEE mode */
 	hw->local_dcbx_config.dcbx_mode = I40E_DCBX_MODE_IEEE;
@@ -808,7 +784,7 @@ static i40e_status i40e_get_ieee_dcb_config(struct i40e_hw *hw)
 				     &hw->remote_dcbx_config);
 	/* Don't treat ENOENT as an error for Remote MIBs */
 	if (hw->aq.asq_last_status == I40E_AQ_RC_ENOENT)
-		ret = 0;
+		ret = I40E_SUCCESS;
 
 out:
 	return ret;
@@ -822,7 +798,7 @@ out:
  **/
 i40e_status i40e_get_dcb_config(struct i40e_hw *hw)
 {
-	i40e_status ret = 0;
+	i40e_status ret = I40E_SUCCESS;
 	struct i40e_aqc_get_cee_dcb_cfg_resp cee_cfg;
 	struct i40e_aqc_get_cee_dcb_cfg_v1_resp cee_v1_cfg;
 
@@ -837,22 +813,22 @@ i40e_status i40e_get_dcb_config(struct i40e_hw *hw)
 	    ((hw->aq.fw_maj_ver == 4) && (hw->aq.fw_min_ver == 33))) {
 		ret = i40e_aq_get_cee_dcb_config(hw, &cee_v1_cfg,
 						 sizeof(cee_v1_cfg), NULL);
-		if (!ret) {
+		if (ret == I40E_SUCCESS) {
 			/* CEE mode */
 			hw->local_dcbx_config.dcbx_mode = I40E_DCBX_MODE_CEE;
 			hw->local_dcbx_config.tlv_status =
-					le16_to_cpu(cee_v1_cfg.tlv_status);
+					LE16_TO_CPU(cee_v1_cfg.tlv_status);
 			i40e_cee_to_dcb_v1_config(&cee_v1_cfg,
 						  &hw->local_dcbx_config);
 		}
 	} else {
 		ret = i40e_aq_get_cee_dcb_config(hw, &cee_cfg,
 						 sizeof(cee_cfg), NULL);
-		if (!ret) {
+		if (ret == I40E_SUCCESS) {
 			/* CEE mode */
 			hw->local_dcbx_config.dcbx_mode = I40E_DCBX_MODE_CEE;
 			hw->local_dcbx_config.tlv_status =
-					le32_to_cpu(cee_cfg.tlv_status);
+					LE32_TO_CPU(cee_cfg.tlv_status);
 			i40e_cee_to_dcb_config(&cee_cfg,
 					       &hw->local_dcbx_config);
 		}
@@ -862,7 +838,7 @@ i40e_status i40e_get_dcb_config(struct i40e_hw *hw)
 	if (hw->aq.asq_last_status == I40E_AQ_RC_ENOENT)
 		return i40e_get_ieee_dcb_config(hw);
 
-	if (ret)
+	if (ret != I40E_SUCCESS)
 		goto out;
 
 	/* Get CEE DCB Desired Config */
@@ -873,11 +849,11 @@ i40e_status i40e_get_dcb_config(struct i40e_hw *hw)
 
 	/* Get Remote DCB Config */
 	ret = i40e_aq_get_dcb_config(hw, I40E_AQ_LLDP_MIB_REMOTE,
-				     I40E_AQ_LLDP_BRIDGE_TYPE_NEAREST_BRIDGE,
-				     &hw->remote_dcbx_config);
+			     I40E_AQ_LLDP_BRIDGE_TYPE_NEAREST_BRIDGE,
+			     &hw->remote_dcbx_config);
 	/* Don't treat ENOENT as an error for Remote MIBs */
 	if (hw->aq.asq_last_status == I40E_AQ_RC_ENOENT)
-		ret = 0;
+		ret = I40E_SUCCESS;
 
 out:
 	return ret;
@@ -891,7 +867,7 @@ out:
  **/
 i40e_status i40e_init_dcb(struct i40e_hw *hw)
 {
-	i40e_status ret = 0;
+	i40e_status ret = I40E_SUCCESS;
 	struct i40e_lldp_variables lldp_cfg;
 	u8 adminstatus = 0;
 
@@ -944,6 +920,70 @@ i40e_status i40e_init_dcb(struct i40e_hw *hw)
 }
 
 /**
+ * _i40e_read_lldp_cfg - generic read of LLDP Configuration data from NVM
+ * @hw: pointer to the HW structure
+ * @lldp_cfg: pointer to hold lldp configuration variables
+ * @module: address of the module pointer
+ * @word_offset: offset of LLDP configuration
+ *
+ * Reads the LLDP configuration data from NVM using passed addresses
+ **/
+static i40e_status _i40e_read_lldp_cfg(struct i40e_hw *hw,
+					  struct i40e_lldp_variables *lldp_cfg,
+					  u8 module, u32 word_offset)
+{
+	u32 address, offset = (2 * word_offset);
+	i40e_status ret;
+	__le16 raw_mem;
+	u16 mem;
+
+	ret = i40e_acquire_nvm(hw, I40E_RESOURCE_READ);
+	if (ret != I40E_SUCCESS)
+		return ret;
+
+	ret = i40e_aq_read_nvm(hw, 0x0, module * 2, sizeof(raw_mem), &raw_mem,
+			       true, NULL);
+	i40e_release_nvm(hw);
+	if (ret != I40E_SUCCESS)
+		return ret;
+
+	mem = LE16_TO_CPU(raw_mem);
+	/* Check if this pointer needs to be read in word size or 4K sector
+	 * units.
+	 */
+	if (mem & I40E_PTR_TYPE)
+		address = (0x7FFF & mem) * 4096;
+	else
+		address = (0x7FFF & mem) * 2;
+
+	ret = i40e_acquire_nvm(hw, I40E_RESOURCE_READ);
+	if (ret != I40E_SUCCESS)
+		goto err_lldp_cfg;
+
+	ret = i40e_aq_read_nvm(hw, module, offset, sizeof(raw_mem), &raw_mem,
+			       true, NULL);
+	i40e_release_nvm(hw);
+	if (ret != I40E_SUCCESS)
+		return ret;
+
+	mem = LE16_TO_CPU(raw_mem);
+	offset = mem + word_offset;
+	offset *= 2;
+
+	ret = i40e_acquire_nvm(hw, I40E_RESOURCE_READ);
+	if (ret != I40E_SUCCESS)
+		goto err_lldp_cfg;
+
+	ret = i40e_aq_read_nvm(hw, 0, address + offset,
+			       sizeof(struct i40e_lldp_variables), lldp_cfg,
+			       true, NULL);
+	i40e_release_nvm(hw);
+
+err_lldp_cfg:
+	return ret;
+}
+
+/**
  * i40e_read_lldp_cfg - read LLDP Configuration data from NVM
  * @hw: pointer to the HW structure
  * @lldp_cfg: pointer to hold lldp configuration variables
@@ -951,24 +991,37 @@ i40e_status i40e_init_dcb(struct i40e_hw *hw)
  * Reads the LLDP configuration data from NVM
  **/
 i40e_status i40e_read_lldp_cfg(struct i40e_hw *hw,
-			       struct i40e_lldp_variables *lldp_cfg)
+					 struct i40e_lldp_variables *lldp_cfg)
 {
-	i40e_status ret = 0;
-	u32 offset = (2 * I40E_NVM_LLDP_CFG_PTR);
+	i40e_status ret = I40E_SUCCESS;
+	u32 mem;
 
 	if (!lldp_cfg)
 		return I40E_ERR_PARAM;
 
 	ret = i40e_acquire_nvm(hw, I40E_RESOURCE_READ);
-	if (ret)
-		goto err_lldp_cfg;
+	if (ret != I40E_SUCCESS)
+		return ret;
 
-	ret = i40e_aq_read_nvm(hw, I40E_SR_EMP_MODULE_PTR, offset,
-			       sizeof(struct i40e_lldp_variables),
-			       (u8 *)lldp_cfg,
-			       true, NULL);
+	ret = i40e_aq_read_nvm(hw, I40E_SR_NVM_CONTROL_WORD, 0, sizeof(mem),
+			       &mem, true, NULL);
 	i40e_release_nvm(hw);
+	if (ret != I40E_SUCCESS)
+		return ret;
 
-err_lldp_cfg:
+	/* Read a bit that holds information whether we are running flat or
+	 * structured NVM image. Flat image has LLDP configuration in shadow
+	 * ram, so there is a need to pass different addresses for both cases.
+	 */
+	if (mem & I40E_SR_NVM_MAP_STRUCTURE_TYPE) {
+		/* Flat NVM case */
+		ret = _i40e_read_lldp_cfg(hw, lldp_cfg, I40E_SR_EMP_MODULE_PTR,
+					  I40E_SR_LLDP_CFG_PTR);
+	} else {
+		/* Good old structured NVM image */
+		ret = _i40e_read_lldp_cfg(hw, lldp_cfg, I40E_EMP_MODULE_PTR,
+					  I40E_NVM_LLDP_CFG_PTR);
+	}
+
 	return ret;
 }

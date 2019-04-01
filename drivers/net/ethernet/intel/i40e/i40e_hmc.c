@@ -1,35 +1,14 @@
-/*******************************************************************************
- *
- * Intel Ethernet Controller XL710 Family Linux Driver
- * Copyright(c) 2013 - 2014 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
- * Contact Information:
- * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
- * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
- *
- ******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0
+/* Copyright(c) 2013 - 2018 Intel Corporation. */
 
 #include "i40e_osdep.h"
 #include "i40e_register.h"
 #include "i40e_status.h"
 #include "i40e_alloc.h"
 #include "i40e_hmc.h"
+#ifndef I40E_NO_TYPE_HEADER
 #include "i40e_type.h"
+#endif
 
 /**
  * i40e_add_sd_table_entry - Adds a segment descriptor to the table
@@ -45,11 +24,11 @@ i40e_status i40e_add_sd_table_entry(struct i40e_hw *hw,
 					      enum i40e_sd_entry_type type,
 					      u64 direct_mode_sz)
 {
-	enum i40e_memory_type mem_type __attribute__((unused));
+	i40e_status ret_code = I40E_SUCCESS;
 	struct i40e_hmc_sd_entry *sd_entry;
+	enum   i40e_memory_type mem_type;
 	bool dma_mem_alloc_done = false;
 	struct i40e_dma_mem mem;
-	i40e_status ret_code = I40E_SUCCESS;
 	u64 alloc_len;
 
 	if (NULL == hmc_info->sd_table.sd_entry) {
@@ -89,9 +68,13 @@ i40e_status i40e_add_sd_table_entry(struct i40e_hw *hw,
 			sd_entry->u.pd_table.pd_entry =
 				(struct i40e_hmc_pd_entry *)
 				sd_entry->u.pd_table.pd_entry_virt_mem.va;
-			sd_entry->u.pd_table.pd_page_addr = mem;
+			i40e_memcpy(&sd_entry->u.pd_table.pd_page_addr,
+				    &mem, sizeof(struct i40e_dma_mem),
+				    I40E_NONDMA_TO_NONDMA);
 		} else {
-			sd_entry->u.bp.addr = mem;
+			i40e_memcpy(&sd_entry->u.bp.addr,
+				    &mem, sizeof(struct i40e_dma_mem),
+				    I40E_NONDMA_TO_NONDMA);
 			sd_entry->u.bp.sd_pd_index = sd_index;
 		}
 		/* initialize the sd entry */
@@ -104,7 +87,7 @@ i40e_status i40e_add_sd_table_entry(struct i40e_hw *hw,
 	if (I40E_SD_TYPE_DIRECT == sd_entry->entry_type)
 		I40E_INC_BP_REFCNT(&sd_entry->u.bp);
 exit:
-	if (ret_code)
+	if (I40E_SUCCESS != ret_code)
 		if (dma_mem_alloc_done)
 			i40e_free_dma_mem(hw, &mem);
 
@@ -133,7 +116,7 @@ i40e_status i40e_add_pd_table_entry(struct i40e_hw *hw,
 					      u32 pd_index,
 					      struct i40e_dma_mem *rsrc_pg)
 {
-	i40e_status ret_code = 0;
+	i40e_status ret_code = I40E_SUCCESS;
 	struct i40e_hmc_pd_table *pd_table;
 	struct i40e_hmc_pd_entry *pd_entry;
 	struct i40e_dma_mem mem;
@@ -171,7 +154,8 @@ i40e_status i40e_add_pd_table_entry(struct i40e_hw *hw,
 			pd_entry->rsrc_pg = false;
 		}
 
-		pd_entry->bp.addr = *page;
+		i40e_memcpy(&pd_entry->bp.addr, page,
+			    sizeof(struct i40e_dma_mem), I40E_NONDMA_TO_NONDMA);
 		pd_entry->bp.sd_pd_index = pd_index;
 		pd_entry->bp.entry_type = I40E_SD_TYPE_PAGED;
 		/* Set page address and valid bit */
@@ -181,7 +165,8 @@ i40e_status i40e_add_pd_table_entry(struct i40e_hw *hw,
 		pd_addr += rel_pd_idx;
 
 		/* Add the backing page physical address in the pd entry */
-		memcpy(pd_addr, &page_desc, sizeof(u64));
+		i40e_memcpy(pd_addr, &page_desc, sizeof(u64),
+			    I40E_NONDMA_TO_DMA);
 
 		pd_entry->sd_index = sd_idx;
 		pd_entry->valid = true;
@@ -197,7 +182,6 @@ exit:
  * @hw: pointer to our HW structure
  * @hmc_info: pointer to the HMC configuration information structure
  * @idx: the page index
- * @is_pf: distinguishes a VF from a PF
  *
  * This function:
  *	1. Marks the entry in pd tabe (for paged address mode) or in sd table
@@ -212,7 +196,7 @@ i40e_status i40e_remove_pd_bp(struct i40e_hw *hw,
 					struct i40e_hmc_info *hmc_info,
 					u32 idx)
 {
-	i40e_status ret_code = 0;
+	i40e_status ret_code = I40E_SUCCESS;
 	struct i40e_hmc_pd_entry *pd_entry;
 	struct i40e_hmc_pd_table *pd_table;
 	struct i40e_hmc_sd_entry *sd_entry;
@@ -245,13 +229,13 @@ i40e_status i40e_remove_pd_bp(struct i40e_hw *hw,
 	I40E_DEC_PD_REFCNT(pd_table);
 	pd_addr = (u64 *)pd_table->pd_page_addr.va;
 	pd_addr += rel_pd_idx;
-	memset(pd_addr, 0, sizeof(u64));
+	i40e_memset(pd_addr, 0, sizeof(u64), I40E_DMA_MEM);
 	I40E_INVALIDATE_PF_HMC_PD(hw, sd_idx, idx);
 
 	/* free memory here */
 	if (!pd_entry->rsrc_pg)
-		ret_code = i40e_free_dma_mem(hw, &pd_entry->bp.addr);
-	if (ret_code)
+		ret_code = i40e_free_dma_mem(hw, &(pd_entry->bp.addr));
+	if (I40E_SUCCESS != ret_code)
 		goto exit;
 	if (!pd_table->ref_cnt)
 		i40e_free_virt_mem(hw, &pd_table->pd_entry_virt_mem);
@@ -267,7 +251,7 @@ exit:
 i40e_status i40e_prep_remove_sd_bp(struct i40e_hmc_info *hmc_info,
 					     u32 idx)
 {
-	i40e_status ret_code = 0;
+	i40e_status ret_code = I40E_SUCCESS;
 	struct i40e_hmc_sd_entry *sd_entry;
 
 	/* get the entry and decrease its ref counter */
@@ -305,7 +289,7 @@ i40e_status i40e_remove_sd_bp_new(struct i40e_hw *hw,
 	sd_entry = &hmc_info->sd_table.sd_entry[idx];
 	I40E_CLEAR_PF_SD_ENTRY(hw, idx, I40E_SD_TYPE_DIRECT);
 
-	return i40e_free_dma_mem(hw, &sd_entry->u.bp.addr);
+	return i40e_free_dma_mem(hw, &(sd_entry->u.bp.addr));
 }
 
 /**
@@ -316,7 +300,7 @@ i40e_status i40e_remove_sd_bp_new(struct i40e_hw *hw,
 i40e_status i40e_prep_remove_pd_page(struct i40e_hmc_info *hmc_info,
 					       u32 idx)
 {
-	i40e_status ret_code = 0;
+	i40e_status ret_code = I40E_SUCCESS;
 	struct i40e_hmc_sd_entry *sd_entry;
 
 	sd_entry = &hmc_info->sd_table.sd_entry[idx];
@@ -353,5 +337,5 @@ i40e_status i40e_remove_pd_page_new(struct i40e_hw *hw,
 	sd_entry = &hmc_info->sd_table.sd_entry[idx];
 	I40E_CLEAR_PF_SD_ENTRY(hw, idx, I40E_SD_TYPE_PAGED);
 
-	return  i40e_free_dma_mem(hw, &sd_entry->u.pd_table.pd_page_addr);
+	return i40e_free_dma_mem(hw, &(sd_entry->u.pd_table.pd_page_addr));
 }

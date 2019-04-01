@@ -1,51 +1,28 @@
-/*******************************************************************************
- *
- * Intel Ethernet Controller XL710 Family Linux Driver
- * Copyright(c) 2013 - 2014 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
- * Contact Information:
- * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
- * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
- *
- ******************************************************************************/
+/* SPDX-License-Identifier: GPL-2.0 */
+/* Copyright(c) 2013 - 2018 Intel Corporation. */
 
 #ifndef _I40E_REGISTER_H_
 #define _I40E_REGISTER_H_
 
-#define I40E_GL_ARQBAH 0x000801C0 /* Reset: EMPR */
+#define I40E_GL_ARQBAH              0x000801C0 /* Reset: EMPR */
 #define I40E_GL_ARQBAH_ARQBAH_SHIFT 0
-#define I40E_GL_ARQBAH_ARQBAH_MASK I40E_MASK(0xFFFFFFFF, I40E_GL_ARQBAH_ARQBAH_SHIFT)
-#define I40E_GL_ARQBAL 0x000800C0 /* Reset: EMPR */
+#define I40E_GL_ARQBAH_ARQBAH_MASK  I40E_MASK(0xFFFFFFFF, I40E_GL_ARQBAH_ARQBAH_SHIFT)
+#define I40E_GL_ARQBAL              0x000800C0 /* Reset: EMPR */
 #define I40E_GL_ARQBAL_ARQBAL_SHIFT 0
-#define I40E_GL_ARQBAL_ARQBAL_MASK I40E_MASK(0xFFFFFFFF, I40E_GL_ARQBAL_ARQBAL_SHIFT)
-#define I40E_GL_ARQH 0x000803C0 /* Reset: EMPR */
+#define I40E_GL_ARQBAL_ARQBAL_MASK  I40E_MASK(0xFFFFFFFF, I40E_GL_ARQBAL_ARQBAL_SHIFT)
+#define I40E_GL_ARQH            0x000803C0 /* Reset: EMPR */
 #define I40E_GL_ARQH_ARQH_SHIFT 0
-#define I40E_GL_ARQH_ARQH_MASK I40E_MASK(0x3FF, I40E_GL_ARQH_ARQH_SHIFT)
-#define I40E_GL_ARQT 0x000804C0 /* Reset: EMPR */
+#define I40E_GL_ARQH_ARQH_MASK  I40E_MASK(0x3FF, I40E_GL_ARQH_ARQH_SHIFT)
+#define I40E_GL_ARQT            0x000804C0 /* Reset: EMPR */
 #define I40E_GL_ARQT_ARQT_SHIFT 0
-#define I40E_GL_ARQT_ARQT_MASK I40E_MASK(0x3FF, I40E_GL_ARQT_ARQT_SHIFT)
-#define I40E_GL_ATQBAH 0x00080140 /* Reset: EMPR */
+#define I40E_GL_ARQT_ARQT_MASK  I40E_MASK(0x3FF, I40E_GL_ARQT_ARQT_SHIFT)
+#define I40E_GL_ATQBAH              0x00080140 /* Reset: EMPR */
 #define I40E_GL_ATQBAH_ATQBAH_SHIFT 0
-#define I40E_GL_ATQBAH_ATQBAH_MASK I40E_MASK(0xFFFFFFFF, I40E_GL_ATQBAH_ATQBAH_SHIFT)
-#define I40E_GL_ATQBAL 0x00080040 /* Reset: EMPR */
+#define I40E_GL_ATQBAH_ATQBAH_MASK  I40E_MASK(0xFFFFFFFF, I40E_GL_ATQBAH_ATQBAH_SHIFT)
+#define I40E_GL_ATQBAL              0x00080040 /* Reset: EMPR */
 #define I40E_GL_ATQBAL_ATQBAL_SHIFT 0
-#define I40E_GL_ATQBAL_ATQBAL_MASK I40E_MASK(0xFFFFFFFF, I40E_GL_ATQBAL_ATQBAL_SHIFT)
-#define I40E_GL_ATQH 0x00080340 /* Reset: EMPR */
+#define I40E_GL_ATQBAL_ATQBAL_MASK  I40E_MASK(0xFFFFFFFF, I40E_GL_ATQBAL_ATQBAL_SHIFT)
+#define I40E_GL_ATQH            0x00080340 /* Reset: EMPR */
 #define I40E_GL_ATQH_ATQH_SHIFT 0
 #define I40E_GL_ATQH_ATQH_MASK I40E_MASK(0x3FF, I40E_GL_ATQH_ATQH_SHIFT)
 #define I40E_GL_ATQLEN 0x00080240 /* Reset: EMPR */
@@ -2794,7 +2771,7 @@
 #define I40E_GLV_RUPP_MAX_INDEX 383
 #define I40E_GLV_RUPP_RUPP_SHIFT 0
 #define I40E_GLV_RUPP_RUPP_MASK I40E_MASK(0xFFFFFFFF, I40E_GLV_RUPP_RUPP_SHIFT)
-#define I40E_GLV_TEPC(_VSI) (0x00344000 + ((_VSI) * 4)) /* _i=0...383 */ /* Reset: CORER */
+#define I40E_GLV_TEPC(_i) (0x00344000 + ((_i) * 8)) /* _i=0...383 */ /* Reset: CORER */
 #define I40E_GLV_TEPC_MAX_INDEX 383
 #define I40E_GLV_TEPC_TEPC_SHIFT 0
 #define I40E_GLV_TEPC_TEPC_MASK I40E_MASK(0xFFFFFFFF, I40E_GLV_TEPC_TEPC_SHIFT)
@@ -5350,4 +5327,5 @@
 #define I40E_VFPE_WQEALLOC1_PEQPID_MASK I40E_MASK(0x3FFFF, I40E_VFPE_WQEALLOC1_PEQPID_SHIFT)
 #define I40E_VFPE_WQEALLOC1_WQE_DESC_INDEX_SHIFT 20
 #define I40E_VFPE_WQEALLOC1_WQE_DESC_INDEX_MASK I40E_MASK(0xFFF, I40E_VFPE_WQEALLOC1_WQE_DESC_INDEX_SHIFT)
+
 #endif /* _I40E_REGISTER_H_ */

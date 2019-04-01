@@ -1,33 +1,11 @@
-/*******************************************************************************
- *
- * Intel Ethernet Controller XL710 Family Linux Driver
- * Copyright(c) 2013 - 2014 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
- * Contact Information:
- * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
- * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
- *
- ******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0
+/* Copyright(c) 2013 - 2018 Intel Corporation. */
 
-#ifdef CONFIG_I40E_DCB
+#ifdef CONFIG_DCB
 #include "i40e.h"
 #include <net/dcbnl.h>
 
+#ifdef HAVE_DCBNL_IEEE
 /**
  * i40e_get_pfc_delay - retrieve PFC Link Delay
  * @hw: pointer to hardware struct
@@ -46,7 +24,7 @@ static void i40e_get_pfc_delay(struct i40e_hw *hw, u16 *delay)
 
 /**
  * i40e_dcbnl_ieee_getets - retrieve local IEEE ETS configuration
- * @netdev: the corresponding netdev
+ * @dev: the corresponding netdev
  * @ets: structure to hold the ETS information
  *
  * Returns local IEEE ETS configuration
@@ -85,8 +63,8 @@ static int i40e_dcbnl_ieee_getets(struct net_device *dev,
 
 /**
  * i40e_dcbnl_ieee_getpfc - retrieve local IEEE PFC configuration
- * @netdev: the corresponding netdev
- * @ets: structure to hold the PFC information
+ * @dev: the corresponding netdev
+ * @pfc: structure to hold the PFC information
  *
  * Returns local IEEE PFC configuration
  **/
@@ -118,7 +96,7 @@ static int i40e_dcbnl_ieee_getpfc(struct net_device *dev,
 
 /**
  * i40e_dcbnl_getdcbx - retrieve current DCBx capability
- * @netdev: the corresponding netdev
+ * @dev: the corresponding netdev
  *
  * Returns DCBx capability features
  **/
@@ -131,7 +109,8 @@ static u8 i40e_dcbnl_getdcbx(struct net_device *dev)
 
 /**
  * i40e_dcbnl_get_perm_hw_addr - MAC address used by DCBx
- * @netdev: the corresponding netdev
+ * @dev: the corresponding netdev
+ * @perm_addr: buffer to store the MAC address
  *
  * Returns the SAN MAC address used for LLDP exchange
  **/
@@ -198,8 +177,10 @@ void i40e_dcbnl_set_all(struct i40e_vsi *vsi)
 		}
 	}
 
+#ifdef HAVE_DCBNL_IEEE_DELAPP
 	/* Notify user-space of the changes */
 	dcbnl_ieee_notify(dev, RTM_SETDCB, DCB_CMD_IEEE_SET, 0, 0);
+#endif
 }
 
 /**
@@ -317,4 +298,5 @@ void i40e_dcbnl_setup(struct i40e_vsi *vsi)
 	/* Set initial IEEE DCB settings */
 	i40e_dcbnl_set_all(vsi);
 }
-#endif /* CONFIG_I40E_DCB */
+#endif /* HAVE_DCBNL_IEEE */
+#endif /* CONFIG_DCB */

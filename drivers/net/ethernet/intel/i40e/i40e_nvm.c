@@ -1,28 +1,5 @@
-/*******************************************************************************
- *
- * Intel Ethernet Controller XL710 Family Linux Driver
- * Copyright(c) 2013 - 2014 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
- * Contact Information:
- * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
- * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
- *
- ******************************************************************************/
+// SPDX-License-Identifier: GPL-2.0
+/* Copyright(c) 2013 - 2018 Intel Corporation. */
 
 #include "i40e_prototype.h"
 
@@ -34,12 +11,12 @@
  * once per NVM initialization, e.g. inside the i40e_init_shared_code().
  * Please notice that the NVM term is used here (& in all methods covered
  * in this file) as an equivalent of the FLASH part mapped into the SR.
- * We are accessing FLASH always thru the Shadow RAM.
+ * We are accessing FLASH always through the Shadow RAM.
  **/
 i40e_status i40e_init_nvm(struct i40e_hw *hw)
 {
 	struct i40e_nvm_info *nvm = &hw->nvm;
-	i40e_status ret_code = 0;
+	i40e_status ret_code = I40E_SUCCESS;
 	u32 fla, gens;
 	u8 sr_size;
 
@@ -78,7 +55,7 @@ i40e_status i40e_init_nvm(struct i40e_hw *hw)
 i40e_status i40e_acquire_nvm(struct i40e_hw *hw,
 				       enum i40e_aq_resource_access_type access)
 {
-	i40e_status ret_code = 0;
+	i40e_status ret_code = I40E_SUCCESS;
 	u64 gtime, timeout;
 	u64 time_left = 0;
 
@@ -108,13 +85,13 @@ i40e_status i40e_acquire_nvm(struct i40e_hw *hw,
 							I40E_NVM_RESOURCE_ID,
 							access, 0, &time_left,
 							NULL);
-			if (!ret_code) {
+			if (ret_code == I40E_SUCCESS) {
 				hw->nvm.hw_semaphore_timeout =
 					    I40E_MS_TO_GTIME(time_left) + gtime;
 				break;
 			}
 		}
-		if (ret_code) {
+		if (ret_code != I40E_SUCCESS) {
 			hw->nvm.hw_semaphore_timeout = 0;
 			i40e_debug(hw, I40E_DEBUG_NVM,
 				   "NVM acquire timed out, wait %llu ms before trying again. status=%d aq_err=%d\n",
@@ -147,11 +124,10 @@ void i40e_release_nvm(struct i40e_hw *hw)
 	 */
 	while ((ret_code == I40E_ERR_ADMIN_QUEUE_TIMEOUT) &&
 	       (total_delay < hw->aq.asq_cmd_timeout)) {
-		usleep_range(1000, 2000);
-		ret_code = i40e_aq_release_resource(hw,
-						    I40E_NVM_RESOURCE_ID,
-						    0, NULL);
-		total_delay++;
+			usleep_range(1000, 2000);
+			ret_code = i40e_aq_release_resource(hw,
+						I40E_NVM_RESOURCE_ID, 0, NULL);
+			total_delay++;
 	}
 }
 
@@ -170,7 +146,7 @@ static i40e_status i40e_poll_sr_srctl_done_bit(struct i40e_hw *hw)
 	for (wait_cnt = 0; wait_cnt < I40E_SRRD_SRCTL_ATTEMPTS; wait_cnt++) {
 		srctl = rd32(hw, I40E_GLNVM_SRCTL);
 		if (srctl & I40E_GLNVM_SRCTL_DONE_MASK) {
-			ret_code = 0;
+			ret_code = I40E_SUCCESS;
 			break;
 		}
 		udelay(5);
@@ -188,15 +164,15 @@ static i40e_status i40e_poll_sr_srctl_done_bit(struct i40e_hw *hw)
  *
  * Reads one 16 bit word from the Shadow RAM using the GLNVM_SRCTL register.
  **/
-static i40e_status i40e_read_nvm_word_srctl(struct i40e_hw *hw, u16 offset,
-					    u16 *data)
+static i40e_status i40e_read_nvm_word_srctl(struct i40e_hw *hw,
+						      u16 offset, u16 *data)
 {
 	i40e_status ret_code = I40E_ERR_TIMEOUT;
 	u32 sr_reg;
 
 	if (offset >= hw->nvm.sr_size) {
 		i40e_debug(hw, I40E_DEBUG_NVM,
-			   "NVM read error: offset %d beyond Shadow RAM limit %d\n",
+			   "NVM read error: Offset %d beyond Shadow RAM limit %d\n",
 			   offset, hw->nvm.sr_size);
 		ret_code = I40E_ERR_PARAM;
 		goto read_nvm_exit;
@@ -204,7 +180,7 @@ static i40e_status i40e_read_nvm_word_srctl(struct i40e_hw *hw, u16 offset,
 
 	/* Poll the done bit first */
 	ret_code = i40e_poll_sr_srctl_done_bit(hw);
-	if (!ret_code) {
+	if (ret_code == I40E_SUCCESS) {
 		/* Write the address and start reading */
 		sr_reg = ((u32)offset << I40E_GLNVM_SRCTL_ADDR_SHIFT) |
 			 BIT(I40E_GLNVM_SRCTL_START_SHIFT);
@@ -212,14 +188,14 @@ static i40e_status i40e_read_nvm_word_srctl(struct i40e_hw *hw, u16 offset,
 
 		/* Poll I40E_GLNVM_SRCTL until the done bit is set */
 		ret_code = i40e_poll_sr_srctl_done_bit(hw);
-		if (!ret_code) {
+		if (ret_code == I40E_SUCCESS) {
 			sr_reg = rd32(hw, I40E_GLNVM_SRDATA);
 			*data = (u16)((sr_reg &
 				       I40E_GLNVM_SRDATA_RDDATA_MASK)
 				    >> I40E_GLNVM_SRDATA_RDDATA_SHIFT);
 		}
 	}
-	if (ret_code)
+	if (ret_code != I40E_SUCCESS)
 		i40e_debug(hw, I40E_DEBUG_NVM,
 			   "NVM read error: Couldn't access Shadow RAM address: 0x%x\n",
 			   offset);
@@ -239,9 +215,10 @@ read_nvm_exit:
  *
  * Writes a 16 bit words buffer to the Shadow RAM using the admin command.
  **/
-static i40e_status i40e_read_nvm_aq(struct i40e_hw *hw, u8 module_pointer,
-				    u32 offset, u16 words, void *data,
-				    bool last_command)
+static i40e_status i40e_read_nvm_aq(struct i40e_hw *hw,
+					      u8 module_pointer, u32 offset,
+					      u16 words, void *data,
+					      bool last_command)
 {
 	i40e_status ret_code = I40E_ERR_NVM;
 	struct i40e_asq_cmd_details cmd_details;
@@ -287,18 +264,18 @@ static i40e_status i40e_read_nvm_aq(struct i40e_hw *hw, u8 module_pointer,
  * Reads one 16 bit word from the Shadow RAM using the AdminQ
  **/
 static i40e_status i40e_read_nvm_word_aq(struct i40e_hw *hw, u16 offset,
-					 u16 *data)
+						   u16 *data)
 {
 	i40e_status ret_code = I40E_ERR_TIMEOUT;
 
 	ret_code = i40e_read_nvm_aq(hw, 0x0, offset, 1, data, true);
-	*data = le16_to_cpu(*(__le16 *)data);
+	*data = LE16_TO_CPU(*(__le16 *)data);
 
 	return ret_code;
 }
 
 /**
- * __i40e_read_nvm_word - Reads nvm word, assumes caller does the locking
+ * __i40e_read_nvm_word - Reads NVM word, assumes caller does the locking
  * @hw: pointer to the HW structure
  * @offset: offset of the Shadow RAM word to read (0x000000 - 0x001FFF)
  * @data: word read from the Shadow RAM
@@ -309,19 +286,17 @@ static i40e_status i40e_read_nvm_word_aq(struct i40e_hw *hw, u16 offset,
  * taken via i40e_acquire_nvm().
  **/
 static i40e_status __i40e_read_nvm_word(struct i40e_hw *hw,
-					u16 offset, u16 *data)
+						  u16 offset, u16 *data)
 {
-	i40e_status ret_code = 0;
 
 	if (hw->flags & I40E_HW_FLAG_AQ_SRCTL_ACCESS_ENABLE)
-		ret_code = i40e_read_nvm_word_aq(hw, offset, data);
-	else
-		ret_code = i40e_read_nvm_word_srctl(hw, offset, data);
-	return ret_code;
+		return i40e_read_nvm_word_aq(hw, offset, data);
+
+	return i40e_read_nvm_word_srctl(hw, offset, data);
 }
 
 /**
- * i40e_read_nvm_word - Reads nvm word and acquire lock if necessary
+ * i40e_read_nvm_word - Reads NVM word, acquires lock if necessary
  * @hw: pointer to the HW structure
  * @offset: offset of the Shadow RAM word to read (0x000000 - 0x001FFF)
  * @data: word read from the Shadow RAM
@@ -329,18 +304,19 @@ static i40e_status __i40e_read_nvm_word(struct i40e_hw *hw,
  * Reads one 16 bit word from the Shadow RAM.
  **/
 i40e_status i40e_read_nvm_word(struct i40e_hw *hw, u16 offset,
-			       u16 *data)
+					 u16 *data)
 {
-	i40e_status ret_code = 0;
+	i40e_status ret_code = I40E_SUCCESS;
 
-	ret_code = i40e_acquire_nvm(hw, I40E_RESOURCE_READ);
+	if (hw->flags & I40E_HW_FLAG_NVM_READ_REQUIRES_LOCK)
+		ret_code = i40e_acquire_nvm(hw, I40E_RESOURCE_READ);
+
 	if (ret_code)
 		return ret_code;
-
 	ret_code = __i40e_read_nvm_word(hw, offset, data);
 
-	i40e_release_nvm(hw);
-
+	if (hw->flags & I40E_HW_FLAG_NVM_READ_REQUIRES_LOCK)
+		i40e_release_nvm(hw);
 	return ret_code;
 }
 
@@ -356,16 +332,16 @@ i40e_status i40e_read_nvm_word(struct i40e_hw *hw, u16 offset,
  * and followed by the release.
  **/
 static i40e_status i40e_read_nvm_buffer_srctl(struct i40e_hw *hw, u16 offset,
-					      u16 *words, u16 *data)
+							u16 *words, u16 *data)
 {
-	i40e_status ret_code = 0;
+	i40e_status ret_code = I40E_SUCCESS;
 	u16 index, word;
 
-	/* Loop thru the selected region */
+	/* Loop through the selected region */
 	for (word = 0; word < *words; word++) {
 		index = offset + word;
 		ret_code = i40e_read_nvm_word_srctl(hw, index, &data[word]);
-		if (ret_code)
+		if (ret_code != I40E_SUCCESS)
 			break;
 	}
 
@@ -387,7 +363,7 @@ static i40e_status i40e_read_nvm_buffer_srctl(struct i40e_hw *hw, u16 offset,
  * and followed by the release.
  **/
 static i40e_status i40e_read_nvm_buffer_aq(struct i40e_hw *hw, u16 offset,
-					   u16 *words, u16 *data)
+						     u16 *words, u16 *data)
 {
 	i40e_status ret_code;
 	u16 read_size = *words;
@@ -414,7 +390,7 @@ static i40e_status i40e_read_nvm_buffer_aq(struct i40e_hw *hw, u16 offset,
 
 		ret_code = i40e_read_nvm_aq(hw, 0x0, offset, read_size,
 					    data + words_read, last_cmd);
-		if (ret_code)
+		if (ret_code != I40E_SUCCESS)
 			goto read_nvm_buffer_aq_exit;
 
 		/* Increment counter for words already read and move offset to
@@ -425,7 +401,7 @@ static i40e_status i40e_read_nvm_buffer_aq(struct i40e_hw *hw, u16 offset,
 	} while (words_read < *words);
 
 	for (i = 0; i < *words; i++)
-		data[i] = le16_to_cpu(((__le16 *)data)[i]);
+		data[i] = LE16_TO_CPU(((__le16 *)data)[i]);
 
 read_nvm_buffer_aq_exit:
 	*words = words_read;
@@ -433,7 +409,7 @@ read_nvm_buffer_aq_exit:
 }
 
 /**
- * __i40e_read_nvm_buffer - Reads nvm buffer, caller must acquire lock
+ * __i40e_read_nvm_buffer - Reads NVM buffer, caller must acquire lock
  * @hw: pointer to the HW structure
  * @offset: offset of the Shadow RAM word to read (0x000000 - 0x001FFF).
  * @words: (in) number of words to read; (out) number of words actually read
@@ -443,16 +419,13 @@ read_nvm_buffer_aq_exit:
  * method.
  **/
 static i40e_status __i40e_read_nvm_buffer(struct i40e_hw *hw,
-					  u16 offset, u16 *words,
-					  u16 *data)
+						    u16 offset, u16 *words,
+						    u16 *data)
 {
-	i40e_status ret_code = 0;
-
 	if (hw->flags & I40E_HW_FLAG_AQ_SRCTL_ACCESS_ENABLE)
-		ret_code = i40e_read_nvm_buffer_aq(hw, offset, words, data);
-	else
-		ret_code = i40e_read_nvm_buffer_srctl(hw, offset, words, data);
-	return ret_code;
+		return i40e_read_nvm_buffer_aq(hw, offset, words, data);
+
+	return i40e_read_nvm_buffer_srctl(hw, offset, words, data);
 }
 
 /**
@@ -467,8 +440,8 @@ static i40e_status __i40e_read_nvm_buffer(struct i40e_hw *hw,
  * Writes a 16 bit words buffer to the Shadow RAM using the admin command.
  **/
 static i40e_status i40e_write_nvm_aq(struct i40e_hw *hw, u8 module_pointer,
-				     u32 offset, u16 words, void *data,
-				     bool last_command)
+					       u32 offset, u16 words, void *data,
+					       bool last_command)
 {
 	i40e_status ret_code = I40E_ERR_NVM;
 	struct i40e_asq_cmd_details cmd_details;
@@ -482,25 +455,20 @@ static i40e_status i40e_write_nvm_aq(struct i40e_hw *hw, u8 module_pointer,
 	 * Firmware will check the module-based model.
 	 */
 	if ((offset + words) > hw->nvm.sr_size)
-		i40e_debug(hw, I40E_DEBUG_NVM,
-			   "NVM write error: offset %d beyond Shadow RAM limit %d\n",
-			   (offset + words), hw->nvm.sr_size);
+		hw_dbg(hw, "NVM write error: offset beyond Shadow RAM limit.\n");
 	else if (words > I40E_SR_SECTOR_SIZE_IN_WORDS)
 		/* We can write only up to 4KB (one sector), in one AQ write */
-		i40e_debug(hw, I40E_DEBUG_NVM,
-			   "NVM write fail error: tried to write %d words, limit is %d.\n",
-			   words, I40E_SR_SECTOR_SIZE_IN_WORDS);
+		hw_dbg(hw, "NVM write fail error: cannot write more than 4KB in a single write.\n");
 	else if (((offset + (words - 1)) / I40E_SR_SECTOR_SIZE_IN_WORDS)
 		 != (offset / I40E_SR_SECTOR_SIZE_IN_WORDS))
 		/* A single write cannot spread over two sectors */
-		i40e_debug(hw, I40E_DEBUG_NVM,
-			   "NVM write error: cannot spread over two sectors in a single write offset=%d words=%d\n",
-			   offset, words);
+		hw_dbg(hw, "NVM write error: cannot spread over two sectors in a single write.\n");
 	else
 		ret_code = i40e_aq_update_nvm(hw, module_pointer,
 					      2 * offset,  /*bytes*/
 					      2 * words,   /*bytes*/
-					      data, last_command, &cmd_details);
+					      data, last_command, 0,
+					      &cmd_details);
 
 	return ret_code;
 }
@@ -518,7 +486,7 @@ static i40e_status i40e_write_nvm_aq(struct i40e_hw *hw, u8 module_pointer,
 static i40e_status i40e_calc_nvm_checksum(struct i40e_hw *hw,
 						    u16 *checksum)
 {
-	i40e_status ret_code;
+	i40e_status ret_code = I40E_SUCCESS;
 	struct i40e_virt_mem vmem;
 	u16 pcie_alt_module = 0;
 	u16 checksum_local = 0;
@@ -534,7 +502,7 @@ static i40e_status i40e_calc_nvm_checksum(struct i40e_hw *hw,
 
 	/* read pointer to VPD area */
 	ret_code = __i40e_read_nvm_word(hw, I40E_SR_VPD_PTR, &vpd_module);
-	if (ret_code) {
+	if (ret_code != I40E_SUCCESS) {
 		ret_code = I40E_ERR_NVM_CHECKSUM;
 		goto i40e_calc_nvm_checksum_exit;
 	}
@@ -542,7 +510,7 @@ static i40e_status i40e_calc_nvm_checksum(struct i40e_hw *hw,
 	/* read pointer to PCIe Alt Auto-load module */
 	ret_code = __i40e_read_nvm_word(hw, I40E_SR_PCIE_ALT_AUTO_LOAD_PTR,
 					&pcie_alt_module);
-	if (ret_code) {
+	if (ret_code != I40E_SUCCESS) {
 		ret_code = I40E_ERR_NVM_CHECKSUM;
 		goto i40e_calc_nvm_checksum_exit;
 	}
@@ -556,7 +524,7 @@ static i40e_status i40e_calc_nvm_checksum(struct i40e_hw *hw,
 			u16 words = I40E_SR_SECTOR_SIZE_IN_WORDS;
 
 			ret_code = __i40e_read_nvm_buffer(hw, i, &words, data);
-			if (ret_code) {
+			if (ret_code != I40E_SUCCESS) {
 				ret_code = I40E_ERR_NVM_CHECKSUM;
 				goto i40e_calc_nvm_checksum_exit;
 			}
@@ -598,16 +566,15 @@ i40e_calc_nvm_checksum_exit:
  **/
 i40e_status i40e_update_nvm_checksum(struct i40e_hw *hw)
 {
-	i40e_status ret_code;
+	i40e_status ret_code = I40E_SUCCESS;
 	u16 checksum;
 	__le16 le_sum;
 
 	ret_code = i40e_calc_nvm_checksum(hw, &checksum);
-	if (!ret_code) {
-		le_sum = cpu_to_le16(checksum);
+	le_sum = CPU_TO_LE16(checksum);
+	if (ret_code == I40E_SUCCESS)
 		ret_code = i40e_write_nvm_aq(hw, 0x00, I40E_SR_SW_CHECKSUM_WORD,
 					     1, &le_sum, true);
-	}
 
 	return ret_code;
 }
@@ -623,7 +590,7 @@ i40e_status i40e_update_nvm_checksum(struct i40e_hw *hw)
 i40e_status i40e_validate_nvm_checksum(struct i40e_hw *hw,
 						 u16 *checksum)
 {
-	i40e_status ret_code = 0;
+	i40e_status ret_code = I40E_SUCCESS;
 	u16 checksum_sr = 0;
 	u16 checksum_local = 0;
 
@@ -655,42 +622,51 @@ i40e_status i40e_validate_nvm_checksum(struct i40e_hw *hw,
 }
 
 static i40e_status i40e_nvmupd_state_init(struct i40e_hw *hw,
-					  struct i40e_nvm_access *cmd,
-					  u8 *bytes, int *perrno);
+						    struct i40e_nvm_access *cmd,
+						    u8 *bytes, int *perrno);
 static i40e_status i40e_nvmupd_state_reading(struct i40e_hw *hw,
-					     struct i40e_nvm_access *cmd,
-					     u8 *bytes, int *perrno);
+						    struct i40e_nvm_access *cmd,
+						    u8 *bytes, int *perrno);
 static i40e_status i40e_nvmupd_state_writing(struct i40e_hw *hw,
-					     struct i40e_nvm_access *cmd,
-					     u8 *bytes, int *errno);
+						    struct i40e_nvm_access *cmd,
+						    u8 *bytes, int *perrno);
 static enum i40e_nvmupd_cmd i40e_nvmupd_validate_command(struct i40e_hw *hw,
-						struct i40e_nvm_access *cmd,
-						int *perrno);
+						    struct i40e_nvm_access *cmd,
+						    int *perrno);
 static i40e_status i40e_nvmupd_nvm_erase(struct i40e_hw *hw,
-					 struct i40e_nvm_access *cmd,
-					 int *perrno);
+						   struct i40e_nvm_access *cmd,
+						   int *perrno);
 static i40e_status i40e_nvmupd_nvm_write(struct i40e_hw *hw,
-					 struct i40e_nvm_access *cmd,
-					 u8 *bytes, int *perrno);
+						   struct i40e_nvm_access *cmd,
+						   u8 *bytes, int *perrno);
 static i40e_status i40e_nvmupd_nvm_read(struct i40e_hw *hw,
-					struct i40e_nvm_access *cmd,
-					u8 *bytes, int *perrno);
+						  struct i40e_nvm_access *cmd,
+						  u8 *bytes, int *perrno);
 static i40e_status i40e_nvmupd_exec_aq(struct i40e_hw *hw,
-				       struct i40e_nvm_access *cmd,
-				       u8 *bytes, int *perrno);
+						 struct i40e_nvm_access *cmd,
+						 u8 *bytes, int *perrno);
 static i40e_status i40e_nvmupd_get_aq_result(struct i40e_hw *hw,
-					     struct i40e_nvm_access *cmd,
-					     u8 *bytes, int *perrno);
-static inline u8 i40e_nvmupd_get_module(u32 val)
+						    struct i40e_nvm_access *cmd,
+						    u8 *bytes, int *perrno);
+static i40e_status i40e_nvmupd_get_aq_event(struct i40e_hw *hw,
+						    struct i40e_nvm_access *cmd,
+						    u8 *bytes, int *perrno);
+static INLINE u8 i40e_nvmupd_get_module(u32 val)
 {
 	return (u8)(val & I40E_NVM_MOD_PNT_MASK);
 }
-static inline u8 i40e_nvmupd_get_transaction(u32 val)
+static INLINE u8 i40e_nvmupd_get_transaction(u32 val)
 {
 	return (u8)((val & I40E_NVM_TRANS_MASK) >> I40E_NVM_TRANS_SHIFT);
 }
 
-static const char * const i40e_nvm_update_state_str[] = {
+static INLINE u8 i40e_nvmupd_get_preservation_flags(u32 val)
+{
+	return (u8)((val & I40E_NVM_PRESERVATION_FLAGS_MASK) >>
+		    I40E_NVM_PRESERVATION_FLAGS_SHIFT);
+}
+
+static const char *i40e_nvm_update_state_str[] = {
 	"I40E_NVMUPD_INVALID",
 	"I40E_NVMUPD_READ_CON",
 	"I40E_NVMUPD_READ_SNT",
@@ -707,6 +683,8 @@ static const char * const i40e_nvm_update_state_str[] = {
 	"I40E_NVMUPD_STATUS",
 	"I40E_NVMUPD_EXEC_AQ",
 	"I40E_NVMUPD_GET_AQ_RESULT",
+	"I40E_NVMUPD_GET_AQ_EVENT",
+	"I40E_NVMUPD_GET_FEATURES",
 };
 
 /**
@@ -719,8 +697,8 @@ static const char * const i40e_nvm_update_state_str[] = {
  * Dispatches command depending on what update state is current
  **/
 i40e_status i40e_nvmupd_command(struct i40e_hw *hw,
-				struct i40e_nvm_access *cmd,
-				u8 *bytes, int *perrno)
+					  struct i40e_nvm_access *cmd,
+					  u8 *bytes, int *perrno)
 {
 	i40e_status status;
 	enum i40e_nvmupd_cmd upd_cmd;
@@ -764,7 +742,32 @@ i40e_status i40e_nvmupd_command(struct i40e_hw *hw,
 		if (hw->nvmupd_state == I40E_NVMUPD_STATE_ERROR)
 			hw->nvmupd_state = I40E_NVMUPD_STATE_INIT;
 
-		return 0;
+		return I40E_SUCCESS;
+	}
+
+	/*
+	 * A supported features request returns immediately
+	 * rather than going into state machine
+	 */
+	if (upd_cmd == I40E_NVMUPD_FEATURES) {
+		if (cmd->data_size < hw->nvmupd_features.size) {
+			*perrno = -EFAULT;
+			return I40E_ERR_BUF_TOO_SHORT;
+		}
+
+		/*
+		 * If buffer is bigger than i40e_nvmupd_features structure,
+		 * make sure the trailing bytes are set to 0x0.
+		 */
+		if (cmd->data_size > hw->nvmupd_features.size)
+			i40e_memset(bytes + hw->nvmupd_features.size, 0x0,
+				    cmd->data_size - hw->nvmupd_features.size,
+				    I40E_NONDMA_MEM);
+
+		i40e_memcpy(bytes, &hw->nvmupd_features,
+			    hw->nvmupd_features.size, I40E_NONDMA_MEM);
+
+		return I40E_SUCCESS;
 	}
 
 	/* Clear status even it is not read and log */
@@ -782,7 +785,7 @@ i40e_status i40e_nvmupd_command(struct i40e_hw *hw,
 	 * ~5ms for most commands. However lock is held for ~60ms for
 	 * NVMUPD_CSUM_LCB command.
 	 */
-	mutex_lock(&hw->aq.arq_mutex);
+	i40e_acquire_spinlock(&hw->aq.arq_spinlock);
 	switch (hw->nvmupd_state) {
 	case I40E_NVMUPD_STATE_INIT:
 		status = i40e_nvmupd_state_init(hw, cmd, bytes, perrno);
@@ -802,9 +805,9 @@ i40e_status i40e_nvmupd_command(struct i40e_hw *hw,
 		 * the wait info and return before doing anything else
 		 */
 		if (cmd->offset == 0xffff) {
-			i40e_nvmupd_check_wait_event(hw, hw->nvm_wait_opcode);
-			status = 0;
-			goto exit;
+			i40e_nvmupd_clear_wait_state(hw);
+			status = I40E_SUCCESS;
+			break;
 		}
 
 		status = I40E_ERR_NOT_READY;
@@ -819,8 +822,8 @@ i40e_status i40e_nvmupd_command(struct i40e_hw *hw,
 		*perrno = -ESRCH;
 		break;
 	}
-exit:
-	mutex_unlock(&hw->aq.arq_mutex);
+
+	i40e_release_spinlock(&hw->aq.arq_spinlock);
 	return status;
 }
 
@@ -835,10 +838,10 @@ exit:
  * state. Reject all other commands.
  **/
 static i40e_status i40e_nvmupd_state_init(struct i40e_hw *hw,
-					  struct i40e_nvm_access *cmd,
-					  u8 *bytes, int *perrno)
+						    struct i40e_nvm_access *cmd,
+						    u8 *bytes, int *perrno)
 {
-	i40e_status status = 0;
+	i40e_status status = I40E_SUCCESS;
 	enum i40e_nvmupd_cmd upd_cmd;
 
 	upd_cmd = i40e_nvmupd_validate_command(hw, cmd, perrno);
@@ -948,6 +951,10 @@ static i40e_status i40e_nvmupd_state_init(struct i40e_hw *hw,
 		status = i40e_nvmupd_get_aq_result(hw, cmd, bytes, perrno);
 		break;
 
+	case I40E_NVMUPD_GET_AQ_EVENT:
+		status = i40e_nvmupd_get_aq_event(hw, cmd, bytes, perrno);
+		break;
+
 	default:
 		i40e_debug(hw, I40E_DEBUG_NVM,
 			   "NVMUPD: bad cmd %s in init state\n",
@@ -970,10 +977,10 @@ static i40e_status i40e_nvmupd_state_init(struct i40e_hw *hw,
  * change in state; reject all other commands.
  **/
 static i40e_status i40e_nvmupd_state_reading(struct i40e_hw *hw,
-					     struct i40e_nvm_access *cmd,
-					     u8 *bytes, int *perrno)
+						    struct i40e_nvm_access *cmd,
+						    u8 *bytes, int *perrno)
 {
-	i40e_status status = 0;
+	i40e_status status = I40E_SUCCESS;
 	enum i40e_nvmupd_cmd upd_cmd;
 
 	upd_cmd = i40e_nvmupd_validate_command(hw, cmd, perrno);
@@ -1012,10 +1019,10 @@ static i40e_status i40e_nvmupd_state_reading(struct i40e_hw *hw,
  * change in state; reject all other commands
  **/
 static i40e_status i40e_nvmupd_state_writing(struct i40e_hw *hw,
-					     struct i40e_nvm_access *cmd,
-					     u8 *bytes, int *perrno)
+						    struct i40e_nvm_access *cmd,
+						    u8 *bytes, int *perrno)
 {
-	i40e_status status = 0;
+	i40e_status status = I40E_SUCCESS;
 	enum i40e_nvmupd_cmd upd_cmd;
 	bool retry_attempt = false;
 
@@ -1122,38 +1129,55 @@ retry:
 }
 
 /**
+ * i40e_nvmupd_clear_wait_state - clear wait state on hw
+ * @hw: pointer to the hardware structure
+ **/
+void i40e_nvmupd_clear_wait_state(struct i40e_hw *hw)
+{
+	i40e_debug(hw, I40E_DEBUG_NVM,
+		   "NVMUPD: clearing wait on opcode 0x%04x\n",
+		   hw->nvm_wait_opcode);
+
+	if (hw->nvm_release_on_done) {
+		i40e_release_nvm(hw);
+		hw->nvm_release_on_done = false;
+	}
+	hw->nvm_wait_opcode = 0;
+
+	if (hw->aq.arq_last_status) {
+		hw->nvmupd_state = I40E_NVMUPD_STATE_ERROR;
+		return;
+	}
+
+	switch (hw->nvmupd_state) {
+	case I40E_NVMUPD_STATE_INIT_WAIT:
+		hw->nvmupd_state = I40E_NVMUPD_STATE_INIT;
+		break;
+
+	case I40E_NVMUPD_STATE_WRITE_WAIT:
+		hw->nvmupd_state = I40E_NVMUPD_STATE_WRITING;
+		break;
+
+	default:
+		break;
+	}
+}
+
+/**
  * i40e_nvmupd_check_wait_event - handle NVM update operation events
  * @hw: pointer to the hardware structure
  * @opcode: the event that just happened
+ * @desc: AdminQ descriptor
  **/
-void i40e_nvmupd_check_wait_event(struct i40e_hw *hw, u16 opcode)
+void i40e_nvmupd_check_wait_event(struct i40e_hw *hw, u16 opcode,
+				  struct i40e_aq_desc *desc)
 {
+	u32 aq_desc_len = sizeof(struct i40e_aq_desc);
+
 	if (opcode == hw->nvm_wait_opcode) {
-		i40e_debug(hw, I40E_DEBUG_NVM,
-			   "NVMUPD: clearing wait on opcode 0x%04x\n", opcode);
-		if (hw->nvm_release_on_done) {
-			i40e_release_nvm(hw);
-			hw->nvm_release_on_done = false;
-		}
-		hw->nvm_wait_opcode = 0;
-
-		if (hw->aq.arq_last_status) {
-			hw->nvmupd_state = I40E_NVMUPD_STATE_ERROR;
-			return;
-		}
-
-		switch (hw->nvmupd_state) {
-		case I40E_NVMUPD_STATE_INIT_WAIT:
-			hw->nvmupd_state = I40E_NVMUPD_STATE_INIT;
-			break;
-
-		case I40E_NVMUPD_STATE_WRITE_WAIT:
-			hw->nvmupd_state = I40E_NVMUPD_STATE_WRITING;
-			break;
-
-		default:
-			break;
-		}
+		i40e_memcpy(&hw->nvm_aq_event_desc, desc,
+			    aq_desc_len, I40E_NONDMA_TO_NONDMA);
+		i40e_nvmupd_clear_wait_state(hw);
 	}
 }
 
@@ -1166,8 +1190,8 @@ void i40e_nvmupd_check_wait_event(struct i40e_hw *hw, u16 opcode)
  * Return one of the valid command types or I40E_NVMUPD_INVALID
  **/
 static enum i40e_nvmupd_cmd i40e_nvmupd_validate_command(struct i40e_hw *hw,
-						 struct i40e_nvm_access *cmd,
-						 int *perrno)
+						    struct i40e_nvm_access *cmd,
+						    int *perrno)
 {
 	enum i40e_nvmupd_cmd upd_cmd;
 	u8 module, transaction;
@@ -1204,10 +1228,23 @@ static enum i40e_nvmupd_cmd i40e_nvmupd_validate_command(struct i40e_hw *hw,
 			upd_cmd = I40E_NVMUPD_READ_SA;
 			break;
 		case I40E_NVM_EXEC:
-			if (module == 0xf)
-				upd_cmd = I40E_NVMUPD_STATUS;
-			else if (module == 0)
+			switch (module) {
+			case I40E_NVM_EXEC_GET_AQ_RESULT:
 				upd_cmd = I40E_NVMUPD_GET_AQ_RESULT;
+				break;
+			case I40E_NVM_EXEC_FEATURES:
+				upd_cmd = I40E_NVMUPD_FEATURES;
+				break;
+			case I40E_NVM_EXEC_STATUS:
+				upd_cmd = I40E_NVMUPD_STATUS;
+				break;
+			default:
+				*perrno = -EFAULT;
+				return I40E_NVMUPD_INVALID;
+			}
+			break;
+		case I40E_NVM_AQE:
+			upd_cmd = I40E_NVMUPD_GET_AQ_EVENT;
 			break;
 		}
 		break;
@@ -1259,8 +1296,8 @@ static enum i40e_nvmupd_cmd i40e_nvmupd_validate_command(struct i40e_hw *hw,
  * cmd structure contains identifiers and data buffer
  **/
 static i40e_status i40e_nvmupd_exec_aq(struct i40e_hw *hw,
-				       struct i40e_nvm_access *cmd,
-				       u8 *bytes, int *perrno)
+						 struct i40e_nvm_access *cmd,
+						 u8 *bytes, int *perrno)
 {
 	struct i40e_asq_cmd_details cmd_details;
 	i40e_status status;
@@ -1271,6 +1308,9 @@ static i40e_status i40e_nvmupd_exec_aq(struct i40e_hw *hw,
 	u32 aq_data_len;
 
 	i40e_debug(hw, I40E_DEBUG_NVM, "NVMUPD: %s\n", __func__);
+	if (cmd->offset == 0xffff)
+		return I40E_SUCCESS;
+
 	memset(&cmd_details, 0, sizeof(cmd_details));
 	cmd_details.wb_desc = &hw->nvm_wb_desc;
 
@@ -1289,7 +1329,7 @@ static i40e_status i40e_nvmupd_exec_aq(struct i40e_hw *hw,
 
 	/* if data buffer needed, make sure it's ready */
 	aq_data_len = cmd->data_size - aq_desc_len;
-	buff_size = max_t(u32, aq_data_len, le16_to_cpu(aq_desc->datalen));
+	buff_size = max(aq_data_len, (u32)LE16_TO_CPU(aq_desc->datalen));
 	if (buff_size) {
 		if (!hw->nvm_buff.va) {
 			status = i40e_allocate_virt_mem(hw, &hw->nvm_buff,
@@ -1302,9 +1342,13 @@ static i40e_status i40e_nvmupd_exec_aq(struct i40e_hw *hw,
 
 		if (hw->nvm_buff.va) {
 			buff = hw->nvm_buff.va;
-			memcpy(buff, &bytes[aq_desc_len], aq_data_len);
+			i40e_memcpy(buff, &bytes[aq_desc_len], aq_data_len,
+				I40E_NONDMA_TO_NONDMA);
 		}
 	}
+
+	if (cmd->offset)
+		memset(&hw->nvm_aq_event_desc, 0, aq_desc_len);
 
 	/* and away we go! */
 	status = i40e_asq_send_command(hw, aq_desc, buff,
@@ -1315,6 +1359,7 @@ static i40e_status i40e_nvmupd_exec_aq(struct i40e_hw *hw,
 			   i40e_stat_str(hw, status),
 			   i40e_aq_str(hw, hw->aq.asq_last_status));
 		*perrno = i40e_aq_rc_to_posix(status, hw->aq.asq_last_status);
+		return status;
 	}
 
 	/* should we wait for a followup event? */
@@ -1336,8 +1381,8 @@ static i40e_status i40e_nvmupd_exec_aq(struct i40e_hw *hw,
  * cmd structure contains identifiers and data buffer
  **/
 static i40e_status i40e_nvmupd_get_aq_result(struct i40e_hw *hw,
-					     struct i40e_nvm_access *cmd,
-					     u8 *bytes, int *perrno)
+						    struct i40e_nvm_access *cmd,
+						    u8 *bytes, int *perrno)
 {
 	u32 aq_total_len;
 	u32 aq_desc_len;
@@ -1347,7 +1392,7 @@ static i40e_status i40e_nvmupd_get_aq_result(struct i40e_hw *hw,
 	i40e_debug(hw, I40E_DEBUG_NVM, "NVMUPD: %s\n", __func__);
 
 	aq_desc_len = sizeof(struct i40e_aq_desc);
-	aq_total_len = aq_desc_len + le16_to_cpu(hw->nvm_wb_desc.datalen);
+	aq_total_len = aq_desc_len + LE16_TO_CPU(hw->nvm_wb_desc.datalen);
 
 	/* check offset range */
 	if (cmd->offset > aq_total_len) {
@@ -1375,13 +1420,13 @@ static i40e_status i40e_nvmupd_get_aq_result(struct i40e_hw *hw,
 			   __func__, cmd->offset, cmd->offset + len);
 
 		buff = ((u8 *)&hw->nvm_wb_desc) + cmd->offset;
-		memcpy(bytes, buff, len);
+		i40e_memcpy(bytes, buff, len, I40E_NONDMA_TO_NONDMA);
 
 		bytes += len;
 		remainder -= len;
 		buff = hw->nvm_buff.va;
 	} else {
-		buff = hw->nvm_buff.va + (cmd->offset - aq_desc_len);
+		buff = (u8 *)hw->nvm_buff.va + (cmd->offset - aq_desc_len);
 	}
 
 	if (remainder > 0) {
@@ -1389,10 +1434,45 @@ static i40e_status i40e_nvmupd_get_aq_result(struct i40e_hw *hw,
 
 		i40e_debug(hw, I40E_DEBUG_NVM, "%s: databuf bytes %d to %d\n",
 			   __func__, start_byte, start_byte + remainder);
-		memcpy(bytes, buff, remainder);
+		i40e_memcpy(bytes, buff, remainder, I40E_NONDMA_TO_NONDMA);
 	}
 
-	return 0;
+	return I40E_SUCCESS;
+}
+
+/**
+ * i40e_nvmupd_get_aq_event - Get the Admin Queue event from previous exec_aq
+ * @hw: pointer to hardware structure
+ * @cmd: pointer to nvm update command buffer
+ * @bytes: pointer to the data buffer
+ * @perrno: pointer to return error code
+ *
+ * cmd structure contains identifiers and data buffer
+ **/
+static i40e_status i40e_nvmupd_get_aq_event(struct i40e_hw *hw,
+						    struct i40e_nvm_access *cmd,
+						    u8 *bytes, int *perrno)
+{
+	u32 aq_total_len;
+	u32 aq_desc_len;
+
+	i40e_debug(hw, I40E_DEBUG_NVM, "NVMUPD: %s\n", __func__);
+
+	aq_desc_len = sizeof(struct i40e_aq_desc);
+	aq_total_len = aq_desc_len + LE16_TO_CPU(hw->nvm_aq_event_desc.datalen);
+
+	/* check copylength range */
+	if (cmd->data_size > aq_total_len) {
+		i40e_debug(hw, I40E_DEBUG_NVM,
+			   "%s: copy length %d too big, trimming to %d\n",
+			   __func__, cmd->data_size, aq_total_len);
+		cmd->data_size = aq_total_len;
+	}
+
+	i40e_memcpy(bytes, &hw->nvm_aq_event_desc, cmd->data_size,
+		    I40E_NONDMA_TO_NONDMA);
+
+	return I40E_SUCCESS;
 }
 
 /**
@@ -1405,8 +1485,8 @@ static i40e_status i40e_nvmupd_get_aq_result(struct i40e_hw *hw,
  * cmd structure contains identifiers and data buffer
  **/
 static i40e_status i40e_nvmupd_nvm_read(struct i40e_hw *hw,
-					struct i40e_nvm_access *cmd,
-					u8 *bytes, int *perrno)
+						  struct i40e_nvm_access *cmd,
+						  u8 *bytes, int *perrno)
 {
 	struct i40e_asq_cmd_details cmd_details;
 	i40e_status status;
@@ -1444,10 +1524,10 @@ static i40e_status i40e_nvmupd_nvm_read(struct i40e_hw *hw,
  * module, offset, data_size and data are in cmd structure
  **/
 static i40e_status i40e_nvmupd_nvm_erase(struct i40e_hw *hw,
-					 struct i40e_nvm_access *cmd,
-					 int *perrno)
+						   struct i40e_nvm_access *cmd,
+						   int *perrno)
 {
-	i40e_status status = 0;
+	i40e_status status = I40E_SUCCESS;
 	struct i40e_asq_cmd_details cmd_details;
 	u8 module, transaction;
 	bool last;
@@ -1484,24 +1564,26 @@ static i40e_status i40e_nvmupd_nvm_erase(struct i40e_hw *hw,
  * module, offset, data_size and data are in cmd structure
  **/
 static i40e_status i40e_nvmupd_nvm_write(struct i40e_hw *hw,
-					 struct i40e_nvm_access *cmd,
-					 u8 *bytes, int *perrno)
+						   struct i40e_nvm_access *cmd,
+						   u8 *bytes, int *perrno)
 {
-	i40e_status status = 0;
+	i40e_status status = I40E_SUCCESS;
 	struct i40e_asq_cmd_details cmd_details;
 	u8 module, transaction;
+	u8 preservation_flags;
 	bool last;
 
 	transaction = i40e_nvmupd_get_transaction(cmd->config);
 	module = i40e_nvmupd_get_module(cmd->config);
 	last = (transaction & I40E_NVM_LCB);
+	preservation_flags = i40e_nvmupd_get_preservation_flags(cmd->config);
 
 	memset(&cmd_details, 0, sizeof(cmd_details));
 	cmd_details.wb_desc = &hw->nvm_wb_desc;
 
 	status = i40e_aq_update_nvm(hw, module, cmd->offset,
 				    (u16)cmd->data_size, bytes, last,
-				    &cmd_details);
+				    preservation_flags, &cmd_details);
 	if (status) {
 		i40e_debug(hw, I40E_DEBUG_NVM,
 			   "i40e_nvmupd_nvm_write mod 0x%x off 0x%x len 0x%x\n",

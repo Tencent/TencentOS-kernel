@@ -1,28 +1,5 @@
-/*******************************************************************************
- *
- * Intel Ethernet Controller XL710 Family Linux Driver
- * Copyright(c) 2013 - 2014 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along
- * with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
- * Contact Information:
- * e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
- * Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
- *
- ******************************************************************************/
+/* SPDX-License-Identifier: GPL-2.0 */
+/* Copyright(c) 2013 - 2018 Intel Corporation. */
 
 #ifndef _I40E_DCB_H_
 #define _I40E_DCB_H_
@@ -98,6 +75,20 @@
 #define I40E_IEEE_APP_PRIO_SHIFT	5
 #define I40E_IEEE_APP_PRIO_MASK		(0x7 << I40E_IEEE_APP_PRIO_SHIFT)
 
+/* TLV definitions for preparing MIB */
+#define I40E_TLV_ID_CHASSIS_ID		0
+#define I40E_TLV_ID_PORT_ID		1
+#define I40E_TLV_ID_TIME_TO_LIVE	2
+#define I40E_IEEE_TLV_ID_ETS_CFG	3
+#define I40E_IEEE_TLV_ID_ETS_REC	4
+#define I40E_IEEE_TLV_ID_PFC_CFG	5
+#define I40E_IEEE_TLV_ID_APP_PRI	6
+#define I40E_TLV_ID_END_OF_LLDPPDU	7
+#define I40E_TLV_ID_START		I40E_IEEE_TLV_ID_ETS_CFG
+
+#define I40E_IEEE_ETS_TLV_LENGTH	25
+#define I40E_IEEE_PFC_TLV_LENGTH	6
+#define I40E_IEEE_APP_TLV_LENGTH	11
 
 #pragma pack(1)
 
@@ -148,4 +139,5 @@ i40e_status i40e_aq_get_dcb_config(struct i40e_hw *hw, u8 mib_type,
 					     struct i40e_dcbx_config *dcbcfg);
 i40e_status i40e_get_dcb_config(struct i40e_hw *hw);
 i40e_status i40e_init_dcb(struct i40e_hw *hw);
+
 #endif /* _I40E_DCB_H_ */
