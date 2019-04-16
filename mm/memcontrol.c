@@ -3489,7 +3489,7 @@ static void __mem_cgroup_usage_unregister_event(struct mem_cgroup *memcg,
 	struct mem_cgroup_thresholds *thresholds;
 	struct mem_cgroup_threshold_ary *new;
 	unsigned long usage;
-	int i, j, size;
+	int i, j, size, i_size;
 
 	mutex_lock(&memcg->thresholds_lock);
 
@@ -3510,10 +3510,16 @@ static void __mem_cgroup_usage_unregister_event(struct mem_cgroup *memcg,
 
 	/* Calculate new number of threshold */
 	size = 0;
+	i_size = 0;
 	for (i = 0; i < thresholds->primary->size; i++) {
 		if (thresholds->primary->entries[i].eventfd != eventfd)
 			size++;
+		else
+			i_size++;
 	}
+
+	if (!i_size)
+		goto unlock;
 
 	new = thresholds->spare;
 
