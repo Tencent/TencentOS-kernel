@@ -2059,14 +2059,17 @@ static __net_init int rpcsec_gss_init_net(struct net *net)
 	return gss_svc_init_net(net);
 }
 
-static __net_exit void rpcsec_gss_exit_net(struct net *net)
+static void rpcsec_gss_evict_net(struct net *net)
 {
-	gss_svc_shutdown_net(net);
+    struct sunrpc_net *sn = net_generic(net, sunrpc_net_id);
+
+    if (sn->gssp_clnt)
+	    gss_svc_shutdown_net(net);
 }
 
 static struct pernet_operations rpcsec_gss_net_ops = {
 	.init = rpcsec_gss_init_net,
-	.exit = rpcsec_gss_exit_net,
+	.evict = rpcsec_gss_evict_net,
 };
 
 /*

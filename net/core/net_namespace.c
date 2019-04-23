@@ -1090,6 +1090,17 @@ static void netns_put(struct ns_common *ns)
 	put_net(to_net_ns(ns));
 }
 
+static void netns_evict(struct ns_common *ns)
+{
+	struct net *net = to_net_ns(ns);
+	const struct pernet_operations *ops;
+
+	list_for_each_entry_reverse(ops, &pernet_list, list) {
+        if (ops->evict)
+            ops->evict(net);
+	}
+}
+
 static int netns_install(struct nsproxy *nsproxy, struct ns_common *ns)
 {
 	struct net *net = to_net_ns(ns);
@@ -1113,6 +1124,7 @@ const struct proc_ns_operations netns_operations = {
 	.type		= CLONE_NEWNET,
 	.get		= netns_get,
 	.put		= netns_put,
+	.evict		= netns_evict,
 	.install	= netns_install,
 	.owner		= netns_owner,
 };

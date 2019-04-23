@@ -312,6 +312,7 @@ struct pernet_operations {
 	int (*init)(struct net *net);
 	void (*exit)(struct net *net);
 	void (*exit_batch)(struct list_head *net_exit_list);
+	void (*evict)(struct net *net);
 	unsigned int *id;
 	size_t size;
 };
