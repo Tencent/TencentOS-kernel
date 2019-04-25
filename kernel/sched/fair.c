@@ -5371,7 +5371,7 @@ static int wake_wide(struct task_struct *p)
 
 	if (master < slave)
 		swap(master, slave);
-	if (slave < factor || master < slave * factor)
+	if (slave <= factor || master <= slave * factor)
 		return 0;
 	return 1;
 }
