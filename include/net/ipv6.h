@@ -1033,7 +1033,7 @@ int ipv6_sock_mc_join(struct sock *sk, int ifindex,
 int ipv6_sock_mc_drop(struct sock *sk, int ifindex,
 		      const struct in6_addr *addr);
 /* public func in tcp_ipv6.c */
-extern struct sock * tcp_v6_syn_recv_sock(struct sock *sk, struct sk_buff *skb,
+extern struct sock * tcp_v6_syn_recv_sock(const struct sock *sk, struct sk_buff *skb,
                        struct request_sock *req,
                        struct dst_entry *dst,
                        struct request_sock *req_unhash,
