@@ -1945,6 +1945,7 @@ void module_disable_ro(const struct module *mod)
 	frob_text(&mod->init_layout, set_memory_rw);
 	frob_rodata(&mod->init_layout, set_memory_rw);
 }
+EXPORT_SYMBOL_GPL(module_disable_ro);
 
 void module_enable_ro(const struct module *mod, bool after_init)
 {
@@ -1959,6 +1960,7 @@ void module_enable_ro(const struct module *mod, bool after_init)
 	if (after_init)
 		frob_ro_after_init(&mod->core_layout, set_memory_ro);
 }
+EXPORT_SYMBOL_GPL(module_enable_ro);
 
 static void module_enable_nx(const struct module *mod)
 {
