@@ -424,7 +424,7 @@ int module_finalize(const Elf_Ehdr *hdr,
 #ifdef CONFIG_ARM64_MODULE_PLTS
 		if (IS_ENABLED(CONFIG_DYNAMIC_FTRACE) &&
 		    !strcmp(".text.ftrace_trampoline", secstrs + s->sh_name))
-			me->arch.ftrace_trampoline = (void *)s->sh_addr;
+			me->arch.ftrace_trampolines = (void *)s->sh_addr;
 #endif
 	}
 

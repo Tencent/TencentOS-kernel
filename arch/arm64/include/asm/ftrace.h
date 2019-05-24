@@ -13,7 +13,14 @@
 
 #include <asm/insn.h>
 
+#ifdef CONFIG_DYNAMIC_FTRACE_WITH_REGS
+#define ARCH_SUPPORTS_FTRACE_OPS 1
+/* All we need is some magic value. Simply use "_mCount:" */
+#define MCOUNT_ADDR		(0x5f6d436f756e743a)
+#else
 #define MCOUNT_ADDR		((unsigned long)_mcount)
+#endif
+
 #define MCOUNT_INSN_SIZE	AARCH64_INSN_SIZE
 
 #ifndef __ASSEMBLY__
@@ -32,6 +39,13 @@ extern void return_to_handler(void);
 
 static inline unsigned long ftrace_call_adjust(unsigned long addr)
 {
+	/*
+	 * For -fpatchable-function-entry=2, there's first the
+	 * LR saver, and only then the actual call insn.
+	 * Advance addr accordingly.
+	 */
+	if (IS_ENABLED(CONFIG_DYNAMIC_FTRACE_WITH_REGS))
+		return (addr + AARCH64_INSN_SIZE);
 	/*
 	 * addr is the address of the mcount call instruction.
 	 * recordmcount does the necessary offset calculation.

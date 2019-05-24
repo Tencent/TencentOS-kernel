@@ -67,9 +67,11 @@ EXPORT_SYMBOL(test_and_clear_bit);
 EXPORT_SYMBOL(change_bit);
 EXPORT_SYMBOL(test_and_change_bit);
 
+#ifndef CONFIG_DYNAMIC_FTRACE_WITH_REGS
 #ifdef CONFIG_FUNCTION_TRACER
 EXPORT_SYMBOL(_mcount);
 NOKPROBE_SYMBOL(_mcount);
+#endif
 #endif
 
 	/* arm-smccc */

@@ -65,6 +65,40 @@ int ftrace_update_ftrace_func(ftrace_func_t func)
 	return ftrace_modify_code(pc, 0, new, false);
 }
 
+#ifdef CONFIG_ARM64_MODULE_PLTS
+static int install_ftrace_trampoline(struct module *mod, unsigned long *addr)
+{
+	struct plt_entry trampoline, *mod_trampoline;
+
+	/*
+	 * Iterate over
+	 * mod->arch.ftrace_trampolines[MOD_ARCH_NR_FTRACE_TRAMPOLINES]
+	 * The assignment to various ftrace functions happens here.
+	 */
+	if (*addr == FTRACE_ADDR)
+		mod_trampoline = &mod->arch.ftrace_trampolines[0];
+	else if (*addr == FTRACE_REGS_ADDR)
+		mod_trampoline = &mod->arch.ftrace_trampolines[1];
+	else
+		return -EINVAL;
+
+	trampoline = get_plt_entry(*addr, mod_trampoline);
+
+	if (!plt_entries_equal(mod_trampoline, &trampoline)) {
+		/* point the trampoline at our ftrace entry point */
+		module_disable_ro(mod);
+		*mod_trampoline = trampoline;
+		module_enable_ro(mod, true);
+
+		/* update trampoline before patching in the branch */
+		smp_wmb();
+	}
+	*addr = (unsigned long)(void *)mod_trampoline;
+
+	return 0;
+}
+#endif
+
 /*
  * Turn on the call to ftrace_caller() in instrumented function
  */
@@ -76,8 +110,8 @@ int ftrace_make_call(struct dyn_ftrace *rec, unsigned long addr)
 
 	if (offset < -SZ_128M || offset >= SZ_128M) {
 #ifdef CONFIG_ARM64_MODULE_PLTS
-		struct plt_entry trampoline;
 		struct module *mod;
+		int ret;
 
 		/*
 		 * On kernels that support module PLTs, the offset between the
@@ -96,32 +130,14 @@ int ftrace_make_call(struct dyn_ftrace *rec, unsigned long addr)
 		if (WARN_ON(!mod))
 			return -EINVAL;
 
-		/*
-		 * There is only one ftrace trampoline per module. For now,
-		 * this is not a problem since on arm64, all dynamic ftrace
-		 * invocations are routed via ftrace_caller(). This will need
-		 * to be revisited if support for multiple ftrace entry points
-		 * is added in the future, but for now, the pr_err() below
-		 * deals with a theoretical issue only.
-		 */
-		trampoline = get_plt_entry(addr);
-		if (!plt_entries_equal(mod->arch.ftrace_trampoline,
-				       &trampoline)) {
-			if (!plt_entries_equal(mod->arch.ftrace_trampoline,
-					       &(struct plt_entry){})) {
-				pr_err("ftrace: far branches to multiple entry points unsupported inside a single module\n");
-				return -EINVAL;
-			}
+		/* Check against our well-known list of ftrace entry points */
+		if (addr == FTRACE_ADDR || addr == FTRACE_REGS_ADDR) {
+			ret = install_ftrace_trampoline(mod, &addr);
+			if (ret < 0)
+				return ret;
+		} else
+			return -EINVAL;
 
-			/* point the trampoline to our ftrace entry point */
-			module_disable_ro(mod);
-			*mod->arch.ftrace_trampoline = trampoline;
-			module_enable_ro(mod, true);
-
-			/* update trampoline before patching in the branch */
-			smp_wmb();
-		}
-		addr = (unsigned long)(void *)mod->arch.ftrace_trampoline;
 #else /* CONFIG_ARM64_MODULE_PLTS */
 		return -EINVAL;
 #endif /* CONFIG_ARM64_MODULE_PLTS */
@@ -133,6 +149,45 @@ int ftrace_make_call(struct dyn_ftrace *rec, unsigned long addr)
 	return ftrace_modify_code(pc, old, new, true);
 }
 
+#ifdef CONFIG_DYNAMIC_FTRACE_WITH_REGS
+int ftrace_modify_call(struct dyn_ftrace *rec, unsigned long old_addr,
+			unsigned long addr)
+{
+	unsigned long pc = rec->ip;
+	u32 old, new;
+
+	old = aarch64_insn_gen_branch_imm(pc, old_addr,
+					  AARCH64_INSN_BRANCH_LINK);
+	new = aarch64_insn_gen_branch_imm(pc, addr, AARCH64_INSN_BRANCH_LINK);
+
+	return ftrace_modify_code(pc, old, new, true);
+}
+
+/*
+ * Ftrace with regs generates the tracer calls as close as possible to
+ * the function entry; no stack frame has been set up at that point.
+ * In order to make another call e.g to ftrace_caller, the LR must be
+ * saved from being overwritten.
+ * Between two functions, and with IPA-RA turned off, the scratch registers
+ * are available, so move the LR to x9 before calling into ftrace.
+ *
+ * This function is called once during kernel startup for each call site.
+ * The address passed is that of the actual branch, so patch in the LR saver
+ * just before that.
+ */
+static int ftrace_setup_lr_saver(unsigned long addr)
+{
+	u32 old, new;
+
+	old = aarch64_insn_gen_nop();
+	/* "mov x9, lr" is officially aliased from "orr x9, xzr, lr". */
+	new = aarch64_insn_gen_logical_shifted_reg(AARCH64_INSN_REG_9,
+		AARCH64_INSN_REG_ZR, AARCH64_INSN_REG_LR, 0,
+		AARCH64_INSN_VARIANT_64BIT, AARCH64_INSN_LOGIC_ORR);
+	return ftrace_modify_code(addr - AARCH64_INSN_SIZE, old, new, true);
+}
+#endif
+
 /*
  * Turn off the call to ftrace_caller() in instrumented function
  */
@@ -143,6 +198,16 @@ int ftrace_make_nop(struct module *mod, struct dyn_ftrace *rec,
 	bool validate = true;
 	u32 old = 0, new;
 	long offset = (long)pc - (long)addr;
+
+	/*
+	 * -fpatchable-function-entry= does not generate a profiling call
+	 *  initially; the NOPs are already there. So instead,
+	 *  put the LR saver there ahead of time, in order to avoid
+	 *  any race condition over patching 2 instructions.
+	 */
+	if (IS_ENABLED(CONFIG_DYNAMIC_FTRACE_WITH_REGS) &&
+		addr == MCOUNT_ADDR)
+		return ftrace_setup_lr_saver(pc);
 
 	if (offset < -SZ_128M || offset >= SZ_128M) {
 #ifdef CONFIG_ARM64_MODULE_PLTS

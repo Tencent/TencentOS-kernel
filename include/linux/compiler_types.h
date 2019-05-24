@@ -60,6 +60,8 @@ extern void __chk_io_ptr(const volatile void __iomem *);
 
 #if defined(CC_USING_HOTPATCH) && !defined(__CHECKER__)
 #define notrace __attribute__((hotpatch(0,0)))
+#elif defined(CC_USING_PATCHABLE_FENTRY)
+#define notrace			__attribute__((patchable_function_entry(0)))
 #else
 #define notrace __attribute__((no_instrument_function))
 #endif

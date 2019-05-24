@@ -10,6 +10,7 @@
  */
 
 #include <linux/linkage.h>
+#include <asm/asm-offsets.h>
 #include <asm/assembler.h>
 #include <asm/ftrace.h>
 #include <asm/insn.h>
@@ -128,6 +129,7 @@ skip_ftrace_call:
 ENDPROC(_mcount)
 
 #else /* CONFIG_DYNAMIC_FTRACE */
+#ifndef CONFIG_DYNAMIC_FTRACE_WITH_REGS
 /*
  * _mcount() is used to build the kernel with -pg option, but all the branch
  * instructions to _mcount() are replaced to NOP initially at kernel start up,
@@ -167,6 +169,138 @@ ftrace_graph_call:			// ftrace_graph_caller();
 
 	mcount_exit
 ENDPROC(ftrace_caller)
+
+#ifdef CONFIG_FUNCTION_GRAPH_TRACER
+/*
+ * void ftrace_graph_caller(void)
+ *
+ * Called from _mcount() or ftrace_caller() when function_graph tracer is
+ * selected.
+ * This function w/ prepare_ftrace_return() fakes link register's value on
+ * the call stack in order to intercept instrumented function's return path
+ * and run return_to_handler() later on its exit.
+ */
+ENTRY(ftrace_graph_caller)
+	mcount_get_lr_addr	x0	// pointer to function's saved lr
+	mcount_get_pc		x1	// function's pc
+	mcount_get_parent_fp	x2	// parent's fp
+	bl	prepare_ftrace_return	// prepare_ftrace_return(&lr, pc, fp)
+
+	mcount_exit
+ENDPROC(ftrace_graph_caller)
+#endif /* CONFIG_FUNCTION_GRAPH_TRACER */
+
+#else /* CONFIG_DYNAMIC_FTRACE_WITH_REGS */
+
+	.macro  ftrace_regs_entry, allregs=0
+	/* make room for pt_regs, plus a callee frame */
+	sub	sp, sp, #(S_FRAME_SIZE + 16)
+
+	/* save function arguments */
+	stp	x0, x1, [sp, #S_X0]
+	stp	x2, x3, [sp, #S_X2]
+	stp	x4, x5, [sp, #S_X4]
+	stp	x6, x7, [sp, #S_X6]
+	stp	x8, x9, [sp, #S_X8]
+
+	.if \allregs == 1
+	stp	x10, x11, [sp, #S_X10]
+	stp	x12, x13, [sp, #S_X12]
+	stp	x14, x15, [sp, #S_X14]
+	stp	x16, x17, [sp, #S_X16]
+	stp	x18, x19, [sp, #S_X18]
+	stp	x20, x21, [sp, #S_X20]
+	stp	x22, x23, [sp, #S_X22]
+	stp	x24, x25, [sp, #S_X24]
+	stp	x26, x27, [sp, #S_X26]
+	.endif
+
+	/* Save fp and x28, which is used in this function. */
+	stp	x28, x29, [sp, #S_X28]
+
+	/* The stack pointer as it was on ftrace_caller entry... */
+	add	x28, sp, #(S_FRAME_SIZE + 16)
+	/* ...and the link Register at callee entry */
+	stp	x9, x28, [sp, #S_LR]	/* to pt_regs.r[30] and .sp */
+
+	/* The program counter just after the ftrace call site */
+	str	lr, [sp, #S_PC]
+
+	/* Now fill in callee's preliminary stackframe. */
+	stp	x29, x9, [sp, #S_FRAME_SIZE]
+	/* Let FP point to it. */
+	add	x29, sp, #S_FRAME_SIZE
+
+	/* Our stackframe, stored inside pt_regs. */
+	stp	x29, x30, [sp, #S_STACKFRAME]
+	add	x29, sp, #S_STACKFRAME
+	.endm
+
+ENTRY(ftrace_regs_caller)
+	ftrace_regs_entry	1
+	b	ftrace_common
+ENDPROC(ftrace_regs_caller)
+
+ENTRY(ftrace_caller)
+	ftrace_regs_entry	0
+	b	ftrace_common
+ENDPROC(ftrace_caller)
+
+ENTRY(ftrace_common)
+
+	mov	x3, sp				/* pt_regs are @sp */
+	ldr_l	x2, function_trace_op, x0
+	mov	x1, x9				/* parent IP */
+	sub	x0, lr, #AARCH64_INSN_SIZE
+
+	.global ftrace_call
+ftrace_call:
+	bl	ftrace_stub
+
+#ifdef CONFIG_FUNCTION_GRAPH_TRACER
+	.global ftrace_graph_call	// ftrace_graph_caller();
+ftrace_graph_call:
+	nop				// If enabled, this will be replaced
+					// "b ftrace_graph_caller"
+#endif
+
+/*
+ * GCC's patchable-function-entry implicitly disables IPA-RA,
+ * so all non-argument registers are either scratch / dead
+ * or callee-saved (within the ftrace framework). Function
+ * arguments of the call we are intercepting right now however
+ * need to be preserved in any case.
+ */
+ftrace_common_return:
+	/* restore function args */
+	ldp	x0, x1, [sp]
+	ldp	x2, x3, [sp, #S_X2]
+	ldp	x4, x5, [sp, #S_X4]
+	ldp	x6, x7, [sp, #S_X6]
+	ldr	x8, [sp, #S_X8]
+
+	/* restore fp and x28 */
+	ldp	x28, x29, [sp, #S_X28]
+
+	ldr	lr, [sp, #S_LR]
+	ldr	x9, [sp, #S_PC]
+	/* clean up both frames, ours and callee preliminary */
+	add	sp, sp, #S_FRAME_SIZE + 16
+
+	ret	x9
+ENDPROC(ftrace_common)
+
+#ifdef CONFIG_FUNCTION_GRAPH_TRACER
+ENTRY(ftrace_graph_caller)
+	add	x0, sp, #S_LR
+	ldr	x1, [sp, #S_PC]
+	sub	x1, x1, #AARCH64_INSN_SIZE
+	ldr	x2, [sp, #S_FRAME_SIZE]	   /* fp */
+	bl	prepare_ftrace_return
+	b	ftrace_common_return
+ENDPROC(ftrace_graph_caller)
+#endif /* CONFIG_FUNCTION_GRAPH_TRACER */
+#endif /* CONFIG_DYNAMIC_FTRACE_WITH_REGS */
 #endif /* CONFIG_DYNAMIC_FTRACE */
 
 ENTRY(ftrace_stub)
@@ -191,24 +325,6 @@ ENDPROC(ftrace_stub)
 	ldp x6, x7, [sp, #48]
 	add sp, sp, #64
 	.endm
-
-/*
- * void ftrace_graph_caller(void)
- *
- * Called from _mcount() or ftrace_caller() when function_graph tracer is
- * selected.
- * This function w/ prepare_ftrace_return() fakes link register's value on
- * the call stack in order to intercept instrumented function's return path
- * and run return_to_handler() later on its exit.
- */
-ENTRY(ftrace_graph_caller)
-	mcount_get_lr_addr	  x0	//     pointer to function's saved lr
-	mcount_get_pc		  x1	//     function's pc
-	mcount_get_parent_fp	  x2	//     parent's fp
-	bl	prepare_ftrace_return	// prepare_ftrace_return(&lr, pc, fp)
-
-	mcount_exit
-ENDPROC(ftrace_graph_caller)
 
 /*
  * void return_to_handler(void)
