@@ -30,7 +30,7 @@ BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-build
 BuildRequires: wget bc module-init-tools curl
 %if %{with_perf}
 BuildRequires: elfutils-devel zlib-devel binutils-devel newt-devel python-devel perl(ExtUtils::Embed) bison flex
-BuildRequires: xmlto asciidoc
+BuildRequires: xmlto asciidoc hmaccalc
 BuildRequires: audit-libs-devel
 %ifnarch s390 s390x
 BuildRequires: numactl-devel
@@ -191,6 +191,7 @@ do
     cp -rpf ${builddir}/System.map %buildroot/boot/${mapname}
     cp -rpf ${builddir}/.config %buildroot/boot/${configname}
     cp -rpf ${builddir}/vmlinux %buildroot/boot/vmlinux-%{tagged_name}%{?dist}
+    sha512hmac %buildroot/boot/${elfname} | sed -e "s,$RPM_BUILD_ROOT,," > %buildroot/boot/.vmlinuz-%{tagged_name}%{?dist}.hmac
 
     # dealing with kernel-devel package
     objdir=${builddir}
@@ -419,6 +420,7 @@ echo -e "Remove \"%{tagged_name}%{?dist}\" Done."
 # files ########################################################################
 %defattr(-,root,root)
 /boot/vmlinuz-%{tagged_name}%{?dist}
+/boot/.vmlinuz-%{tagged_name}%{?dist}.hmac
 /boot/System.map-%{tagged_name}%{?dist}
 /boot/config-%{tagged_name}%{?dist}
 /boot/symvers-%{tagged_name}%{?dist}*
