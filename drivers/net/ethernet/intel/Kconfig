@@ -235,7 +235,7 @@ config I40E_DCB
 
 	  If unsure, say N.
 
-config I40EVF
+config IAVF
 	tristate "Intel(R) Ethernet Adaptive Virtual Function support"
 	depends on PCI_MSI
 	---help---
@@ -248,7 +248,7 @@ config I40EVF
 	  <http://support.intel.com>
 
 	  To compile this driver as a module, choose M here. The module
-	  will be called i40evf.  MSI-X interrupt support is required
+	  will be called iavf.  MSI-X interrupt support is required
 	  for this driver to work correctly.
 
 config FM10K
