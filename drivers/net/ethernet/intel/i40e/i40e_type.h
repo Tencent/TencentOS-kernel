@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2018 Intel Corporation. */
+/* Copyright(c) 2013 - 2019 Intel Corporation. */
 
 #ifndef _I40E_TYPE_H_
 #define _I40E_TYPE_H_
@@ -664,6 +664,7 @@ struct i40e_hw {
 #define I40E_HW_FLAG_AQ_PHY_ACCESS_CAPABLE  BIT_ULL(2)
 #define I40E_HW_FLAG_NVM_READ_REQUIRES_LOCK BIT_ULL(3)
 #define I40E_HW_FLAG_FW_LLDP_STOPPABLE	    BIT_ULL(4)
+#define I40E_HW_FLAG_FW_LLDP_PERSISTENT     BIT_ULL(5)
 	u64 flags;
 
 	/* Used in set switch config AQ command */
@@ -1642,4 +1643,10 @@ struct i40e_profile_info {
 	u8 reserved[7];
 	u8 name[I40E_DDP_NAME_SIZE];
 };
+
+#define I40E_BCM_PHY_PCS_STATUS1_PAGE	0x3
+#define I40E_BCM_PHY_PCS_STATUS1_REG	0x0001
+#define I40E_BCM_PHY_PCS_STATUS1_RX_LPI	BIT(8)
+#define I40E_BCM_PHY_PCS_STATUS1_TX_LPI	BIT(9)
+
 #endif /* _I40E_TYPE_H_ */

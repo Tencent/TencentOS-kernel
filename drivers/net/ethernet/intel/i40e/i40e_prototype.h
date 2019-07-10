@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2018 Intel Corporation. */
+/* Copyright(c) 2013 - 2019 Intel Corporation. */
 
 #ifndef _I40E_PROTOTYPE_H_
 #define _I40E_PROTOTYPE_H_
@@ -58,6 +58,8 @@ i40e_status i40e_led_get_phy(struct i40e_hw *hw, u16 *led_addr,
 i40e_status i40e_blink_phy_link_led(struct i40e_hw *hw,
 					      u32 time, u32 interval);
 
+i40e_status i40e_get_phy_lpi_status(struct i40e_hw *hw,
+					      struct i40e_hw_port_stats *stats);
 /* admin send queue commands */
 
 i40e_status i40e_aq_get_firmware_version(struct i40e_hw *hw,
@@ -218,13 +220,18 @@ i40e_status i40e_aq_set_lldp_mib(struct i40e_hw *hw,
 i40e_status i40e_aq_cfg_lldp_mib_change_event(struct i40e_hw *hw,
 				bool enable_update,
 				struct i40e_asq_cmd_details *cmd_details);
+enum i40e_status_code
+i40e_aq_restore_lldp(struct i40e_hw *hw, u8 *setting, bool restore,
+		     struct i40e_asq_cmd_details *cmd_details);
 i40e_status i40e_aq_stop_lldp(struct i40e_hw *hw, bool shutdown_agent,
+				bool persist,
 				struct i40e_asq_cmd_details *cmd_details);
 i40e_status i40e_aq_set_dcb_parameters(struct i40e_hw *hw,
 						 bool dcb_enable,
 						 struct i40e_asq_cmd_details
 						 *cmd_details);
 i40e_status i40e_aq_start_lldp(struct i40e_hw *hw,
+				bool persist,
 				struct i40e_asq_cmd_details *cmd_details);
 i40e_status i40e_aq_get_cee_dcb_config(struct i40e_hw *hw,
 				void *buff, u16 buff_size,
@@ -348,6 +355,7 @@ void i40e_nvmupd_check_wait_event(struct i40e_hw *hw, u16 opcode,
 				  struct i40e_aq_desc *desc);
 void i40e_nvmupd_clear_wait_state(struct i40e_hw *hw);
 void i40e_set_pci_config_data(struct i40e_hw *hw, u16 link_status);
+i40e_status i40e_enable_eee(struct i40e_hw *hw, bool enable);
 
 extern struct i40e_rx_ptype_decoded i40e_ptype_lookup[];
 
@@ -373,6 +381,10 @@ i40e_virtchnl_link_speed(enum i40e_aq_link_speed link_speed)
 		return VIRTCHNL_LINK_SPEED_100MB;
 	case I40E_LINK_SPEED_1GB:
 		return VIRTCHNL_LINK_SPEED_1GB;
+	case I40E_LINK_SPEED_2_5GB:
+		return VIRTCHNL_LINK_SPEED_2_5GB;
+	case I40E_LINK_SPEED_5GB:
+		return VIRTCHNL_LINK_SPEED_5GB;
 	case I40E_LINK_SPEED_10GB:
 		return VIRTCHNL_LINK_SPEED_10GB;
 	case I40E_LINK_SPEED_40GB:

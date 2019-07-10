@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2018 Intel Corporation. */
+/* Copyright(c) 2013 - 2019 Intel Corporation. */
 
 #ifndef _I40E_ADMINQ_CMD_H_
 #define _I40E_ADMINQ_CMD_H_
@@ -11,8 +11,8 @@
  */
 
 #define I40E_FW_API_VERSION_MAJOR	0x0001
-#define I40E_FW_API_VERSION_MINOR_X722	0x0006
-#define I40E_FW_API_VERSION_MINOR_X710	0x0007
+#define I40E_FW_API_VERSION_MINOR_X722	0x0008
+#define I40E_FW_API_VERSION_MINOR_X710	0x0008
 
 #define I40E_FW_MINOR_VERSION(_h) ((_h)->mac.type == I40E_MAC_XL710 ? \
 					I40E_FW_API_VERSION_MINOR_X710 : \
@@ -266,6 +266,7 @@ enum i40e_admin_queue_opc {
 	i40e_aqc_opc_get_cee_dcb_cfg	= 0x0A07,
 	i40e_aqc_opc_lldp_set_local_mib	= 0x0A08,
 	i40e_aqc_opc_lldp_stop_start_spec_agent	= 0x0A09,
+	i40e_aqc_opc_lldp_restore		= 0x0A0A,
 
 	/* Tunnel commands */
 	i40e_aqc_opc_add_udp_tunnel	= 0x0B00,
@@ -2027,12 +2028,15 @@ struct i40e_aq_get_phy_abilities_resp {
 #define I40E_AQ_PHY_FEC_ABILITY_KR	0x40
 #define I40E_AQ_PHY_FEC_ABILITY_RS	0x80
 	__le16	eee_capability;
+#define I40E_AQ_EEE_AUTO		0x0001
 #define I40E_AQ_EEE_100BASE_TX		0x0002
 #define I40E_AQ_EEE_1000BASE_T		0x0004
 #define I40E_AQ_EEE_10GBASE_T		0x0008
 #define I40E_AQ_EEE_1000BASE_KX		0x0010
 #define I40E_AQ_EEE_10GBASE_KX4		0x0020
 #define I40E_AQ_EEE_10GBASE_KR		0x0040
+#define I40E_AQ_EEE_2_5GBASE_T		0x0100
+#define I40E_AQ_EEE_5GBASE_T		0x0200
 	__le32	eeer_val;
 	u8	d3_lpan;
 #define I40E_AQ_SET_PHY_D3_LPAN_ENA	0x01
@@ -2572,18 +2576,19 @@ I40E_CHECK_CMD_LENGTH(i40e_aqc_lldp_update_tlv);
 /* Stop LLDP (direct 0x0A05) */
 struct i40e_aqc_lldp_stop {
 	u8	command;
-#define I40E_AQ_LLDP_AGENT_STOP		0x0
-#define I40E_AQ_LLDP_AGENT_SHUTDOWN	0x1
+#define I40E_AQ_LLDP_AGENT_STOP			0x0
+#define I40E_AQ_LLDP_AGENT_SHUTDOWN		0x1
+#define I40E_AQ_LLDP_AGENT_STOP_PERSIST		0x2
 	u8	reserved[15];
 };
 
 I40E_CHECK_CMD_LENGTH(i40e_aqc_lldp_stop);
 
 /* Start LLDP (direct 0x0A06) */
-
 struct i40e_aqc_lldp_start {
 	u8	command;
-#define I40E_AQ_LLDP_AGENT_START	0x1
+#define I40E_AQ_LLDP_AGENT_START		0x1
+#define I40E_AQ_LLDP_AGENT_START_PERSIST	0x2
 	u8	reserved[15];
 };
 
@@ -2702,6 +2707,16 @@ struct i40e_aqc_lldp_stop_start_specific_agent {
 };
 
 I40E_CHECK_CMD_LENGTH(i40e_aqc_lldp_stop_start_specific_agent);
+
+/* Restore LLDP Agent factory settings (direct 0x0A0A) */
+struct i40e_aqc_lldp_restore {
+	u8	command;
+#define I40E_AQ_LLDP_AGENT_RESTORE_NOT		0x0
+#define I40E_AQ_LLDP_AGENT_RESTORE		0x1
+	u8	reserved[15];
+};
+
+I40E_CHECK_CMD_LENGTH(i40e_aqc_lldp_restore);
 
 /* Add Udp Tunnel command and completion (direct 0x0B00) */
 struct i40e_aqc_add_udp_tunnel {

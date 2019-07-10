@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2018 Intel Corporation. */
+/* Copyright(c) 2013 - 2019 Intel Corporation. */
 
 #include <linux/prefetch.h>
 #ifdef HAVE_XDP_SUPPORT
@@ -308,6 +308,7 @@ static int i40e_add_del_fdir_tcpv4(struct i40e_vsi *vsi,
 		if ((pf->flags & I40E_FLAG_FD_ATR_ENABLED) &&
 		    I40E_DEBUG_FD & pf->hw.debug_mask)
 			dev_info(&pf->pdev->dev, "Forcing ATR off, sideband rules for TCP/IPv4 flow being applied\n");
+		set_bit(__I40E_FD_ATR_AUTO_DISABLED, pf->state);
 	} else {
 		pf->fd_tcp4_filter_cnt--;
 	}
@@ -776,7 +777,7 @@ void i40e_detect_recover_hung(struct i40e_vsi *vsi)
 static bool i40e_clean_tx_irq(struct i40e_vsi *vsi,
 			      struct i40e_ring *tx_ring, int napi_budget)
 {
-	u16 i = tx_ring->next_to_clean;
+	int i = tx_ring->next_to_clean;
 	struct i40e_tx_buffer *tx_buf;
 	struct i40e_tx_desc *tx_head;
 	struct i40e_tx_desc *tx_desc;
@@ -2413,9 +2414,10 @@ static bool i40e_is_non_eop(struct i40e_ring *rx_ring,
 	return true;
 }
 
-#define I40E_XDP_PASS 0
-#define I40E_XDP_CONSUMED 1
-#define I40E_XDP_TX 2
+#define I40E_XDP_PASS          0
+#define I40E_XDP_CONSUMED      BIT(0)
+#define I40E_XDP_TX            BIT(1)
+#define I40E_XDP_REDIR         BIT(2)
 
 #ifdef HAVE_XDP_SUPPORT
 #ifdef HAVE_XDP_FRAME_STRUCT
@@ -2477,7 +2479,7 @@ static struct sk_buff *i40e_run_xdp(struct i40e_ring *rx_ring,
 		break;
 	case XDP_REDIRECT:
 		err = xdp_do_redirect(rx_ring->netdev, xdp, xdp_prog);
-		result = !err ? I40E_XDP_TX : I40E_XDP_CONSUMED;
+		result = !err ? I40E_XDP_REDIR : I40E_XDP_CONSUMED;
 		if (!err)
 			rx_ring->xdp_stats.xdp_redirect++;
 		else
@@ -2548,7 +2550,8 @@ static int i40e_clean_rx_irq(struct i40e_ring *rx_ring, int budget)
 	unsigned int total_rx_bytes = 0, total_rx_packets = 0;
 	struct sk_buff *skb = rx_ring->skb;
 	u16 cleaned_count = I40E_DESC_UNUSED(rx_ring);
-	bool failure = false, xdp_xmit = false;
+	unsigned int xdp_xmit = 0;
+	bool failure = false;
 	struct xdp_buff xdp;
 
 #ifdef HAVE_XDP_BUFF_RXQ
@@ -2616,8 +2619,10 @@ static int i40e_clean_rx_irq(struct i40e_ring *rx_ring, int budget)
 		}
 
 		if (IS_ERR(skb)) {
-			if (PTR_ERR(skb) == -I40E_XDP_TX) {
-				xdp_xmit = true;
+			unsigned int xdp_res = -PTR_ERR(skb);
+
+			if (xdp_res & (I40E_XDP_TX | I40E_XDP_REDIR)) {
+				xdp_xmit |= xdp_res;
 				i40e_rx_buffer_flip(rx_ring, rx_buffer, size);
 			} else {
 				rx_buffer->pagecnt_bias++;
@@ -2673,12 +2678,15 @@ static int i40e_clean_rx_irq(struct i40e_ring *rx_ring, int budget)
 		/* update budget accounting */
 		total_rx_packets++;
 	}
-	if (xdp_xmit) {
+
+	if (xdp_xmit & I40E_XDP_REDIR)
+		xdp_do_flush_map();
+
+	if (xdp_xmit & I40E_XDP_TX) {
 		struct i40e_ring *xdp_ring =
 			rx_ring->vsi->xdp_rings[rx_ring->queue_index];
 
 		i40e_xdp_ring_update_tail(xdp_ring);
-		xdp_do_flush_map();
 	}
 	rx_ring->skb = skb;
 
@@ -3459,7 +3467,8 @@ static int i40e_tx_enable_csum(struct sk_buff *skb, u32 *tx_flags,
 	if (*tx_flags & I40E_TX_FLAGS_IPV4) {
 		l4_proto = ip.v4->protocol;
 #ifdef I40E_ADD_PROBES
-		tx_ring->vsi->back->tx_ip4_cso++;
+		if (*tx_flags & I40E_TX_FLAGS_TSO)
+			tx_ring->vsi->back->tx_ip4_cso++;
 #endif
 		/* the stack computes the IP header already, the only time we
 		 * need the hardware to recompute it is in the case of TSO.

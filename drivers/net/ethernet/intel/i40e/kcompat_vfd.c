@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2018 Intel Corporation. */
+/* Copyright(c) 2013 - 2019 Intel Corporation. */
 
 #include "kcompat.h"
 #include "kcompat_vfd.h"
@@ -1740,6 +1740,7 @@ static int create_vfs_sysfs(struct pci_dev *pdev, struct vfd_objects *vfd_obj)
 				"cannot request %d vfs, try again with smaller number of vfs\n",
 				i);
 			--i;
+			ret = -EINVAL;
 			goto err_vfs_sysfs;
 		}
 

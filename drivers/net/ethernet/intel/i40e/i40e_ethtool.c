@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2018 Intel Corporation. */
+/* Copyright(c) 2013 - 2019 Intel Corporation. */
 
 /* ethtool support for i40e */
 
@@ -326,6 +326,24 @@ static void i40e_phy_type_to_ethtool(struct i40e_pf *pf,
 			ethtool_link_ksettings_add_link_mode(ks, advertising,
 							     10000baseT_Full);
 	}
+#ifdef HAVE_ETHTOOL_NEW_2500MB_BITS
+	if (phy_types & I40E_CAP_PHY_TYPE_2_5GBASE_T) {
+		ethtool_link_ksettings_add_link_mode(ks, supported,
+						     2500baseT_Full);
+		if (hw_link_info->requested_speeds & I40E_LINK_SPEED_2_5GB)
+			ethtool_link_ksettings_add_link_mode(ks, advertising,
+							     2500baseT_Full);
+	}
+#endif /* HAVE_ETHTOOL_NEW_2500MB_BITS */
+#ifdef HAVE_ETHTOOL_5G_BITS
+	if (phy_types & I40E_CAP_PHY_TYPE_5GBASE_T) {
+		ethtool_link_ksettings_add_link_mode(ks, supported,
+						     5000baseT_Full);
+		if (hw_link_info->requested_speeds & I40E_LINK_SPEED_5GB)
+			ethtool_link_ksettings_add_link_mode(ks, advertising,
+							     5000baseT_Full);
+	}
+#endif /* HAVE_ETHTOOL_5G_BITS */
 	if (phy_types & I40E_CAP_PHY_TYPE_XLAUI ||
 	    phy_types & I40E_CAP_PHY_TYPE_XLPPI ||
 	    phy_types & I40E_CAP_PHY_TYPE_40GBASE_AOC)
@@ -353,17 +371,23 @@ static void i40e_phy_type_to_ethtool(struct i40e_pf *pf,
 			ethtool_link_ksettings_add_link_mode(ks, advertising,
 							     1000baseT_Full);
 	}
-	if (phy_types & I40E_CAP_PHY_TYPE_40GBASE_SR4)
+	if (phy_types & I40E_CAP_PHY_TYPE_40GBASE_SR4) {
 		ethtool_link_ksettings_add_link_mode(ks, supported,
 						     40000baseSR4_Full);
-	if (phy_types & I40E_CAP_PHY_TYPE_40GBASE_LR4)
-		ethtool_link_ksettings_add_link_mode(ks, supported,
-						     40000baseLR4_Full);
-	if (phy_types & I40E_CAP_PHY_TYPE_40GBASE_KR4) {
+		ethtool_link_ksettings_add_link_mode(ks, advertising,
+						     40000baseSR4_Full);
+	}
+	if (phy_types & I40E_CAP_PHY_TYPE_40GBASE_LR4) {
 		ethtool_link_ksettings_add_link_mode(ks, supported,
 						     40000baseLR4_Full);
 		ethtool_link_ksettings_add_link_mode(ks, advertising,
 						     40000baseLR4_Full);
+	}
+	if (phy_types & I40E_CAP_PHY_TYPE_40GBASE_KR4) {
+		ethtool_link_ksettings_add_link_mode(ks, supported,
+						     40000baseKR4_Full);
+		ethtool_link_ksettings_add_link_mode(ks, advertising,
+						     40000baseKR4_Full);
 	}
 	if (phy_types & I40E_CAP_PHY_TYPE_20GBASE_KR2) {
 		ethtool_link_ksettings_add_link_mode(ks, supported,
@@ -513,13 +537,15 @@ static void i40e_phy_type_to_ethtool(struct i40e_pf *pf,
 	    phy_types & I40E_CAP_PHY_TYPE_25GBASE_KR ||
 	    phy_types & I40E_CAP_PHY_TYPE_25GBASE_CR ||
 	    phy_types & I40E_CAP_PHY_TYPE_20GBASE_KR2 ||
-	    phy_types & I40E_CAP_PHY_TYPE_10GBASE_T ||
 	    phy_types & I40E_CAP_PHY_TYPE_10GBASE_SR ||
 	    phy_types & I40E_CAP_PHY_TYPE_10GBASE_LR ||
 	    phy_types & I40E_CAP_PHY_TYPE_10GBASE_KX4 ||
 	    phy_types & I40E_CAP_PHY_TYPE_10GBASE_KR ||
 	    phy_types & I40E_CAP_PHY_TYPE_10GBASE_CR1_CU ||
 	    phy_types & I40E_CAP_PHY_TYPE_10GBASE_CR1 ||
+	    phy_types & I40E_CAP_PHY_TYPE_10GBASE_T ||
+	    phy_types & I40E_CAP_PHY_TYPE_5GBASE_T ||
+	    phy_types & I40E_CAP_PHY_TYPE_2_5GBASE_T ||
 	    phy_types & I40E_CAP_PHY_TYPE_1000BASE_T_OPTICAL ||
 	    phy_types & I40E_CAP_PHY_TYPE_1000BASE_T ||
 	    phy_types & I40E_CAP_PHY_TYPE_1000BASE_SX ||
@@ -565,13 +591,19 @@ static void i40e_get_settings_link_up(struct i40e_hw *hw,
 	case I40E_PHY_TYPE_40GBASE_AOC:
 		ethtool_link_ksettings_add_link_mode(ks, supported,
 						     40000baseCR4_Full);
+		ethtool_link_ksettings_add_link_mode(ks, advertising,
+						     40000baseCR4_Full);
 		break;
 	case I40E_PHY_TYPE_40GBASE_SR4:
 		ethtool_link_ksettings_add_link_mode(ks, supported,
 						     40000baseSR4_Full);
+		ethtool_link_ksettings_add_link_mode(ks, advertising,
+						     40000baseSR4_Full);
 		break;
 	case I40E_PHY_TYPE_40GBASE_LR4:
 		ethtool_link_ksettings_add_link_mode(ks, supported,
+						     40000baseLR4_Full);
+		ethtool_link_ksettings_add_link_mode(ks, advertising,
 						     40000baseLR4_Full);
 		break;
 	case I40E_PHY_TYPE_25GBASE_SR:
@@ -629,11 +661,21 @@ static void i40e_get_settings_link_up(struct i40e_hw *hw,
 							     10000baseT_Full);
 		break;
 	case I40E_PHY_TYPE_10GBASE_T:
+	case I40E_PHY_TYPE_5GBASE_T:
+	case I40E_PHY_TYPE_2_5GBASE_T:
 	case I40E_PHY_TYPE_1000BASE_T:
 	case I40E_PHY_TYPE_100BASE_TX:
 		ethtool_link_ksettings_add_link_mode(ks, supported, Autoneg);
 		ethtool_link_ksettings_add_link_mode(ks, supported,
 						     10000baseT_Full);
+#ifdef HAVE_ETHTOOL_5G_BITS
+		ethtool_link_ksettings_add_link_mode(ks, supported,
+						     5000baseT_Full);
+#endif /* HAVE_ETHTOOL_5G_BITS */
+#ifdef HAVE_ETHTOOL_NEW_2500MB_BITS
+		ethtool_link_ksettings_add_link_mode(ks, supported,
+						     2500baseT_Full);
+#endif /* HAVE_ETHTOOL_NEW_2500MB_BITS */
 		ethtool_link_ksettings_add_link_mode(ks, supported,
 						     1000baseT_Full);
 		ethtool_link_ksettings_add_link_mode(ks, supported,
@@ -642,6 +684,16 @@ static void i40e_get_settings_link_up(struct i40e_hw *hw,
 		if (hw_link_info->requested_speeds & I40E_LINK_SPEED_10GB)
 			ethtool_link_ksettings_add_link_mode(ks, advertising,
 							     10000baseT_Full);
+#ifdef HAVE_ETHTOOL_5G_BITS
+		if (hw_link_info->requested_speeds & I40E_LINK_SPEED_5GB)
+			ethtool_link_ksettings_add_link_mode(ks, advertising,
+							     5000baseT_Full);
+#endif /* HAVE_ETHTOOL_5G_BITS */
+#ifdef HAVE_ETHTOOL_NEW_2500MB_BITS
+		if (hw_link_info->requested_speeds & I40E_LINK_SPEED_2_5GB)
+			ethtool_link_ksettings_add_link_mode(ks, advertising,
+							     2500baseT_Full);
+#endif /* HAVE_ETHTOOL_NEW_2500MB_BITS */
 		if (hw_link_info->requested_speeds & I40E_LINK_SPEED_1GB)
 			ethtool_link_ksettings_add_link_mode(ks, advertising,
 							     1000baseT_Full);
@@ -815,6 +867,12 @@ static void i40e_get_settings_link_up(struct i40e_hw *hw,
 	case I40E_LINK_SPEED_10GB:
 		ks->base.speed = SPEED_10000;
 		break;
+	case I40E_LINK_SPEED_5GB:
+		ks->base.speed = SPEED_5000;
+		break;
+	case I40E_LINK_SPEED_2_5GB:
+		ks->base.speed = SPEED_2500;
+		break;
 	case I40E_LINK_SPEED_1GB:
 		ks->base.speed = SPEED_1000;
 		break;
@@ -901,6 +959,7 @@ static int i40e_get_link_ksettings(struct net_device *netdev,
 		break;
 	case I40E_MEDIA_TYPE_FIBER:
 		ethtool_link_ksettings_add_link_mode(ks, supported, FIBRE);
+		ethtool_link_ksettings_add_link_mode(ks, advertising, FIBRE);
 		ks->base.port = PORT_FIBRE;
 		break;
 	case I40E_MEDIA_TYPE_UNKNOWN:
@@ -1102,6 +1161,16 @@ static int i40e_set_link_ksettings(struct net_device *netdev,
 	    0)
 #endif /* HAVE_ETHTOOL_NEW_10G_BITS */
 		config.link_speed |= I40E_LINK_SPEED_10GB;
+#ifdef HAVE_ETHTOOL_NEW_2500MB_BITS
+	if (ethtool_link_ksettings_test_link_mode(ks, advertising,
+						  2500baseT_Full))
+		config.link_speed |= I40E_LINK_SPEED_2_5GB;
+#endif /* HAVE_ETHTOOL_NEW_2500MB_BITS */
+#ifdef HAVE_ETHTOOL_5G_BITS
+	if (ethtool_link_ksettings_test_link_mode(ks, advertising,
+						  5000baseT_Full))
+		config.link_speed |= I40E_LINK_SPEED_5GB;
+#endif /* HAVE_ETHTOOL_5G_BITS */
 	if (ethtool_link_ksettings_test_link_mode(ks, advertising,
 						  20000baseKR2_Full))
 		config.link_speed |= I40E_LINK_SPEED_20GB;
@@ -2626,7 +2695,7 @@ static int i40e_get_ts_info(struct net_device *dev,
 }
 
 #endif /* HAVE_ETHTOOL_GET_TS_INFO */
-static int i40e_link_test(struct net_device *netdev, u64 *data)
+static u64 i40e_link_test(struct net_device *netdev, u64 *data)
 {
 	struct i40e_netdev_priv *np = netdev_priv(netdev);
 	struct i40e_pf *pf = np->vsi->back;
@@ -2649,7 +2718,7 @@ static int i40e_link_test(struct net_device *netdev, u64 *data)
 	return *data;
 }
 
-static int i40e_reg_test(struct net_device *netdev, u64 *data)
+static u64 i40e_reg_test(struct net_device *netdev, u64 *data)
 {
 	struct i40e_netdev_priv *np = netdev_priv(netdev);
 	struct i40e_pf *pf = np->vsi->back;
@@ -2660,7 +2729,7 @@ static int i40e_reg_test(struct net_device *netdev, u64 *data)
 	return *data;
 }
 
-static int i40e_eeprom_test(struct net_device *netdev, u64 *data)
+static u64 i40e_eeprom_test(struct net_device *netdev, u64 *data)
 {
 	struct i40e_netdev_priv *np = netdev_priv(netdev);
 	struct i40e_pf *pf = np->vsi->back;
@@ -2674,7 +2743,7 @@ static int i40e_eeprom_test(struct net_device *netdev, u64 *data)
 	return *data;
 }
 
-static int i40e_intr_test(struct net_device *netdev, u64 *data)
+static u64 i40e_intr_test(struct net_device *netdev, u64 *data)
 {
 	struct i40e_netdev_priv *np = netdev_priv(netdev);
 	struct i40e_pf *pf = np->vsi->back;
@@ -5622,9 +5691,12 @@ static u32 i40e_get_priv_flags(struct net_device *dev)
 static int i40e_set_priv_flags(struct net_device *dev, u32 flags)
 {
 	struct i40e_netdev_priv *np = netdev_priv(dev);
+	u64 orig_flags, new_flags, changed_flags;
+	enum i40e_admin_queue_err adq_err;
 	struct i40e_vsi *vsi = np->vsi;
 	struct i40e_pf *pf = vsi->back;
-	u64 orig_flags, new_flags, changed_flags;
+	bool is_reset_needed;
+	i40e_status status;
 	u32 i, j;
 
 	orig_flags = READ_ONCE(pf->flags);
@@ -5668,6 +5740,10 @@ static int i40e_set_priv_flags(struct net_device *dev, u32 flags)
 flags_complete:
 	changed_flags = orig_flags ^ new_flags;
 
+	is_reset_needed = !!(changed_flags & (I40E_FLAG_VEB_STATS_ENABLED |
+		I40E_FLAG_LEGACY_RX | I40E_FLAG_SOURCE_PRUNING_DISABLED |
+		I40E_FLAG_DISABLE_FW_LLDP));
+
 	/* Before we finalize any flag changes, we need to perform some
 	 * checks to ensure that the changes are supported and safe.
 	 */
@@ -5702,13 +5778,6 @@ flags_complete:
 		return -EOPNOTSUPP;
 	}
 
-	/* Now that we've checked to ensure that the new flags are valid, load
-	 * them into place. Since we only modify flags either (a) during
-	 * initialization or (b) while holding the RTNL lock, we don't need
-	 * anything fancy here.
-	 */
-	pf->flags = new_flags;
-
 	/* Process any additional changes needed as a result of flag changes.
 	 * The changed_flags value reflects the list of bits that were
 	 * changed in the code above.
@@ -5716,7 +5785,7 @@ flags_complete:
 
 	/* Flush current ATR settings if ATR was disabled */
 	if ((changed_flags & I40E_FLAG_FD_ATR_ENABLED) &&
-	    !(pf->flags & I40E_FLAG_FD_ATR_ENABLED)) {
+	    !(new_flags & I40E_FLAG_FD_ATR_ENABLED)) {
 		set_bit(__I40E_FD_ATR_AUTO_DISABLED, pf->state);
 		set_bit(__I40E_FD_FLUSH_REQUESTED, pf->state);
 	}
@@ -5725,7 +5794,7 @@ flags_complete:
 		u16 sw_flags = 0, valid_flags = 0;
 		int ret;
 
-		if (!(pf->flags & I40E_FLAG_TRUE_PROMISC_SUPPORT))
+		if (!(new_flags & I40E_FLAG_TRUE_PROMISC_SUPPORT))
 			sw_flags = I40E_AQ_SET_SWITCH_CFG_PROMISC;
 		valid_flags = I40E_AQ_SET_SWITCH_CFG_PROMISC;
 		ret = i40e_aq_set_switch_config(&pf->hw, sw_flags, valid_flags,
@@ -5744,13 +5813,13 @@ flags_complete:
 	    (changed_flags & I40E_FLAG_BASE_R_FEC)) {
 		u8 fec_cfg = 0;
 
-		if (pf->flags & I40E_FLAG_RS_FEC &&
-		    pf->flags & I40E_FLAG_BASE_R_FEC) {
+		if (new_flags & I40E_FLAG_RS_FEC &&
+		    new_flags & I40E_FLAG_BASE_R_FEC) {
 			fec_cfg = I40E_AQ_SET_FEC_AUTO;
-		} else if (pf->flags & I40E_FLAG_RS_FEC) {
+		} else if (new_flags & I40E_FLAG_RS_FEC) {
 			fec_cfg = (I40E_AQ_SET_FEC_REQUEST_RS |
 				   I40E_AQ_SET_FEC_ABILITY_RS);
-		} else if (pf->flags & I40E_FLAG_BASE_R_FEC) {
+		} else if (new_flags & I40E_FLAG_BASE_R_FEC) {
 			fec_cfg = (I40E_AQ_SET_FEC_REQUEST_KR |
 				   I40E_AQ_SET_FEC_ABILITY_KR);
 		}
@@ -5758,17 +5827,17 @@ flags_complete:
 			dev_warn(&pf->pdev->dev, "Cannot change FEC config\n");
 	}
 
-	if ((changed_flags & pf->flags &
+	if ((changed_flags & new_flags &
 	     I40E_FLAG_LINK_DOWN_ON_CLOSE_ENABLED) &&
-	    (pf->flags & I40E_FLAG_MFP_ENABLED))
+	    (new_flags & I40E_FLAG_MFP_ENABLED))
 		dev_warn(&pf->pdev->dev,
 			 "Turning on link-down-on-close flag may affect other partitions\n");
 
 	if (changed_flags & I40E_FLAG_DISABLE_FW_LLDP) {
-		if (pf->flags & I40E_FLAG_DISABLE_FW_LLDP) {
+		if (new_flags & I40E_FLAG_DISABLE_FW_LLDP) {
 			struct i40e_dcbx_config *dcbcfg;
 
-			i40e_aq_stop_lldp(&pf->hw, true, NULL);
+			i40e_aq_stop_lldp(&pf->hw, true, false, NULL);
 			i40e_aq_set_dcb_parameters(&pf->hw, true, NULL);
 			/* reset local_dcbx_config to default */
 			dcbcfg = &pf->hw.local_dcbx_config;
@@ -5783,17 +5852,43 @@ flags_complete:
 			dcbcfg->pfc.willing = 1;
 			dcbcfg->pfc.pfccap = I40E_MAX_TRAFFIC_CLASS;
 		} else {
-			i40e_aq_start_lldp(&pf->hw, NULL);
+			status = i40e_aq_start_lldp(&pf->hw, false, NULL);
+			if (status != I40E_SUCCESS) {
+				adq_err = pf->hw.aq.asq_last_status;
+				switch (adq_err) {
+				case I40E_AQ_RC_EEXIST:
+					dev_warn(&pf->pdev->dev,
+						 "FW LLDP agent is already running\n");
+					is_reset_needed = false;
+					break;
+				case I40E_AQ_RC_EPERM:
+					dev_warn(&pf->pdev->dev,
+						 "Device configuration forbids SW from starting the LLDP agent.\n");
+					return (-EINVAL);
+				default:
+					dev_warn(&pf->pdev->dev,
+						 "Starting FW LLDP agent failed: error: %s, %s\n",
+						 i40e_stat_str(&pf->hw,
+							       status),
+						 i40e_aq_str(&pf->hw,
+							     adq_err));
+					return (-EINVAL);
+				}
+			}
 		}
 	}
+
+	/* Now that we've checked to ensure that the new flags are valid, load
+	 * them into place. Since we only modify flags either (a) during
+	 * initialization or (b) while holding the RTNL lock, we don't need
+	 * anything fancy here.
+	 */
+	pf->flags = new_flags;
 
 	/* Issue reset to cause things to take effect, as additional bits
 	 * are added we will need to create a mask of bits requiring reset
 	 */
-	if (changed_flags & (I40E_FLAG_VEB_STATS_ENABLED |
-			     I40E_FLAG_LEGACY_RX |
-			     I40E_FLAG_SOURCE_PRUNING_DISABLED |
-			     I40E_FLAG_DISABLE_FW_LLDP))
+	if (is_reset_needed)
 		i40e_do_reset(pf, BIT(__I40E_PF_RESET_REQUESTED), true);
 
 	return 0;
@@ -5956,6 +6051,101 @@ static int i40e_get_module_eeprom(struct net_device *netdev,
 }
 #endif /* ETHTOOL_GMODULEINFO */
 
+#ifdef ETHTOOL_GEEE
+static int i40e_get_eee(struct net_device *netdev, struct ethtool_eee *edata)
+{
+	struct i40e_netdev_priv *np = netdev_priv(netdev);
+	struct i40e_aq_get_phy_abilities_resp phy_cfg;
+	i40e_status status = 0;
+	struct i40e_vsi *vsi = np->vsi;
+	struct i40e_pf *pf = vsi->back;
+	struct i40e_hw *hw = &pf->hw;
+
+	/* Get initial PHY capabilities */
+	status = i40e_aq_get_phy_capabilities(hw, false, true, &phy_cfg, NULL);
+	if (status)
+		return -EAGAIN;
+
+	/* Check whether NIC configuration is compatible with Energy Efficient
+	 * Ethernet (EEE) mode.
+	 */
+	if (phy_cfg.eee_capability == 0)
+		return -EOPNOTSUPP;
+
+	edata->supported = SUPPORTED_Autoneg;
+	edata->lp_advertised = edata->supported;
+
+	/* Get current configuration */
+	status = i40e_aq_get_phy_capabilities(hw, false, false, &phy_cfg, NULL);
+	if (status)
+		return -EAGAIN;
+
+	edata->advertised = phy_cfg.eee_capability ? SUPPORTED_Autoneg : 0U;
+	edata->eee_enabled = !!edata->advertised;
+	edata->tx_lpi_enabled = edata->eee_enabled;
+
+	if (edata->advertised & edata->lp_advertised)
+		edata->eee_active = true;
+
+	return 0;
+}
+#endif /* ETHTOOL_GEEE */
+
+#ifdef ETHTOOL_SEEE
+static int i40e_set_eee(struct net_device *netdev, struct ethtool_eee *edata)
+{
+	struct i40e_netdev_priv *np = netdev_priv(netdev);
+	struct i40e_aq_get_phy_abilities_resp abilities;
+	i40e_status status = I40E_SUCCESS;
+	struct i40e_aq_set_phy_config config;
+	struct i40e_vsi *vsi = np->vsi;
+	struct i40e_pf *pf = vsi->back;
+	struct i40e_hw *hw = &pf->hw;
+	__le16 eee_capability;
+
+	/* Get initial PHY capabilities */
+	status = i40e_aq_get_phy_capabilities(hw, false, true, &abilities,
+					      NULL);
+	if (status)
+		return -EAGAIN;
+
+	/* Check whether NIC configuration is compatible with Energy Efficient
+	 * Ethernet (EEE) mode.
+	 */
+	if (abilities.eee_capability == 0)
+		return -EOPNOTSUPP;
+
+	/* Cache initial EEE capability */
+	eee_capability = abilities.eee_capability;
+
+	/* Get current PHY configuration */
+	status = i40e_aq_get_phy_capabilities(hw, false, false, &abilities,
+					      NULL);
+	if (status)
+		return -EAGAIN;
+
+	/* Cache current PHY configuration */
+	config.phy_type = abilities.phy_type;
+	config.link_speed = abilities.link_speed;
+	config.abilities = abilities.abilities |
+			   I40E_AQ_PHY_ENABLE_ATOMIC_LINK;
+	config.eeer = abilities.eeer_val;
+	config.low_power_ctrl = abilities.d3_lpan;
+	config.fec_config = abilities.fec_cfg_curr_mod_ext_info &
+			    I40E_AQ_PHY_FEC_CONFIG_MASK;
+
+	/* Set desired EEE state */
+	config.eee_capability = edata->eee_enabled ? eee_capability : 0;
+
+	/* Apply modified PHY configuration */
+	status = i40e_aq_set_phy_config(hw, &config, NULL);
+	if (status)
+		return -EAGAIN;
+
+	return 0;
+}
+#endif /* ETHTOOL_SEEE */
+
 static const struct ethtool_ops i40e_ethtool_recovery_mode_ops = {
 	.set_eeprom		= i40e_set_eeprom,
 	.get_eeprom_len		= i40e_get_eeprom_len,
@@ -6010,6 +6200,12 @@ static const struct ethtool_ops i40e_ethtool_ops = {
 	.self_test		= i40e_diag_test,
 	.get_strings		= i40e_get_strings,
 #ifndef HAVE_RHEL6_ETHTOOL_OPS_EXT_STRUCT
+#ifdef ETHTOOL_GEEE
+	.get_eee		= i40e_get_eee,
+#endif /* ETHTOOL_GEEE */
+#ifdef ETHTOOL_SEEE
+	.set_eee		= i40e_set_eee,
+#endif /* ETHTOOL_SEEE */
 #ifdef HAVE_ETHTOOL_SET_PHYS_ID
 	.set_phys_id		= i40e_set_phys_id,
 #else
@@ -6060,10 +6256,9 @@ static const struct ethtool_ops i40e_ethtool_ops = {
 	.get_fecparam = i40e_get_fec_param,
 	.set_fecparam = i40e_set_fec_param,
 #endif /* ETHTOOL_GFECPARAM */
-#if ( LINUX_VERSION_CODE > KERNEL_VERSION(4,0,0) ) || \
-    (RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(7,2))
+#ifdef HAVE_DDP_PROFILE_UPLOAD_SUPPORT
 	.flash_device = i40e_ddp_flash,
-#endif
+#endif /* DDP_PROFILE_UPLOAD_SUPPORT */
 };
 
 #ifdef HAVE_RHEL6_ETHTOOL_OPS_EXT_STRUCT
@@ -6079,6 +6274,12 @@ static const struct ethtool_ops_ext i40e_ethtool_ops_ext = {
 	.get_rxfh		= i40e_get_rxfh,
 	.set_rxfh		= i40e_set_rxfh,
 #endif /* ETHTOOL_GRSSH && ETHTOOL_SRSSH */
+#ifdef ETHTOOL_GEEE
+	.get_eee		= i40e_get_eee,
+#endif /* ETHTOOL_GEEE */
+#ifdef ETHTOOL_SEEE
+	.set_eee		= i40e_set_eee,
+#endif /* ETHTOOL_SEEE */
 #ifdef ETHTOOL_GMODULEINFO
 	.get_module_info	= i40e_get_module_info,
 	.get_module_eeprom	= i40e_get_module_eeprom,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2018 Intel Corporation. */
+/* Copyright(c) 2013 - 2019 Intel Corporation. */
 
 #include "i40e.h"
 
@@ -17,8 +17,8 @@ static bool i40e_ddp_profiles_eq(struct i40e_profile_info *a,
 				 struct i40e_profile_info *b)
 {
 	return a->track_id == b->track_id &&
-	       !memcmp(&a->version, &b->version, sizeof(a->version)) &&
-               !memcmp(&a->name, &b->name, I40E_DDP_NAME_SIZE);
+		!memcmp(&a->version, &b->version, sizeof(a->version)) &&
+		!memcmp(&a->name, &b->name, I40E_DDP_NAME_SIZE);
 }
 
 /**
@@ -67,10 +67,10 @@ static bool i40e_ddp_profiles_overlap(struct i40e_profile_info *new,
 	unsigned int group_id_new = (u8)((new->track_id & 0x00FF0000) >> 16);
 
 	/* 0x00 group must be only the first */
-	if( group_id_new == 0 )
+	if (group_id_new == 0)
 		return true;
 	/* 0xFF group is compatible with anything else */
-	if( group_id_new == 0xFF || group_id_old == 0xFF)
+	if (group_id_new == 0xFF || group_id_old == 0xFF)
 		return false;
 	/* otherwise only profiles from the same group are compatible*/
 	return group_id_old != group_id_new;
@@ -118,9 +118,9 @@ static int i40e_ddp_does_profile_overlap(struct i40e_hw *hw,
  *
  * Register a profile to the list of loaded profiles.
  */
-i40e_status i40e_add_pinfo(struct i40e_hw *hw,
-				     struct i40e_profile_segment *profile,
-				     u8 *profile_info_sec, u32 track_id)
+static enum i40e_status_code
+i40e_add_pinfo(struct i40e_hw *hw, struct i40e_profile_segment *profile,
+	       u8 *profile_info_sec, u32 track_id)
 {
 	struct i40e_profile_section_header *sec;
 	struct i40e_profile_info *pinfo;
@@ -200,8 +200,9 @@ i40e_del_pinfo(struct i40e_hw *hw, struct i40e_profile_segment *profile,
  * all segment offsets alignment and boundaries. This function lets
  * reject non DDP profile file to be loaded by administrator mistake.
  **/
-bool i40e_ddp_is_pkg_hdr_valid(struct net_device *netdev,
-			       struct i40e_package_header *pkg_hdr, size_t size_huge)
+static bool i40e_ddp_is_pkg_hdr_valid(struct net_device *netdev,
+				      struct i40e_package_header *pkg_hdr,
+				      size_t size_huge)
 {
 	u32 size = 0xFFFFFFFFU & size_huge;
 	u32 pkg_hdr_size;
@@ -231,7 +232,7 @@ bool i40e_ddp_is_pkg_hdr_valid(struct net_device *netdev,
 		netdev_err(netdev, "Invalid DDP profile - too many segments");
 		return false;
 	}
-	for (segment = 0; segment < pkg_hdr->segment_count; ++segment ) {
+	for (segment = 0; segment < pkg_hdr->segment_count; ++segment) {
 		u32 offset = pkg_hdr->segment_offset[segment];
 
 		if (0xFU & offset) {
@@ -340,7 +341,7 @@ int i40e_ddp_load(struct net_device *netdev, const u8 *data, size_t size,
 	if (is_add) {
 		status = i40e_write_profile(&pf->hw, profile_hdr, track_id);
 		if (status) {
-			if ( status == I40E_ERR_DEVICE_NOT_SUPPORTED) {
+			if (status == I40E_ERR_DEVICE_NOT_SUPPORTED) {
 			    netdev_err(netdev, "Profile is not supported by the device.");
 			    return -EPERM;
 			}
@@ -382,7 +383,7 @@ int i40e_ddp_load(struct net_device *netdev, const u8 *data, size_t size,
  * Restores previously loaded profile stored on the list in driver memory.
  * After rolling back removes entry from the list.
  **/
-int i40e_ddp_restore(struct i40e_pf *pf)
+static int i40e_ddp_restore(struct i40e_pf *pf)
 {
 	struct i40e_ddp_old_profile_list *entry;
 	struct net_device *netdev = pf->vsi[pf->lan_vsi]->netdev;
@@ -416,11 +417,11 @@ int i40e_ddp_flash(struct net_device *netdev, struct ethtool_flash *flash)
 	int status = 0;
 
 	/* Check for valid region first */
-	if(flash->region != I40_DDP_FLASH_REGION) {
+	if (flash->region != I40_DDP_FLASH_REGION) {
 		netdev_err(netdev, "Requested firmware region is not recognized by this driver.");
 		return -EINVAL;
 	}
-	if(pf->hw.bus.func != 0) {
+	if (pf->hw.bus.func != 0) {
 		netdev_err(netdev, "Any DDP operation is allowed only on Phy0 NIC interface");
 		return -EINVAL;
 	}

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2018 Intel Corporation. */
+/* Copyright(c) 2013 - 2019 Intel Corporation. */
 
 #ifndef _I40E_DCB_H_
 #define _I40E_DCB_H_
@@ -130,6 +130,11 @@ struct i40e_cee_app_prio {
 };
 #pragma pack()
 
+enum i40e_get_fw_lldp_status_resp {
+	I40E_GET_FW_LLDP_STATUS_DISABLED = 0,
+	I40E_GET_FW_LLDP_STATUS_ENABLED = 1
+};
+
 i40e_status i40e_get_dcbx_status(struct i40e_hw *hw,
 					   u16 *status);
 i40e_status i40e_lldp_to_dcb_config(u8 *lldpmib,
@@ -138,6 +143,10 @@ i40e_status i40e_aq_get_dcb_config(struct i40e_hw *hw, u8 mib_type,
 					     u8 bridgetype,
 					     struct i40e_dcbx_config *dcbcfg);
 i40e_status i40e_get_dcb_config(struct i40e_hw *hw);
-i40e_status i40e_init_dcb(struct i40e_hw *hw);
+i40e_status i40e_init_dcb(struct i40e_hw *hw,
+				    bool enable_mib_change);
+enum i40e_status_code
+i40e_get_fw_lldp_status(struct i40e_hw *hw,
+			enum i40e_get_fw_lldp_status_resp *lldp_status);
 
 #endif /* _I40E_DCB_H_ */

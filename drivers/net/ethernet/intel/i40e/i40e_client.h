@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2018 Intel Corporation. */
+/* Copyright(c) 2013 - 2019 Intel Corporation. */
 
 #ifndef _I40E_CLIENT_H_
 #define _I40E_CLIENT_H_
@@ -43,6 +43,16 @@ struct i40e_client;
  */
 #define I40E_QUEUE_TYPE_PE_AEQ  0x80
 #define I40E_QUEUE_INVALID_IDX	0xFFFF
+
+#define IDC_SIGNATURE 0x494e54454c494443ULL	/* INTELIDC */
+struct idc_srv_provider {
+	u64 signature;
+	u16 maj_ver;
+	u16 min_ver;
+	u8 rsvd[4];
+	int (*reg_peer_driver)(struct i40e_client *client);
+	int (*unreg_peer_driver)(struct i40e_client *client);
+};
 
 struct i40e_qv_info {
 	u32 v_idx; /* msix_vector */

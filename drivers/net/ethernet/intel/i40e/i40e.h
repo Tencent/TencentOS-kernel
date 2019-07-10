@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2018 Intel Corporation. */
+/* Copyright(c) 2013 - 2019 Intel Corporation. */
 
 #ifndef _I40E_H_
 #define _I40E_H_
@@ -365,7 +365,6 @@ struct i40e_udp_port_config {
 
 int i40e_ddp_load(struct net_device *netdev, const u8 *data, size_t size,
 		  bool is_add);
-void i40e_ddp_restore_all(struct i40e_pf *pf);
 int i40e_ddp_flash(struct net_device *netdev, struct ethtool_flash *flash);
 
 struct i40e_ddp_profile_list {
@@ -666,6 +665,8 @@ struct i40e_pf {
 	struct sk_buff *ptp_tx_skb;
 	unsigned long ptp_tx_start;
 	struct hwtstamp_config tstamp_config;
+	struct timespec64 ptp_prev_hw_time;
+	ktime_t ptp_reset_start;
 	struct mutex tmreg_lock; /* Used to protect the SYSTIME registers. */
 	u32 ptp_adj_mult;
 	u32 tx_hwtstamp_timeouts;
@@ -902,6 +903,7 @@ struct i40e_vsi {
 } ____cacheline_internodealigned_in_smp;
 
 struct i40e_netdev_priv {
+	struct idc_srv_provider prov_callbacks;
 	struct i40e_vsi *vsi;
 };
 
@@ -1190,6 +1192,7 @@ struct i40e_mac_filter *i40e_add_mac_filter(struct i40e_vsi *vsi,
 					    const u8 *macaddr);
 int i40e_del_mac_filter(struct i40e_vsi *vsi, const u8 *macaddr);
 bool i40e_is_vsi_in_vlan(struct i40e_vsi *vsi);
+int i40e_count_filters(struct i40e_vsi *vsi);
 struct i40e_mac_filter *i40e_find_mac(struct i40e_vsi *vsi, const u8 *macaddr);
 void i40e_vlan_stripping_enable(struct i40e_vsi *vsi);
 #ifdef CONFIG_DCB
@@ -1212,6 +1215,8 @@ void i40e_ptp_rx_hwtstamp(struct i40e_pf *pf, struct sk_buff *skb, u8 index);
 void i40e_ptp_set_increment(struct i40e_pf *pf);
 int i40e_ptp_set_ts_config(struct i40e_pf *pf, struct ifreq *ifr);
 int i40e_ptp_get_ts_config(struct i40e_pf *pf, struct ifreq *ifr);
+void i40e_ptp_save_hw_time(struct i40e_pf *pf);
+void i40e_ptp_restore_hw_time(struct i40e_pf *pf);
 void i40e_ptp_init(struct i40e_pf *pf);
 void i40e_ptp_stop(struct i40e_pf *pf);
 #endif /* HAVE_PTP_1588_CLOCK */
@@ -1232,6 +1237,11 @@ int i40e_create_queue_channel(struct i40e_vsi *vsi, struct i40e_channel *ch);
 int i40e_get_link_speed(struct i40e_vsi *vsi);
 
 void i40e_set_fec_in_flags(u8 fec_cfg, u64 *flags);
+
+#ifdef HAVE_XDP_SUPPORT
+int i40e_queue_pair_disable(struct i40e_vsi *vsi, int queue_pair);
+int i40e_queue_pair_enable(struct i40e_vsi *vsi, int queue_pair);
+#endif
 
 static inline bool i40e_enabled_xdp_vsi(struct i40e_vsi *vsi)
 {
