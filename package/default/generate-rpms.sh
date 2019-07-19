@@ -154,6 +154,8 @@ prepare_tlinux_spec()
 	else
 		cat $curdir/kernel-tlinux.spec >> $spec_file_name
 	fi
+
+	git log --pretty=format:"- %cd [ %an  ]  %s"   --date=short >> $spec_file_name
 }
 
 #main function

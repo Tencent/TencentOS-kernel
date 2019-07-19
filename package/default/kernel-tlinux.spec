@@ -469,6 +469,9 @@ echo -e "Remove \"%{tagged_name}%{?dist}\" Done."
 
 # changelog  ###################################################################
 %changelog
-* Wed Feb 13 2019 Xiaoming Gao <newtongao@tencent.com>
- - Initial 4.14.99 repository
+* Wed Feb 13 2019 Init by Xiaoming Gao <newtongao@tencent.com>
+
+#auto generated changelog use git log command
+
+
 
