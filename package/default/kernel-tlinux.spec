@@ -130,6 +130,7 @@ This package provides debug information for the perf python bindings.
 %prep
 
 %setup -q -c -T -a 0
+%{name}-%{version}/package/default/extra_modules/build.sh prep
 
 # build ########################################################################
 %build
@@ -159,6 +160,7 @@ do
 	fi
 #  dealing with files under lib/modules
     make -C ${objdir} RPM_BUILD_MODULE=y modules
+    package/default/extra_modules/build.sh build %{tagged_name} ${objdir}
 
     %global perf_make make %{?_smp_mflags} -C tools/perf -s V=1 WERROR=0 NO_LIBUNWIND=1 HAVE_CPLUS_DEMANGLE=1 NO_GTK2=1 NO_STRLCPY=1 prefix=%{_prefix}
     %if %{with_perf}
@@ -200,6 +202,7 @@ do
 
     ####### make kernel-devel package: methods comes from rhel6(kernel.spec) ####### 
     make -C ${objdir} RPM_BUILD_MODULE=y INSTALL_MOD_PATH=%buildroot modules_install > /dev/null
+    package/default/extra_modules/build.sh install %{tagged_name} ${objdir} %{buildroot}
 	#don't package firmware, use linux-firmware rpm instead
 	rm -rf %buildroot/lib/firmware
     # And save the headers/makefiles etc for building modules against
