@@ -66,6 +66,7 @@
 #include <linux/raid/md_u.h>
 #include <linux/slab.h>
 #include <linux/percpu-refcount.h>
+#include <linux/blk-cgroup.h>
 
 #include <trace/events/block.h>
 #include "md.h"
@@ -316,6 +317,7 @@ static blk_qc_t md_make_request(struct request_queue *q, struct bio *bio)
 {
 	const int rw = bio_data_dir(bio);
 	struct mddev *mddev = q->queuedata;
+	struct blkcg *blkcg = bio_blkcg(bio);
 	unsigned int sectors;
 	int cpu;
 
@@ -345,6 +347,9 @@ static blk_qc_t md_make_request(struct request_queue *q, struct bio *bio)
 	cpu = part_stat_lock();
 	part_stat_inc(cpu, &mddev->gendisk->part0, ios[rw]);
 	part_stat_add(cpu, &mddev->gendisk->part0, sectors[rw], sectors);
+	blkcg_part_stat_inc(blkcg, cpu, &mddev->gendisk->part0, ios[rw]);
+	blkcg_part_stat_add(blkcg, cpu, &mddev->gendisk->part0, sectors[rw],
+			    sectors);
 	part_stat_unlock();
 
 	return BLK_QC_T_NONE;
