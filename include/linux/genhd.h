@@ -27,6 +27,7 @@
 extern struct device_type part_type;
 extern struct kobject *block_depr;
 extern struct class block_class;
+extern const struct device_type disk_type;
 
 enum {
 /* These three have identical behaviour; use the second one if DOS FDISK gets

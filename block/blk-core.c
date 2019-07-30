@@ -70,6 +70,18 @@ struct kmem_cache *blk_requestq_cachep;
  */
 static struct workqueue_struct *kblockd_workqueue;
 
+static void blkcg_stat_acct(struct blkcg *blkcg, struct request *req, int new_io)
+{
+	struct hd_struct *part = req->part;
+	int rw = rq_data_dir(req), cpu;
+
+	if (!new_io) {
+		cpu = part_stat_lock();
+		blkcg_part_stat_inc(blkcg, cpu, part, merges[rw]);
+		part_stat_unlock();
+	}
+}
+
 static void blk_clear_congested(struct request_list *rl, int sync)
 {
 #ifdef CONFIG_CGROUP_WRITEBACK
@@ -1633,6 +1645,7 @@ bool bio_attempt_back_merge(struct request_queue *q, struct request *req,
 	req->ioprio = ioprio_best(req->ioprio, bio_prio(bio));
 
 	blk_account_io_start(req, false);
+	blkcg_stat_acct(bio_blkcg(bio), req, 0);
 	return true;
 }
 
@@ -1657,6 +1670,7 @@ bool bio_attempt_front_merge(struct request_queue *q, struct request *req,
 	req->ioprio = ioprio_best(req->ioprio, bio_prio(bio));
 
 	blk_account_io_start(req, false);
+	blkcg_stat_acct(bio_blkcg(bio), req, 0);
 	return true;
 }
 
@@ -2125,6 +2139,9 @@ generic_make_request_checks(struct bio *bio)
 	 */
 	create_io_context(GFP_ATOMIC, q->node);
 
+	/* attach cgroup */
+	bio_associate_current(bio);
+
 	if (!blkcg_bio_issue_check(q, bio))
 		return false;
 
@@ -2477,6 +2494,43 @@ void blk_account_io_done(struct request *req)
 	}
 }
 
+static void blkcg_account_io_completion(struct request *req, struct bio *bio,
+					unsigned int bytes)
+{
+	if (blk_do_io_stat(req)) {
+		const int rw = bio_data_dir(bio);
+		struct blkcg * blkcg = bio_blkcg(bio);
+		struct hd_struct *part;
+		int cpu;
+
+		cpu = part_stat_lock();
+		part = req->part;
+		blkcg_part_stat_add(blkcg, cpu, part, sectors[rw], bytes >> 9);
+		part_stat_unlock();
+	}
+}
+
+static void blkcg_account_io_done(struct request *req, struct bio *bio)
+{
+	/*
+	 * Account IO completion.  flush_rq isn't accounted as a
+	 * normal IO on queueing nor completion.  Accounting the
+	 * containing request is enough.
+	 */
+	if (blk_do_io_stat(req) && !(req->cmd_flags & RQF_FLUSH_SEQ)) {
+		unsigned long duration = jiffies - req->start_time;
+		const int rw = rq_data_dir(req);
+		struct hd_struct *part = req->part;
+		struct blkcg *blkcg = bio_blkcg(bio);
+		int cpu;
+
+		cpu = part_stat_lock();
+		blkcg_part_stat_inc(blkcg, cpu, part, ios[rw]);
+		blkcg_part_stat_add(blkcg, cpu, part, ticks[rw], duration);
+		part_stat_unlock();
+	}
+}
+
 #ifdef CONFIG_PM
 /*
  * Don't process normal requests when queue is suspended
@@ -2755,6 +2809,10 @@ bool blk_update_request(struct request *req, blk_status_t error,
 	while (req->bio) {
 		struct bio *bio = req->bio;
 		unsigned bio_bytes = min(bio->bi_iter.bi_size, nr_bytes);
+
+		blkcg_account_io_completion(req, bio, bio_bytes);
+		if (req->bio == req->biotail)
+			blkcg_account_io_done(req, bio);
 
 		if (bio_bytes == bio->bi_iter.bi_size)
 			req->bio = bio->bi_next;
