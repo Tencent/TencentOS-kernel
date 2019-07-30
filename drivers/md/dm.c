@@ -24,6 +24,7 @@
 #include <linux/delay.h>
 #include <linux/wait.h>
 #include <linux/pr.h>
+#include <linux/blk-cgroup.h>
 
 #define DM_MSG_PREFIX "core"
 
@@ -531,11 +532,17 @@ static void end_io_acct(struct dm_io *io)
 {
 	struct mapped_device *md = io->md;
 	struct bio *bio = io->bio;
+	struct blkcg *blkcg = bio_blkcg(bio);
 	unsigned long duration = jiffies - io->start_time;
 	int pending;
-	int rw = bio_data_dir(bio);
+	int rw = bio_data_dir(bio), cpu;
 
 	generic_end_io_acct(md->queue, rw, &dm_disk(md)->part0, io->start_time);
+
+	cpu = part_stat_lock();
+	blkcg_part_stat_add(blkcg, cpu, &dm_disk(md)->part0, ticks[rw],
+			    duration);
+	part_stat_unlock();
 
 	if (unlikely(dm_stats_used(&md->stats)))
 		dm_stats_account_io(&md->stats, bio_data_dir(bio),
@@ -1528,12 +1535,20 @@ static blk_qc_t dm_make_request(struct request_queue *q, struct bio *bio)
 {
 	int rw = bio_data_dir(bio);
 	struct mapped_device *md = q->queuedata;
+	struct blkcg *blkcg = bio_blkcg(bio);
 	int srcu_idx;
 	struct dm_table *map;
+	int cpu;
 
 	map = dm_get_live_table(md, &srcu_idx);
 
 	generic_start_io_acct(q, rw, bio_sectors(bio), &dm_disk(md)->part0);
+
+	cpu = part_stat_lock();
+	blkcg_part_stat_inc(blkcg, cpu, &dm_disk(md)->part0, ios[rw]);
+	blkcg_part_stat_add(blkcg, cpu, &dm_disk(md)->part0, sectors[rw],
+			    bio_sectors(bio));
+	part_stat_unlock();
 
 	/* if we're suspended, we have to queue this io for later */
 	if (unlikely(test_bit(DMF_BLOCK_IO_FOR_SUSPEND, &md->flags))) {
