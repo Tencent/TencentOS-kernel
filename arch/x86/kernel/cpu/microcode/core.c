@@ -832,6 +832,10 @@ int __init microcode_init(void)
 	if (dis_ucode_ldr)
 		return -EINVAL;
 
+	/* Hygon microcode loading to be implemented */
+	if (c->x86_vendor == X86_VENDOR_HYGON)
+		return 0;
+
 	if (c->x86_vendor == X86_VENDOR_INTEL)
 		microcode_ops = init_intel_microcode();
 	else if (c->x86_vendor == X86_VENDOR_AMD)

@@ -110,7 +110,8 @@ static int __init amd_freq_sensitivity_init(void)
 {
 	u64 val;
 
-	if (boot_cpu_data.x86_vendor != X86_VENDOR_AMD)
+	if (boot_cpu_data.x86_vendor != X86_VENDOR_AMD &&
+	    boot_cpu_data.x86_vendor != X86_VENDOR_HYGON)
 		return -ENODEV;
 
 	if (!static_cpu_has(X86_FEATURE_PROC_FEEDBACK))

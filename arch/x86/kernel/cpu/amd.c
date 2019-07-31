@@ -352,6 +352,25 @@ static void amd_get_topology(struct cpuinfo_x86 *c)
 				c->x86_max_cores /= smp_num_siblings;
 		}
 
+		if (c->x86_vendor == X86_VENDOR_HYGON && cpuid_edx(0x80000006)) {
+			/*
+			 * We may have multiple LLCs if L3 caches exist, so check if we
+			 * have an L3 cache by looking at the L3 cache CPUID leaf.
+			 */
+			if (c->x86 == 0x17) {
+				/* Socket ID is ApicId[6] for these processors. */
+				c->phys_proc_id = c->initial_apicid >> 6;
+				/*
+				 * LLC is at the core complex level.
+				 * Core complex id is ApicId[3].
+				 */
+				per_cpu(cpu_llc_id, cpu) = c->apicid >> 3;
+			} else {
+				/* LLC is at the node level. */
+				per_cpu(cpu_llc_id, cpu) = node_id;
+			}
+		} else {
+
 		/*
 		 * In case leaf B is available, use it to derive
 		 * topology information.
@@ -361,7 +380,7 @@ static void amd_get_topology(struct cpuinfo_x86 *c)
 			c->x86_coreid_bits = get_count_order(c->x86_max_cores);
 
 		cacheinfo_amd_init_llc_id(c, cpu, node_id);
-
+		}
 	} else if (cpu_has(c, X86_FEATURE_NODEID_MSR)) {
 		u64 value;
 
@@ -551,13 +570,14 @@ static void bsp_init_amd(struct cpuinfo_x86 *c)
 
 	if (!boot_cpu_has(X86_FEATURE_AMD_SSBD) &&
 	    !boot_cpu_has(X86_FEATURE_VIRT_SSBD) &&
-	    c->x86 >= 0x15 && c->x86 <= 0x17) {
+	    c->x86 >= 0x15 && c->x86 <= 0x18) {
 		unsigned int bit;
 
 		switch (c->x86) {
 		case 0x15: bit = 54; break;
 		case 0x16: bit = 33; break;
 		case 0x17: bit = 10; break;
+		case 0x18: bit = 10; break;
 		default: return;
 		}
 		/*
@@ -794,6 +814,12 @@ static void init_amd_zn(struct cpuinfo_x86 *c)
 		set_cpu_cap(c, X86_FEATURE_CPB);
 }
 
+static void init_hygon_dhyana(struct cpuinfo_x86 *c)
+{
+	set_cpu_cap(c, X86_FEATURE_ZEN);
+	set_cpu_cap(c, X86_FEATURE_CPB);
+}
+
 static void init_amd(struct cpuinfo_x86 *c)
 {
 	early_init_amd(c);
@@ -823,6 +849,7 @@ static void init_amd(struct cpuinfo_x86 *c)
 	case 0x12: init_amd_ln(c); break;
 	case 0x15: init_amd_bd(c); break;
 	case 0x17: init_amd_zn(c); break;
+	case 0x18: init_hygon_dhyana(c); break;
 	}
 
 	/*
@@ -954,6 +981,18 @@ static void cpu_detect_tlb_amd(struct cpuinfo_x86 *c)
 
 	tlb_lli_4m[ENTRIES] = tlb_lli_2m[ENTRIES] >> 1;
 }
+
+static const struct cpu_dev hygon_cpu_dev = {
+	.c_vendor	= "Hygon",
+	.c_ident	= { "HygonGenuine" },
+	.c_early_init   = early_init_amd,
+	.c_detect_tlb	= cpu_detect_tlb_amd,
+	.c_bsp_init	= bsp_init_amd,
+	.c_init		= init_amd,
+	.c_x86_vendor	= X86_VENDOR_HYGON,
+};
+
+cpu_dev_register(hygon_cpu_dev);
 
 static const struct cpu_dev amd_cpu_dev = {
 	.c_vendor	= "AMD",

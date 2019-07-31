@@ -146,5 +146,6 @@ void qib_disable_wc(struct qib_devdata *dd)
  */
 int qib_unordered_wc(void)
 {
-	return boot_cpu_data.x86_vendor != X86_VENDOR_AMD;
+	return boot_cpu_data.x86_vendor != X86_VENDOR_AMD &&
+	       boot_cpu_data.x86_vendor != X86_VENDOR_HYGON;
 }
