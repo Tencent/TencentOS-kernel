@@ -24,6 +24,14 @@
 
 int sysctl_tcp_thin_linear_timeouts __read_mostly;
 
+/* default value is 200ms */
+int sysctl_tcp_rto_min __read_mostly = 200;
+EXPORT_SYMBOL(sysctl_tcp_rto_min);
+
+/* default value is 120s */
+int sysctl_tcp_rto_max __read_mostly = 120;
+EXPORT_SYMBOL(sysctl_tcp_rto_max);
+
 /**
  *  tcp_write_err() - close socket and save error info
  *  @sk:  The socket the error has appeared on.

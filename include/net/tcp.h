@@ -139,8 +139,8 @@ void tcp_time_wait(struct sock *sk, int state, int timeo);
 #define TCP_DELACK_MIN	4U
 #define TCP_ATO_MIN	4U
 #endif
-#define TCP_RTO_MAX	((unsigned)(120*HZ))
-#define TCP_RTO_MIN	((unsigned)(HZ/5))
+#define TCP_RTO_MIN	((unsigned)((sysctl_tcp_rto_min*HZ)/1000))
+#define TCP_RTO_MAX	((unsigned)(sysctl_tcp_rto_max*HZ))
 #define TCP_TIMEOUT_MIN	(2U) /* Min timeout for TCP timers in jiffies */
 #define TCP_TIMEOUT_INIT ((unsigned)(1*HZ))	/* RFC6298 2.1 initial RTO value	*/
 #define TCP_TIMEOUT_FALLBACK ((unsigned)(3*HZ))	/* RFC 1122 initial RTO value, now
@@ -276,6 +276,8 @@ extern int sysctl_tcp_pacing_ca_ratio;
 extern int sysctl_tcp_tw_ignore_syn_tsval_zero;
 extern int sysctl_tcp_loss_init_cwnd;
 extern int sysctl_tcp_init_cwnd;
+extern int sysctl_tcp_rto_min;
+extern int sysctl_tcp_rto_max;
 
 extern atomic_long_t tcp_memory_allocated;
 extern struct percpu_counter tcp_sockets_allocated;

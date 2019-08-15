@@ -756,6 +756,21 @@ static struct ctl_table ipv4_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
 	},
+	{
+		.procname       = "tcp_rto_min",
+		.data           = &sysctl_tcp_rto_min,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = &four
+	},
+	{
+		.procname       = "tcp_rto_max",
+		.data           = &sysctl_tcp_rto_max,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec,
+	},
 	{ }
 };
 
