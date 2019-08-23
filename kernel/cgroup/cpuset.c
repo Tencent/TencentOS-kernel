@@ -1852,7 +1852,7 @@ static u64 get_idle_time(int cpu)
 		/* !NO_HZ or cpu offline so we can rely on cpustat.idle */
 		idle = kcpustat_cpu(cpu).cpustat[CPUTIME_IDLE];
 	else
-		idle = div_u64(idle_time, NSEC_PER_USEC);
+		idle = idle_time * NSEC_PER_USEC;
 
 	return idle;
 }
