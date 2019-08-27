@@ -15,6 +15,7 @@
 #define pr_fmt(fmt) "AER: " fmt
 #define dev_fmt pr_fmt
 
+#include <linux/bitops.h>
 #include <linux/cper.h>
 #include <linux/pci.h>
 #include <linux/pci-acpi.h>
@@ -658,7 +659,8 @@ const struct attribute_group aer_stats_attr_group = {
 static void pci_dev_aer_stats_incr(struct pci_dev *pdev,
 				   struct aer_err_info *info)
 {
-	int status, i, max = -1;
+	unsigned long status = info->status & ~info->mask;
+	int i, max = -1;
 	u64 *counter = NULL;
 	struct aer_stats *aer_stats = pdev->aer_stats;
 
@@ -683,10 +685,8 @@ static void pci_dev_aer_stats_incr(struct pci_dev *pdev,
 		break;
 	}
 
-	status = (info->status & ~info->mask);
-	for (i = 0; i < max; i++)
-		if (status & (1 << i))
-			counter[i]++;
+	for_each_set_bit(i, &status, max)
+		counter[i]++;
 }
 
 static void pci_rootport_aer_stats_incr(struct pci_dev *pdev,
@@ -718,14 +718,11 @@ static void __print_tlp_header(struct pci_dev *dev,
 static void __aer_print_error(struct pci_dev *dev,
 			      struct aer_err_info *info)
 {
-	int i, status;
+	unsigned long status = info->status & ~info->mask;
 	const char *errmsg = NULL;
-	status = (info->status & ~info->mask);
+	int i;
 
-	for (i = 0; i < 32; i++) {
-		if (!(status & (1 << i)))
-			continue;
-
+	for_each_set_bit(i, &status, 32) {
 		if (info->severity == AER_CORRECTABLE)
 			errmsg = i < ARRAY_SIZE(aer_correctable_error_string) ?
 				aer_correctable_error_string[i] : NULL;
