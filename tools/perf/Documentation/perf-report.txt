@@ -251,7 +251,7 @@ OPTIONS
 	Accumulate callchain of children to parent entry so that then can
 	show up in the output.  The output will have a new "Children" column
 	and will be sorted on the data.  It requires callchains are recorded.
-	See the `overhead calculation' section for more details. Enabled by
+	See the `overhead calculation' section for more details. Disabled by
 	default, disable with --no-children.
 
 --max-stack::
