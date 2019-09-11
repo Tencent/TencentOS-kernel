@@ -168,7 +168,7 @@ static int show_stat(struct seq_file *p, void *v)
 		"procs_blocked %lu\n",
 		nr_context_switches(),
 		(unsigned long long)boottime.tv_sec,
-		total_forks,
+		nr_forks(),
 		nr_running(),
 		nr_iowait());
 

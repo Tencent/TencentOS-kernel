@@ -1968,7 +1968,7 @@ static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
 	n_blocked = 0;
 	for_each_cpu(i, cs->cpus_allowed) {
 		n_ctx_switch += nr_context_switches_cpu(i);
-		n_process += per_cpu(process_counts, i);
+		n_process += per_cpu(total_forks, i);
 		n_running += nr_running_cpu(i);
 		n_blocked += nr_iowait_cpu(i);
 	}
