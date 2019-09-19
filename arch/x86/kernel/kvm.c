@@ -48,6 +48,15 @@
 #include <asm/kvm_guest.h>
 
 static int kvmapf = 1;
+static bool kvm_no_pv_ipi = false;
+
+static int parse_kvm_no_pv_ipi(char *arg)
+{
+	kvm_no_pv_ipi = true;
+	return 0;
+}
+
+early_param("kvm_no_pv_ipi", parse_kvm_no_pv_ipi);
 
 static int parse_no_kvmapf(char *arg)
 {
@@ -646,7 +655,8 @@ static void __init kvm_apic_init(void)
 
 static void __init kvm_init_platform(void)
 {
-	x86_platform.apic_post_init = kvm_apic_init;
+	if (!kvm_no_pv_ipi)	
+		x86_platform.apic_post_init = kvm_apic_init;
 }
 
 const __initconst struct hypervisor_x86 x86_hyper_kvm = {
