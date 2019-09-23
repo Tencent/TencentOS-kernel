@@ -100,6 +100,7 @@
 
 /* External variables not in a header file. */
 extern int suid_dumpable;
+extern int cpuset_cpuinfo_show_realinfo;
 #ifdef CONFIG_COREDUMP
 extern int core_uses_pid;
 extern char core_pattern[];
@@ -1274,6 +1275,13 @@ static struct ctl_table kern_table[] = {
 		.procname	= "shield_mounts_max",
 		.data		= &sysctl_shield_mounts_max,
 		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "cpuset_cpuinfo_show_realinfo",
+		.data		= &cpuset_cpuinfo_show_realinfo,
+		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},

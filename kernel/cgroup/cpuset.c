@@ -72,6 +72,7 @@
 
 DEFINE_STATIC_KEY_FALSE(cpusets_pre_enable_key);
 DEFINE_STATIC_KEY_FALSE(cpusets_enabled_key);
+int cpuset_cpuinfo_show_realinfo __read_mostly;
 
 /* See "Frequency meter" comments, below. */
 
@@ -2043,15 +2044,25 @@ static void show_cpuinfo_misc(struct seq_file *m, struct cpuinfo_x86 *c)
 
 static int cpuset_cgroup_cpuinfo_show(struct seq_file *sf, void *v)
 {
-	int i, j;
+	int i, j, k = 0;
 	struct cpuset *cs = css_cs(seq_css(sf));
 	struct cpuinfo_x86 *c;
 	unsigned int cpu;
+	bool is_top_cgrp;
+
+	if (!seq_css(sf)->parent)
+		is_top_cgrp = true;
+	else
+		is_top_cgrp = false;
 
 	for_each_cpu(j, cs->cpus_allowed)
 	{
 		c = &cpu_data(j);
-		cpu = c->cpu_index;
+		if (is_top_cgrp || cpuset_cpuinfo_show_realinfo)
+			cpu = c->cpu_index;
+		else
+			cpu = k;
+		k++;
 		seq_printf(sf, "processor\t: %u\n"
 				"vendor_id\t: %s\n"
 				"cpu family\t: %d\n"
