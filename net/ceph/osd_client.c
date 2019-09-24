@@ -3099,8 +3099,10 @@ static void handle_timeout(struct work_struct *work)
 			    time_before(req->r_start_stamp, expiry_cutoff)) {
 				pr_err("tid %llu on osd%d timeout\n",
 				       req->r_tid, osd->o_osd);
-				//abort_request(req, -ETIMEDOUT);
-				found_timeout = true;
+				if (ceph_test_opt(osdc->client, REQ_RESEND))
+					found_timeout = true;
+				else
+					abort_request(req, -ETIMEDOUT);
 			}
 		}
 		for (p = rb_first(&osd->o_linger_requests); p; p = rb_next(p)) {

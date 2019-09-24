@@ -249,6 +249,8 @@ enum {
 	Opt_nocephx_sign_messages,
 	Opt_tcp_nodelay,
 	Opt_notcp_nodelay,
+	Opt_req_resend,
+	Opt_noreq_resend,
 };
 
 static match_table_t opt_tokens = {
@@ -274,6 +276,8 @@ static match_table_t opt_tokens = {
 	{Opt_nocephx_sign_messages, "nocephx_sign_messages"},
 	{Opt_tcp_nodelay, "tcp_nodelay"},
 	{Opt_notcp_nodelay, "notcp_nodelay"},
+	{Opt_req_resend, "req_resend"},
+	{Opt_noreq_resend, "noreq_resend"},
 	{-1, NULL}
 };
 
@@ -526,6 +530,13 @@ ceph_parse_options(char *options, const char *dev_name,
 			opt->flags &= ~CEPH_OPT_TCP_NODELAY;
 			break;
 
+		case Opt_req_resend:
+			opt->flags |= CEPH_OPT_REQ_RESEND;
+			break;
+		case Opt_noreq_resend:
+			opt->flags &= ~CEPH_OPT_REQ_RESEND;
+			break;
+
 		default:
 			BUG_ON(token);
 		}
@@ -565,6 +576,8 @@ int ceph_print_client_options(struct seq_file *m, struct ceph_client *client)
 		seq_puts(m, "nocephx_sign_messages,");
 	if ((opt->flags & CEPH_OPT_TCP_NODELAY) == 0)
 		seq_puts(m, "notcp_nodelay,");
+	if ((opt->flags & CEPH_OPT_REQ_RESEND) == 0)
+		seq_puts(m, "noreq_resend,");
 
 	if (opt->mount_timeout != CEPH_MOUNT_TIMEOUT_DEFAULT)
 		seq_printf(m, "mount_timeout=%d,",

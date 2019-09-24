@@ -35,8 +35,9 @@
 #define CEPH_OPT_NOMSGAUTH	  (1<<4) /* don't require msg signing feat */
 #define CEPH_OPT_TCP_NODELAY	  (1<<5) /* TCP_NODELAY on TCP sockets */
 #define CEPH_OPT_NOMSGSIGN	  (1<<6) /* don't sign msgs */
+#define CEPH_OPT_REQ_RESEND	  (1<<7) /* resend request if timeout */
 
-#define CEPH_OPT_DEFAULT   (CEPH_OPT_TCP_NODELAY)
+#define CEPH_OPT_DEFAULT   (CEPH_OPT_TCP_NODELAY | CEPH_OPT_REQ_RESEND)
 
 #define ceph_set_opt(client, opt) \
 	(client)->options->flags |= CEPH_OPT_##opt;
@@ -139,6 +140,7 @@ struct ceph_client {
 	struct dentry *debugfs_monmap;
 	struct dentry *debugfs_osdmap;
 	struct dentry *debugfs_options;
+	struct dentry *debugfs_req_resend;
 #endif
 };
 

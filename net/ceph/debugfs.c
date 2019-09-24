@@ -389,6 +389,57 @@ CEPH_DEFINE_SHOW_FUNC(monc_show)
 CEPH_DEFINE_SHOW_FUNC(osdc_show)
 CEPH_DEFINE_SHOW_FUNC(client_options_show)
 
+static int req_resend_show(struct seq_file *s, void *p)
+{
+	struct ceph_client *client = s->private;
+
+	if (ceph_test_opt(client, REQ_RESEND))
+		seq_puts(s, "1");
+	else
+		seq_puts(s, "0");
+
+	seq_putc(s, '\n');
+	return 0;
+}
+
+static int req_resend_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, req_resend_show, inode->i_private);
+}
+
+static ssize_t req_resend_write(struct file *filp, const char __user *user_buf,
+		       size_t len, loff_t *offset)
+{
+	struct ceph_client *client = file_inode(filp)->i_private;
+	char buffer[16];
+	unsigned int req_resend;
+
+	if (len >= sizeof(buffer))
+		len = sizeof(buffer) - 1;
+	if (copy_from_user(buffer, user_buf, len))
+		return -EFAULT;
+	buffer[len] = '\0';
+	if (kstrtouint(buffer, 0, &req_resend))
+		return -EINVAL;
+
+	down_write(&client->osdc.lock);
+	if(req_resend)
+		client->options->flags |= CEPH_OPT_REQ_RESEND;
+	else
+		client->options->flags &= ~CEPH_OPT_REQ_RESEND;
+	up_write(&client->osdc.lock);
+
+	return len;
+}
+
+static const struct file_operations req_resend_fops = {
+	.open           = req_resend_open,
+	.read           = seq_read,
+	.write		= req_resend_write,
+	.llseek         = seq_lseek,
+	.release        = single_release,
+};
+
 int ceph_debugfs_init(void)
 {
 	ceph_debugfs_dir = debugfs_create_dir("ceph", NULL);
@@ -457,6 +508,14 @@ int ceph_debugfs_client_init(struct ceph_client *client)
 	if (!client->debugfs_options)
 		goto out;
 
+	client->debugfs_req_resend = debugfs_create_file("req_resend",
+					0600,
+					client->debugfs_dir,
+					client,
+					&req_resend_fops);
+	if (!client->debugfs_req_resend)
+		goto out;
+
 	return 0;
 
 out:
@@ -467,6 +526,7 @@ out:
 void ceph_debugfs_client_cleanup(struct ceph_client *client)
 {
 	dout("ceph_debugfs_client_cleanup %p\n", client);
+	debugfs_remove(client->debugfs_req_resend);
 	debugfs_remove(client->debugfs_options);
 	debugfs_remove(client->debugfs_osdmap);
 	debugfs_remove(client->debugfs_monmap);
