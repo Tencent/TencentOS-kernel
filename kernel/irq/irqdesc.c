@@ -19,6 +19,8 @@
 
 #include "internals.h"
 
+static bool irq_force_no_manage = true;
+
 /*
  * lockdep: we want to handle all irq_desc locks as a single lock-class:
  */
@@ -446,7 +448,11 @@ static int alloc_descs(unsigned int start, unsigned int cnt, int node,
 		}
 	}
 
-	flags = affinity ? IRQD_AFFINITY_MANAGED : 0;
+	if (irq_force_no_manage)
+		flags = 0;
+	else
+		flags = affinity ? IRQD_AFFINITY_MANAGED : 0;
+
 	mask = NULL;
 
 	for (i = 0; i < cnt; i++) {
@@ -923,3 +929,10 @@ unsigned int kstat_irqs_usr(unsigned int irq)
 	irq_unlock_sparse();
 	return sum;
 }
+
+static __init int irq_parse_force_manage(char *arg)
+{
+	irq_force_no_manage = false;
+	return 0;
+}
+early_param("irq_force_manage", irq_parse_force_manage);
