@@ -1165,7 +1165,7 @@ static int reopen_osd(struct ceph_osd *osd)
 {
 	struct ceph_entity_addr *peer_addr;
 
-	dout("%s osd %p osd%d\n", __func__, osd, osd->o_osd);
+	pr_info("%s osd %p osd%d\n", __func__, osd, osd->o_osd);
 
 	if (RB_EMPTY_ROOT(&osd->o_requests) &&
 	    RB_EMPTY_ROOT(&osd->o_linger_requests)) {
@@ -1178,7 +1178,7 @@ static int reopen_osd(struct ceph_osd *osd)
 			!ceph_con_opened(&osd->o_con)) {
 		struct rb_node *n;
 
-		dout("osd addr hasn't changed and connection never opened, "
+		pr_info("osd addr hasn't changed and connection never opened, "
 		     "letting msgr retry\n");
 		/* touch each r_stamp for handle_timeout()'s benfit */
 		for (n = rb_first(&osd->o_requests); n; n = rb_next(n)) {
@@ -3068,6 +3068,7 @@ static void handle_timeout(struct work_struct *work)
 	unsigned long cutoff = jiffies - opts->osd_keepalive_timeout;
 	unsigned long expiry_cutoff = jiffies - opts->osd_request_timeout;
 	LIST_HEAD(slow_osds);
+	LIST_HEAD(timeout_osds);
 	struct rb_node *n, *p;
 
 	dout("%s osdc %p\n", __func__, osdc);
@@ -3081,6 +3082,7 @@ static void handle_timeout(struct work_struct *work)
 	for (n = rb_first(&osdc->osds); n; n = rb_next(n)) {
 		struct ceph_osd *osd = rb_entry(n, struct ceph_osd, o_node);
 		bool found = false;
+		bool found_timeout = false;
 
 		for (p = rb_first(&osd->o_requests); p; ) {
 			struct ceph_osd_request *req =
@@ -3095,9 +3097,10 @@ static void handle_timeout(struct work_struct *work)
 			}
 			if (opts->osd_request_timeout &&
 			    time_before(req->r_start_stamp, expiry_cutoff)) {
-				pr_err_ratelimited("tid %llu on osd%d timeout\n",
+				pr_err("tid %llu on osd%d timeout\n",
 				       req->r_tid, osd->o_osd);
-				abort_request(req, -ETIMEDOUT);
+				//abort_request(req, -ETIMEDOUT);
+				found_timeout = true;
 			}
 		}
 		for (p = rb_first(&osd->o_linger_requests); p; p = rb_next(p)) {
@@ -3116,6 +3119,12 @@ static void handle_timeout(struct work_struct *work)
 
 		if (found)
 			list_move_tail(&osd->o_keepalive_item, &slow_osds);
+		/*
+		 * When timeout, we move the osd into the timeout queue to re-send requests,
+		 * and if the osd was in the slow_osd queue, then we save the keepalive.
+		 */
+		if (found_timeout)
+			list_move_tail(&osd->o_keepalive_item, &timeout_osds);
 	}
 
 	if (opts->osd_request_timeout) {
@@ -3133,7 +3142,8 @@ static void handle_timeout(struct work_struct *work)
 		}
 	}
 
-	if (atomic_read(&osdc->num_homeless) || !list_empty(&slow_osds))
+	if (atomic_read(&osdc->num_homeless) || !list_empty(&slow_osds)
+	    || !list_empty(&timeout_osds))
 		maybe_request_map(osdc);
 
 	while (!list_empty(&slow_osds)) {
@@ -3142,6 +3152,14 @@ static void handle_timeout(struct work_struct *work)
 							o_keepalive_item);
 		list_del_init(&osd->o_keepalive_item);
 		ceph_con_keepalive(&osd->o_con);
+	}
+
+	while (!list_empty(&timeout_osds)) {
+		struct ceph_osd *osd = list_first_entry(&timeout_osds,
+							struct ceph_osd,
+							o_keepalive_item);
+		list_del_init(&osd->o_keepalive_item);
+		ceph_con_fault_force(&osd->o_con);
 	}
 
 	up_write(&osdc->lock);
@@ -3893,8 +3911,10 @@ static void osd_fault(struct ceph_connection *con)
 {
 	struct ceph_osd *osd = con->private;
 	struct ceph_osd_client *osdc = osd->o_osdc;
+	int osd_num = osd->o_osd;
+	int ret;
 
-	dout("%s osd %p osd%d\n", __func__, osd, osd->o_osd);
+	pr_info("%s osd %p osd%d\n", __func__, osd, osd->o_osd);
 
 	down_write(&osdc->lock);
 	if (!osd_registered(osd)) {
@@ -3902,7 +3922,9 @@ static void osd_fault(struct ceph_connection *con)
 		goto out_unlock;
 	}
 
-	if (!reopen_osd(osd))
+	ret = reopen_osd(osd);
+	pr_info("%s reopen osd%d ret=%d\n", __func__, osd_num, ret);
+	if (ret == 0)
 		kick_osd_requests(osd);
 	maybe_request_map(osdc);
 

@@ -101,6 +101,7 @@
 #define CON_FLAG_WRITE_PENDING	   2  /* we have data ready to send */
 #define CON_FLAG_SOCK_CLOSED	   3  /* socket state changed to closed */
 #define CON_FLAG_BACKOFF           4  /* need to retry queuing delayed work */
+#define CON_FLAG_FORCE_FAULT       5
 
 static bool con_flag_valid(unsigned long con_flag)
 {
@@ -110,6 +111,7 @@ static bool con_flag_valid(unsigned long con_flag)
 	case CON_FLAG_WRITE_PENDING:
 	case CON_FLAG_SOCK_CLOSED:
 	case CON_FLAG_BACKOFF:
+	case CON_FLAG_FORCE_FAULT:
 		return true;
 	default:
 		return false;
@@ -2967,6 +2969,10 @@ static void ceph_con_workfn(struct work_struct *work)
 
 		break;	/* If we make it to here, we're done */
 	}
+
+	if (!fault && con_flag_test_and_clear(con, CON_FLAG_FORCE_FAULT))
+		fault = true;
+
 	if (fault)
 		con_fault(con);
 	mutex_unlock(&con->mutex);
@@ -3234,6 +3240,23 @@ bool ceph_con_keepalive_expired(struct ceph_connection *con,
 		return timespec_compare(&now, &ts) >= 0;
 	}
 	return false;
+}
+
+void ceph_con_fault_force(struct ceph_connection *con)
+{
+	bool need_queue = false;
+
+	pr_info("%s con %p %s%lld\n", __func__, con, ENTITY_NAME(con->peer_name));
+	mutex_lock(&con->mutex);
+	if (con->state == CON_STATE_OPEN) {
+		con->error_msg = "osd request timeout and force con fault";
+		con_flag_set(con, CON_FLAG_FORCE_FAULT);
+		need_queue = true;
+	}
+	mutex_unlock(&con->mutex);
+
+	if (need_queue && con_flag_test_and_set(con, CON_FLAG_WRITE_PENDING) == 0)
+		queue_con(con);
 }
 
 static struct ceph_msg_data *ceph_msg_data_create(enum ceph_msg_data_type type)
