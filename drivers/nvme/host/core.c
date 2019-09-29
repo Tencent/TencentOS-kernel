@@ -308,6 +308,7 @@ struct request *nvme_alloc_request(struct request_queue *q,
 
 	req->cmd_flags |= REQ_FAILFAST_DRIVER;
 	nvme_req(req)->cmd = cmd;
+	nvme_req(req)->opcode = cmd->common.opcode;
 
 	return req;
 }
@@ -650,6 +651,11 @@ static int nvme_submit_user_cmd(struct request_queue *q,
 		return PTR_ERR(req);
 
 	req->timeout = timeout ? timeout : ADMIN_TIMEOUT;
+	if (cmd->common.opcode == nvme_cmd_read ||
+	    cmd->common.opcode == nvme_cmd_write) {
+		req->__sector = meta_seed;
+		req->__data_len = bufflen;
+	}
 
 	if (ubuffer && bufflen) {
 		ret = blk_rq_map_user(q, req, NULL, ubuffer, bufflen,

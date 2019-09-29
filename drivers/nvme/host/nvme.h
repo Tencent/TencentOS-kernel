@@ -97,6 +97,7 @@ struct nvme_request {
 	u8			retries;
 	u8			flags;
 	u16			status;
+	u8			opcode;
 };
 
 enum {

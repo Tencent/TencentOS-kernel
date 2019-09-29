@@ -732,6 +732,7 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	struct nvme_dev *dev = nvmeq->dev;
 	struct request *req = bd->rq;
 	struct nvme_command cmnd;
+	struct nvme_request *rq;
 	blk_status_t ret;
 
 	ret = nvme_setup_cmd(ns, req, &cmnd);
@@ -741,6 +742,9 @@ static blk_status_t nvme_queue_rq(struct blk_mq_hw_ctx *hctx,
 	ret = nvme_init_iod(req, dev);
 	if (ret)
 		goto out_free_cmd;
+
+	rq = blk_mq_rq_to_pdu(req);
+	rq->opcode = cmnd.common.opcode;
 
 	if (blk_rq_nr_phys_segments(req)) {
 		ret = nvme_map_data(dev, req, &cmnd);
@@ -793,6 +797,64 @@ static inline void nvme_ring_cq_doorbell(struct nvme_queue *nvmeq)
 	}
 }
 
+static inline void nvme_eh_io_timeout(struct request *req)
+{
+	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
+	struct nvme_ctrl *ctrl = &iod->nvmeq->dev->ctrl;
+	struct nvme_request *rq = nvme_req(req);
+
+	/* admin command error */
+	if (req->q == ctrl->admin_q || req->q == ctrl->connect_q) {
+		dev_warn_ratelimited(ctrl->device,
+			 "Admin command timeout, CMD: %d(+%d)",
+			 rq->opcode, rq->retries);
+		return;
+	}
+
+	/* io command timeout */
+	if (rq->opcode == nvme_cmd_write || rq->opcode == nvme_cmd_read)
+		dev_warn_ratelimited(ctrl->device,
+			 "I/O timeout, QID: %d, CMD: %d(+%d), Sector: %llu+%u",
+			 iod->nvmeq->qid, rq->opcode, rq->retries,
+			 (unsigned long long)blk_rq_pos(req),
+			 blk_rq_sectors(req));
+	else
+		dev_warn_ratelimited(ctrl->device,
+			 "I/O timeout, QID: %d, CMD: %d(+%d)",
+			 iod->nvmeq->qid, rq->opcode, rq->retries);
+}
+
+static inline void nvme_eh_io_error(struct request *req, __le16 status)
+{
+	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
+	struct nvme_ctrl *ctrl = &iod->nvmeq->dev->ctrl;
+	struct nvme_request *rq = nvme_req(req);
+
+	if (status == NVME_SC_SUCCESS || rq->opcode == nvme_admin_abort_cmd)
+		return;
+
+	/* admin command error */
+	if (req->q == ctrl->admin_q || req->q == ctrl->connect_q) {
+		dev_warn_ratelimited(ctrl->device,
+			 "Admin command error, CMD: %d(+%d), Status: 0x%x",
+			 rq->opcode, rq->retries, status);
+		return;
+	}
+
+	/* io command error */
+	if (rq->opcode == nvme_cmd_write || rq->opcode == nvme_cmd_read)
+		dev_warn_ratelimited(ctrl->device,
+			 "I/O error, QID: %d, CMD: %d(+%d), Sector: %llu+%u, Status: 0x%x",
+			 iod->nvmeq->qid, rq->opcode, rq->retries,
+			 (unsigned long long)blk_rq_pos(req),
+			 blk_rq_sectors(req), status);
+	else
+		dev_warn_ratelimited(ctrl->device,
+			 "I/O error, QID: %d, CMD: %d(+%d), Status: 0x%x",
+			 iod->nvmeq->qid, rq->opcode, rq->retries,
+			 status);
+}
+
 static inline void nvme_handle_cqe(struct nvme_queue *nvmeq,
 		struct nvme_completion *cqe)
 {
@@ -820,6 +882,7 @@ static inline void nvme_handle_cqe(struct nvme_queue *nvmeq,
 
 	nvmeq->cqe_seen = 1;
 	req = blk_mq_tag_to_rq(*nvmeq->tags, cqe->command_id);
+	nvme_eh_io_error(req, le16_to_cpu(cqe->status) >> 1);
 	nvme_end_request(req, cqe->status, cqe->result);
 }
 
@@ -1050,6 +1113,9 @@ static enum blk_eh_timer_return nvme_timeout(struct request *req, bool reserved)
 	struct request *abort_req;
 	struct nvme_command cmd;
 	u32 csts = readl(dev->bar + NVME_REG_CSTS);
+
+	/* log error memset */
+	nvme_eh_io_timeout(req);
 
 	/* If PCI error recovery process is happening, we cannot reset or
 	 * the recovery mechanism will surely fail.
