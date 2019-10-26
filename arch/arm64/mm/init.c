@@ -92,9 +92,10 @@ static void __init reserve_crashkernel(void)
 {
 	unsigned long long crash_base, crash_size;
 	int ret;
+	bool compat = false;
 
 	ret = parse_crashkernel(boot_command_line, memblock_phys_mem_size(),
-				&crash_size, &crash_base);
+				&crash_size, &crash_base, &compat);
 	/* no crashkernel= or invalid value specified */
 	if (ret || !crash_size)
 		return;
