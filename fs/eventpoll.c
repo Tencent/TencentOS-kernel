@@ -2161,9 +2161,6 @@ error_return:
 	return error;
 }
 
-/* limit minimal timeout to 1 HZ */
-int sysctl_min_epoll_wait_time = 1000/HZ;
-
 /*
  * Implement the event wait interface for the eventpoll file. It is the kernel
  * part of the user space epoll_wait(2).
@@ -2195,10 +2192,6 @@ SYSCALL_DEFINE4(epoll_wait, int, epfd, struct epoll_event __user *, events,
 	error = -EINVAL;
 	if (!is_file_epoll(f.file))
 		goto error_fput;
-
-	if (timeout > 0 && sysctl_min_epoll_wait_time > 0 &&
-			timeout < sysctl_min_epoll_wait_time)
-		timeout = sysctl_min_epoll_wait_time;
 
 	/*
 	 * At this point it is safe to assume that the "private_data" contains

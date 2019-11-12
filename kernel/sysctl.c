@@ -117,8 +117,6 @@ extern unsigned int sysctl_nr_open_min, sysctl_nr_open_max;
 extern int sysctl_nr_trim_pages;
 #endif
 
-extern int sysctl_min_epoll_wait_time;
-
 /* Constants used for minimum and  maximum */
 #ifdef CONFIG_LOCKUP_DETECTOR
 static int sixty = 60;
@@ -291,13 +289,6 @@ static struct ctl_table sysctl_base_table[] = {
 		.procname	= "dev",
 		.mode		= 0555,
 		.child		= dev_table,
-	},
-	{
-		.procname	= "min_epoll_wait_time",
-		.data		= &sysctl_min_epoll_wait_time,
-		.maxlen		= sizeof(sysctl_min_epoll_wait_time),
-		.mode		= 0644,
-		.proc_handler	= &proc_dointvec,
 	},
 	{ }
 };
