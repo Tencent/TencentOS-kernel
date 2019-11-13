@@ -325,6 +325,8 @@ static int sysrq_use_leftctrl_sysctl_handler(struct ctl_table * table ,int write
 	return 0;
 }
 
+extern int sysctl_min_epoll_wait_time;
+
 static struct ctl_table kern_table[] = {
 	{
 		.procname	= "sched_child_runs_first",
@@ -1280,6 +1282,13 @@ static struct ctl_table kern_table[] = {
 		.proc_handler	= proc_dointvec,
 	},
 #endif
+	{
+		.procname	= "min_epoll_wait_time",
+		.data		= &sysctl_min_epoll_wait_time,
+		.maxlen		= sizeof(sysctl_min_epoll_wait_time),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
 	{ }
 };
 
