@@ -126,7 +126,7 @@ static struct bpf_map *find_and_alloc_map(union bpf_attr *attr)
 	return map;
 }
 
-static void *__bpf_map_area_alloc(size_t size, int numa_node, bool mmapable)
+static void *__bpf_map_area_alloc(u64 size, int numa_node, bool mmapable)
 {
 	/* We really just want to fail instead of triggering OOM killer
 	 * under memory pressure, therefore we set __GFP_NORETRY to kmalloc,
@@ -161,12 +161,12 @@ static void *__bpf_map_area_alloc(size_t size, int numa_node, bool mmapable)
 					   flags, __builtin_return_address(0));
 }
 
-void *bpf_map_area_alloc(size_t size, int numa_node)
+void *bpf_map_area_alloc(u64 size, int numa_node)
 {
         return __bpf_map_area_alloc(size, numa_node, false);
 }
 
-void *bpf_map_area_mmapable_alloc(size_t size, int numa_node)
+void *bpf_map_area_mmapable_alloc(u64 size, int numa_node)
 {
         return __bpf_map_area_alloc(size, numa_node, true);
 }
