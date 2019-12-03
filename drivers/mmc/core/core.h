@@ -80,6 +80,11 @@ int mmc_attach_mmc(struct mmc_host *host);
 int mmc_attach_sd(struct mmc_host *host);
 int mmc_attach_sdio(struct mmc_host *host);
 
+#ifdef CONFIG_ARCH_MXC
+int mmc_first_nonreserved_index(void);
+int mmc_get_reserved_index(struct mmc_host *host);
+#endif
+
 /* Module parameters */
 extern bool use_spi_crc;
 

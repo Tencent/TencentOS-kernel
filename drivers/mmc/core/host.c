@@ -349,6 +349,9 @@ EXPORT_SYMBOL(mmc_of_parse);
 struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 {
 	int err;
+#ifdef CONFIG_ARCH_MXC
+	int alias_id;
+#endif
 	struct mmc_host *host;
 
 	host = kzalloc(sizeof(struct mmc_host) + extra, GFP_KERNEL);
@@ -357,8 +360,20 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 
 	/* scanning will be enabled when we're ready */
 	host->rescan_disable = 1;
+#ifdef CONFIG_ARCH_MXC
+	host->parent = dev;
 
+	alias_id = mmc_get_reserved_index(host);
+	if (alias_id >= 0)
+		err = ida_simple_get(&mmc_host_ida, alias_id,
+					alias_id + 1, GFP_KERNEL);
+	else
+		err = ida_simple_get(&mmc_host_ida,
+					mmc_first_nonreserved_index(),
+					0, GFP_KERNEL);
+#else
 	err = ida_simple_get(&mmc_host_ida, 0, 0, GFP_KERNEL);
+#endif
 	if (err < 0) {
 		kfree(host);
 		return NULL;
@@ -368,7 +383,9 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 
 	dev_set_name(&host->class_dev, "mmc%d", host->index);
 
+#if !defined(CONFIG_ARCH_MXC)
 	host->parent = dev;
+#endif
 	host->class_dev.parent = dev;
 	host->class_dev.class = &mmc_host_class;
 	device_initialize(&host->class_dev);
