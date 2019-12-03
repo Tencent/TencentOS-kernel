@@ -187,7 +187,7 @@ inet6_getname_toa(struct socket *sock, struct sockaddr *uaddr, int *uaddr_len, i
  * @return NULL if fail new socket if succeed.
  */
 static struct sock *
-tcp_v4_syn_recv_sock_toa(struct sock *sk, struct sk_buff *skb,
+tcp_v4_syn_recv_sock_toa(const struct sock *sk, struct sk_buff *skb,
 				  struct request_sock *req,
 				  struct dst_entry *dst,
 				  struct request_sock *req_unhash,
@@ -215,7 +215,7 @@ tcp_v4_syn_recv_sock_toa(struct sock *sk, struct sk_buff *skb,
 
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 static struct sock *
-tcp_v6_syn_recv_sock_toa(struct sock *sk, struct sk_buff *skb,
+tcp_v6_syn_recv_sock_toa(const struct sock *sk, struct sk_buff *skb,
 					 struct request_sock *req,
 					 struct dst_entry *dst,
 					 struct request_sock *req_unhash,
