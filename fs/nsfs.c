@@ -48,9 +48,9 @@ static void nsfs_evict(struct inode *inode)
 {
 	struct ns_common *ns = inode->i_private;
 	clear_inode(inode);
-	ns->ops->put(ns);
 	if (ns->ops->evict)
 		ns->ops->evict(ns);
+	ns->ops->put(ns);
 }
 
 static void *__ns_get_path(struct path *path, struct ns_common *ns)
