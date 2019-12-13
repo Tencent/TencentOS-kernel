@@ -497,6 +497,14 @@ struct bpf_dispatcher {
 	u32 image_off;
 };
 
+static __always_inline unsigned int bpf_dispatcher_nopfunc(
+	const void *ctx,
+	const struct bpf_insn *insnsi,
+	unsigned int (*bpf_func)(const void *,
+				 const struct bpf_insn *))
+{
+	return bpf_func(ctx, insnsi);
+}
 #ifdef CONFIG_BPF_JIT
 struct bpf_trampoline *bpf_trampoline_lookup(u64 key);
 int bpf_trampoline_link_prog(struct bpf_prog *prog);
@@ -942,6 +950,8 @@ extern const struct bpf_prog_ops bpf_offload_prog_ops;
 extern const struct bpf_verifier_ops tc_cls_act_analyzer_ops;
 extern const struct bpf_verifier_ops xdp_analyzer_ops;
 
+struct bpf_prog *bpf_prog_by_id(u32 id);
+
 struct bpf_prog *bpf_prog_get(u32 ufd);
 struct bpf_prog *bpf_prog_get_type_dev(u32 ufd, enum bpf_prog_type type,
 				       bool attach_drv);
@@ -1212,6 +1222,11 @@ static inline int bpf_prog_test_run_flow_dissector(struct bpf_prog *prog,
 
 static inline void bpf_map_put(struct bpf_map *map)
 {
+}
+
+static inline struct bpf_prog *bpf_prog_by_id(u32 id)
+{
+	return ERR_PTR(-ENOTSUPP);
 }
 #endif /* CONFIG_BPF_SYSCALL */
 
