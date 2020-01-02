@@ -1,0 +1,8 @@
+menu "SSD device support"
+
+config SSD_DRV
+	tristate "SSD device support"
+	---help---
+	  SSD driver
+
+endmenu
