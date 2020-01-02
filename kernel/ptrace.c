@@ -1118,6 +1118,9 @@ static struct task_struct *ptrace_get_task_struct(pid_t pid)
 #define arch_ptrace_attach(child)	do { } while (0)
 #endif
 
+int (*ptrace_pre_hook)(long request, long pid, struct task_struct *task, long addr, long data);
+EXPORT_SYMBOL(ptrace_pre_hook);
+
 SYSCALL_DEFINE4(ptrace, long, request, long, pid, unsigned long, addr,
 		unsigned long, data)
 {
@@ -1135,6 +1138,12 @@ SYSCALL_DEFINE4(ptrace, long, request, long, pid, unsigned long, addr,
 	if (IS_ERR(child)) {
 		ret = PTR_ERR(child);
 		goto out;
+	}
+	
+	if (ptrace_pre_hook) {
+		ret = ptrace_pre_hook(request, pid, child, addr, data);
+		if (ret)
+			goto out_put_task_struct;
 	}
 
 	if (request == PTRACE_ATTACH || request == PTRACE_SEIZE) {
