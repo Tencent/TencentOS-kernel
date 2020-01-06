@@ -1,4 +1,4 @@
- ![img](file:///D:/wxwork/Image/2019-11/tencentos-光合.png) 
+ ![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/tencentos-logo.png) 
 
 # TencetOS Server kernel
 
@@ -87,17 +87,17 @@ TencentOS server的内核和用户态包的更新也会持续同步至腾讯软�
 
 隔离方案如图所示
 
-​    ![img](http://km.oa.com/files/post_photo/917/280917/e63c355426e4409963ed429aed5420ee1462957176.jpg)
+​    ![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/docker-isolation.jpg)
 
 tlinux内核在cgroup的memory，cpuset等子系统中分别添加对应的文件输出，然后由用户通过mount bind操作，将同名文件绑定到container的proc中。Mount bind操作可以在docker启动container的流程中添加。
 
 例如：在memeory子系统对应的container目录中添加meminfo和vmstat文件。
 
-![img](http://avocado.oa.com/fconv/files/201605/de0406e8a8156bd75d78cd0c01f49ce8.files/doc_image_1_w1398_h232.jpg)
+![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/docker_isolation_img1.jpg)
 
 在cpu子系统对应的container下实现cpuinfo，stat文件。
 
-![img](http://avocado.oa.com/fconv/files/201605/de0406e8a8156bd75d78cd0c01f49ce8.files/doc_image_2_w1393_h118.jpg)
+![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/docker_isolation_img2.jpg)
 
 **3.**    **文件接口说明**
 
@@ -137,7 +137,7 @@ tlinux内核在cgroup的memory，cpuset等子系统中分别添加对应的文�
 
 - blkio.diskstats的通过blkcg_diskstats对象统计当前blkcg对特定设备的io量，由于单个blkcg可以访问多个设备，因此blkcg会维护一个blkcg_diskstats队列。由于实际blkcg_diskstats队列长度较短同时为了提高blkcg_diskstats搜索效率，我们设置了一个cache点用于缓存最近命中的blkcg_diskstats对象的地址。Io统计的基本流程是，io提交阶段我们会将bio与blkcg进行绑定，因为end_of_io函数的运行上下文非提交io进程的上下文，因此我们需要通过bio确定相应的blkcg。如果当前bio可以与plug队列，设备dispatch队列或者io调度器内部队列的request合并，此时进行io_merged的统计，Io完成的时候我们对io_sectors，io_serviced, io_wait_time的统计。in_flight，io_ticks, time_in_queue这三个字段与物理设备的处理能力相关，因此我们不单独进行统计，全部填0，然后追加了两个字段将母机侧的io_ticks, time_in_queue的值透传到容器里面。值得注意的是，blkio.diskstats入口默认是关闭的，用户需要通过echo 1 > blkio.diskstats打开方可获取当前cgroup的io统计。基本框架如下所示：
 
- ![img](http://km.oa.com/files/photos/pictures/201907/1564545587_44_w593_h273.png)
+ ![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/docker_blkcg_img1.jpg)
 
 
 
@@ -259,7 +259,7 @@ NSsid:  1       11126
 
 - page cache在系统中的大致位置，如下图所示：
 
-![img](http://km.oa.com/files/post_photo/274/275274/ac8d08eca30d48044c642c7c09d350fc1458282843.png)
+![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/page_cache_img1.png)
 
 
 
@@ -307,7 +307,7 @@ NSsid:  1       11126
    计算page cache占用内存时，是否忽略dirty pages。默认值是1，表示忽略。因为dirty pages的回收是比较耗时的。
 
 - ```shell
-/proc/sys/vm/pagecache_limit_async
+   /proc/sys/vm/pagecache_limit_async
   ```
 
    page cache的回收方式
@@ -332,6 +332,7 @@ NSsid:  1       11126
 
 
 
+
 ## 热补丁
 
 - x86,  x86热补丁，tlinux内核默认合入了kpatch内核模块，可以自行选择是用内核自带的livepatch，或者kpatch。
@@ -345,7 +346,7 @@ NSsid:  1       11126
 
 内核热补丁技术是一种无需重启服务器，即可实现修改内核运行时代码的技术。基于该技术，可以在不影响业务正常运行的情况下，修复内核bug或者安全漏洞，以提高运营效率、底层平台的稳定性和可用性，并使得业务运营体验有效提升。
 
-![img](http://km.oa.com/files/photos/pictures/201906/1559538905_82_w553_h216.png)
+![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/hot_patch_img1.png)
 
 
 
@@ -363,12 +364,12 @@ arm64热补丁功能实现包括内核、编译器、用户态工具几部分。
 
 kpatch在内核中是基于ftrace实现内核函数的替换，类似于ftrace的动态探测点，不过不是统计某些运行数据，而是修改函数的运行序列：在函数运行某些额外的代码之后，略过旧函数代码，并跳转至新函数。框架如下图所示：
 
-![img](http://km.oa.com/files/photos/pictures/201906/1559539056_1_w454_h310.png)
+![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/hot_patch_img2.png)
 
 
 针对arm64架构，整个流程可以细化为下图所示：
 
-![img](http://km.oa.com/files/photos/pictures/201906/1559539099_3_w553_h266.png)
+![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/hot_patch_img3.png)
 
 
 
@@ -376,7 +377,7 @@ kpatch在内核中是基于ftrace实现内核函数的替换，类似于ftrace�
 
 
 
-![img](http://km.oa.com/files/photos/pictures/201906/1559539160_67_w893_h690.png)
+![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/hot_patch_img4.png)
 
 
 
@@ -392,18 +393,18 @@ kpatch在内核中是基于ftrace实现内核函数的替换，类似于ftrace�
 
 **x86机器上：**
 
-![img](http://km.oa.com/files/photos/pictures/201906/1559539391_33_w553_h554.png)
+![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/hot_patch_img5.png)
 
 
 x86机器上，如果使用-mfentry，elf文件中ftrace跳转指令位于prologue前面，在由旧函数跳转到新函数后，执行指令流程不会出错。如果使用mcount，则在新函数前需要添加stub函数，用于处理栈信息等。**arm64机器上：**
 
-![img](http://km.oa.com/files/photos/pictures/201906/1559539509_28_w553_h517.png)
+![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/hot_patch_img6.png)
 
 
 
 Arm64只支持mcount功能，但是arm64 prologue会对寄存器做修改，所以无法使用stub函数来适配。所以采用gcc patchable-function-entry来实现类似于mfentry的功能。使用了GCC 8.2.1版本来编译内核，rpm包链接地址：https://tlinux-mirror.tencent-cloud.com/tlinux/2.4/arm64/tlinux-sclo/aarch64/tl/devtoolset-8/devtoolset-8-gcc-8.2.1-3.tl2.aarch64.rpm 。
 
-![img](http://km.oa.com/files/photos/pictures/201906/1559539549_31_w553_h109.png)
+![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/hot_patch_img7.png)
 
 
 
@@ -411,7 +412,7 @@ Arm64只支持mcount功能，但是arm64 prologue会对寄存器做修改，所�
 
 热补丁中涉及到修改regs参数，所以在ftrace跳转时需要将寄存器入栈，所以针对arm64，实现了ftrace with regs功能，为热补丁功能做准备。x0 ~ x30入栈操作如下：
 
-![img](http://km.oa.com/files/photos/pictures/201906/1559539605_16_w471_h352.png)
+![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/hot_patch_img8.png)
 
 
 
@@ -420,7 +421,7 @@ Arm64只支持mcount功能，但是arm64 prologue会对寄存器做修改，所�
 包括ftrace_ops注册删除、模块载入时数据重定位等功能。
 重定位简要代码如下：
 
-![img](http://km.oa.com/files/photos/pictures/201906/1559539759_71_w553_h360.png)
+![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/hot_patch_img9.png)
 
 
 
@@ -504,7 +505,7 @@ filling_function 在不同的架构下规则不同，在arm64架构中，主要�
 首先需要载入kpatch模块，然后载入用户态工具生成的新函数模块。通过lsmod查看模块是否载入成功。同时kpatch提供了sysfs接口，可以查看载入新函数模块的信息，包括新旧函数地址等。可以通过`/sys/kernel/kpatch/xxx/enabled`来卸载模块，恢复执行原函数。
 简要操作流程如下：
 
-![img](http://km.oa.com/files/photos/pictures/201906/1559542256_100_w553_h200.png)
+![img](https://github.com/gxm-newton/TencentOS-kernel/blob/master/images/hot_patch_img10.png)
 
 
 
