@@ -310,12 +310,14 @@ struct bpf_insn_aux_data {
 		};
 	};
 	int ctx_field_size; /* the ctx field size for load insn, maybe 0 */
-	bool seen; /* this insn was processed by the verifier */
+	u32 seen; /* this insn was processed by the verifier at env->pass_cnt */
 	bool sanitize_stack_spill; /* subject to Spectre v4 sanitation */
 	bool zext_dst; /* this insn zero extends dst reg */
 	u8 alu_state; /* used in combination with alu_limit */
-	bool prune_point;
+
+	/* below fields are initialized once */
 	unsigned int orig_idx; /* original instruction index */
+	bool prune_point;
 };
 
 #define MAX_USED_MAPS 64 /* max number of maps accessed by one eBPF program */
@@ -389,6 +391,7 @@ struct bpf_verifier_env {
 		int *insn_stack;
 		int cur_stack;
 	} cfg;
+	u32 pass_cnt; /* number of times do_check() was called */
 	u32 subprog_cnt;
 	/* number of instructions analyzed by the verifier */
 	u32 prev_insn_processed, insn_processed;
@@ -437,5 +440,8 @@ bpf_prog_offload_replace_insn(struct bpf_verifier_env *env, u32 off,
 			      struct bpf_insn *insn);
 void
 bpf_prog_offload_remove_insns(struct bpf_verifier_env *env, u32 off, u32 cnt);
+
+int check_ctx_reg(struct bpf_verifier_env *env,
+		  const struct bpf_reg_state *reg, int regno);
 
 #endif /* _LINUX_BPF_VERIFIER_H */
