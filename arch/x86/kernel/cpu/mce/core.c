@@ -167,20 +167,10 @@ EXPORT_SYMBOL_GPL(mce_inject_log);
 
 static struct notifier_block mce_srao_nb;
 
-/*
- * We run the default notifier if we have only the SRAO, the first and the
- * default notifier registered. I.e., the mandatory NUM_DEFAULT_NOTIFIERS
- * notifiers registered on the chain.
- */
-#define NUM_DEFAULT_NOTIFIERS	3
-static atomic_t num_notifiers;
-
 void mce_register_decode_chain(struct notifier_block *nb)
 {
 	if (WARN_ON(nb->priority > MCE_PRIO_MCELOG && nb->priority < MCE_PRIO_EDAC))
 		return;
-
-	atomic_inc(&num_notifiers);
 
 	blocking_notifier_chain_register(&x86_mce_decoder_chain, nb);
 }
@@ -188,8 +178,6 @@ EXPORT_SYMBOL_GPL(mce_register_decode_chain);
 
 void mce_unregister_decode_chain(struct notifier_block *nb)
 {
-	atomic_dec(&num_notifiers);
-
 	blocking_notifier_chain_unregister(&x86_mce_decoder_chain, nb);
 }
 EXPORT_SYMBOL_GPL(mce_unregister_decode_chain);
@@ -272,6 +260,7 @@ static void __print_mce(struct mce *m)
 	}
 
 	pr_cont("\n");
+
 	/*
 	 * Note this output is parsed by external tools and old fields
 	 * should not be changed.
@@ -658,10 +647,8 @@ static int mce_default_notifier(struct notifier_block *nb, unsigned long val,
 	if (!m)
 		return NOTIFY_DONE;
 
-	if (atomic_read(&num_notifiers) > NUM_DEFAULT_NOTIFIERS)
-		return NOTIFY_DONE;
-
-	__print_mce(m);
+	if (!m->kflags)
+		__print_mce(m);
 
 	return NOTIFY_DONE;
 }
