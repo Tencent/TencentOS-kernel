@@ -1042,6 +1042,9 @@ amd_decode_mce(struct notifier_block *nb, unsigned long val, void *data)
 	if (ignore_mce(m))
 		return NOTIFY_STOP;
 
+	if (m->kflags & MCE_HANDLED_CEC)
+		return NOTIFY_DONE;
+
 	pr_emerg(HW_ERR "%s\n", decode_error_status(m));
 
 	pr_emerg(HW_ERR "CPU:%d (%x:%x:%x) MC%d_STATUS[%s|%s|%s|%s|%s",
@@ -1141,7 +1144,8 @@ amd_decode_mce(struct notifier_block *nb, unsigned long val, void *data)
  err_code:
 	amd_decode_err_code(m->status & 0xffff);
 
-	return NOTIFY_STOP;
+	m->kflags |= MCE_HANDLED_EDAC;
+	return NOTIFY_OK;
 }
 
 static struct notifier_block amd_mce_dec_nb = {
