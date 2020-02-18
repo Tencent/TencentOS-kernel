@@ -1,6 +1,6 @@
  ![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/tencentos-logo.png) 
 
-# TencetOS Server kernel
+# TencentOS Server kernel
 
 
 
