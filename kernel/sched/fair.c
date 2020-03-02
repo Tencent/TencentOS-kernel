@@ -37,6 +37,10 @@
 #include <trace/events/sched.h>
 
 #include "sched.h"
+#include "fair.h"
+#ifdef	CONFIG_BT_SCHED
+#include "batch.h"
+#endif
 
 /*
  * Targeted preemption latency for CPU-bound tasks:
@@ -78,7 +82,7 @@ unsigned int normalized_sysctl_sched_min_granularity	= 750000ULL;
 /*
  * This value is kept at sysctl_sched_latency/sysctl_sched_min_granularity
  */
-static unsigned int sched_nr_latency = 8;
+unsigned int sched_nr_latency = 8;
 
 /*
  * After fork, child runs first. If set to 0 (default) then
@@ -132,19 +136,19 @@ unsigned int sysctl_sched_cfs_bandwidth_slice		= 5000UL;
  */
 unsigned int capacity_margin				= 1280;
 
-static inline void update_load_add(struct load_weight *lw, unsigned long inc)
+inline void update_load_add(struct load_weight *lw, unsigned long inc)
 {
 	lw->weight += inc;
 	lw->inv_weight = 0;
 }
 
-static inline void update_load_sub(struct load_weight *lw, unsigned long dec)
+inline void update_load_sub(struct load_weight *lw, unsigned long dec)
 {
 	lw->weight -= dec;
 	lw->inv_weight = 0;
 }
 
-static inline void update_load_set(struct load_weight *lw, unsigned long w)
+inline void update_load_set(struct load_weight *lw, unsigned long w)
 {
 	lw->weight = w;
 	lw->inv_weight = 0;
@@ -180,7 +184,7 @@ static unsigned int get_update_sysctl_factor(void)
 	return factor;
 }
 
-static void update_sysctl(void)
+void update_sysctl(void)
 {
 	unsigned int factor = get_update_sysctl_factor();
 
@@ -229,7 +233,7 @@ static void __update_inv_weight(struct load_weight *lw)
  * Or, weight =< lw.weight (because lw.weight is the runqueue weight), thus
  * weight/lw.weight <= 1, and therefore our shift will also be positive.
  */
-static u64 __calc_delta(u64 delta_exec, unsigned long weight, struct load_weight *lw)
+u64 __calc_delta(u64 delta_exec, unsigned long weight, struct load_weight *lw)
 {
 	u64 fact = scale_load_down(weight);
 	int shift = WMULT_SHIFT;
@@ -490,25 +494,6 @@ void account_cfs_rq_runtime(struct cfs_rq *cfs_rq, u64 delta_exec);
 /**************************************************************
  * Scheduling class tree data structure manipulation methods:
  */
-
-static inline u64 max_vruntime(u64 max_vruntime, u64 vruntime)
-{
-	s64 delta = (s64)(vruntime - max_vruntime);
-	if (delta > 0)
-		max_vruntime = vruntime;
-
-	return max_vruntime;
-}
-
-static inline u64 min_vruntime(u64 min_vruntime, u64 vruntime)
-{
-	s64 delta = (s64)(vruntime - min_vruntime);
-	if (delta < 0)
-		min_vruntime = vruntime;
-
-	return min_vruntime;
-}
-
 static inline int entity_before(struct sched_entity *a,
 				struct sched_entity *b)
 {
@@ -663,7 +648,7 @@ static inline u64 calc_delta_fair(u64 delta, struct sched_entity *se)
  *
  * p = (nr <= nl) ? l : l*nr/nl
  */
-static u64 __sched_period(unsigned long nr_running)
+u64 __sched_period(unsigned long nr_running)
 {
 	if (unlikely(nr_running > sched_nr_latency))
 		return nr_running * sysctl_sched_min_granularity;
@@ -2637,7 +2622,7 @@ void task_tick_numa(struct rq *rq, struct task_struct *curr)
 	 * task needs to have done some actual work before we bother with
 	 * NUMA placement.
 	 */
-	now = curr->se.sum_exec_runtime;
+	now = TASK_SUM_EXEC_RUNTIME(curr);
 	period = (u64)curr->numa_scan_period * NSEC_PER_MSEC;
 
 	if (now > curr->node_stamp + period) {
@@ -2653,7 +2638,7 @@ void task_tick_numa(struct rq *rq, struct task_struct *curr)
 }
 
 #else
-static void task_tick_numa(struct rq *rq, struct task_struct *curr)
+void task_tick_numa(struct rq *rq, struct task_struct *curr)
 {
 }
 
@@ -3547,7 +3532,7 @@ static inline unsigned long cfs_rq_load_avg(struct cfs_rq *cfs_rq)
 	return cfs_rq->avg.load_avg;
 }
 
-static int idle_balance(struct rq *this_rq, struct rq_flags *rf);
+int idle_balance(struct rq *this_rq, struct rq_flags *rf);
 
 #else /* CONFIG_SMP */
 
@@ -3576,7 +3561,7 @@ attach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se) {}
 static inline void
 detach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se) {}
 
-static inline int idle_balance(struct rq *rq, struct rq_flags *rf)
+inline int idle_balance(struct rq *rq, struct rq_flags *rf)
 {
 	return 0;
 }
@@ -5327,7 +5312,11 @@ static unsigned long cpu_avg_load_per_task(int cpu)
 	struct rq *rq = cpu_rq(cpu);
 	unsigned long nr_running = READ_ONCE(rq->cfs.h_nr_running);
 	unsigned long load_avg = weighted_cpuload(rq);
+#ifdef	CONFIG_BT_SCHED
+	unsigned long bt_running = READ_ONCE(rq->bt.h_nr_running);
 
+	nr_running -= bt_running;
+#endif
 	if (nr_running)
 		return load_avg / nr_running;
 
@@ -6230,7 +6219,11 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
 
 	/* Idle tasks are by definition preempted by non-idle tasks. */
 	if (unlikely(curr->policy == SCHED_IDLE) &&
+#ifdef	CONFIG_BT_SCHED
+	    likely(p->policy != SCHED_IDLE && p->policy != SCHED_BT))
+#else
 	    likely(p->policy != SCHED_IDLE))
+#endif
 		goto preempt;
 
 	/*
@@ -6279,11 +6272,17 @@ pick_next_task_fair(struct rq *rq, struct task_struct *prev, struct rq_flags *rf
 	struct cfs_rq *cfs_rq = &rq->cfs;
 	struct sched_entity *se;
 	struct task_struct *p;
+#ifndef	CONFIG_BT_SCHED
 	int new_tasks;
 
 again:
+#endif
 	if (!cfs_rq->nr_running)
+#ifdef	CONFIG_BT_SCHED
+		return NULL;
+#else
 		goto idle;
+#endif
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	if (prev->sched_class != &fair_sched_class)
@@ -6322,7 +6321,11 @@ again:
 				cfs_rq = &rq->cfs;
 
 				if (!cfs_rq->nr_running)
+#ifdef	CONFIG_BT_SCHED
+					return NULL;
+#else
 					goto idle;
+#endif
 
 				goto simple;
 			}
@@ -6381,7 +6384,7 @@ simple:
 		hrtick_start_fair(rq, p);
 
 	return p;
-
+#ifndef	CONFIG_BT_SCHED
 idle:
 	new_tasks = idle_balance(rq, rf);
 
@@ -6397,6 +6400,7 @@ idle:
 		goto again;
 
 	return NULL;
+#endif
 }
 
 /*
@@ -6427,7 +6431,7 @@ static void yield_task_fair(struct rq *rq)
 	/*
 	 * Are we the only task in the tree?
 	 */
-	if (unlikely(rq->nr_running == 1))
+	if (unlikely(RQ_CFS_NR_RUNNING(rq) == 1))
 		return;
 
 	clear_buddies(cfs_rq, se);
@@ -7430,7 +7434,7 @@ static inline void update_sg_lb_stats(struct lb_env *env,
 		sgs->group_util += cpu_util(i);
 		sgs->sum_nr_running += rq->cfs.h_nr_running;
 
-		nr_running = rq->nr_running;
+		nr_running = RQ_CFS_NR_RUNNING(rq);
 		if (nr_running > 1)
 			*overload = true;
 
@@ -7975,7 +7979,7 @@ static struct rq *find_busiest_queue(struct lb_env *env,
 		 * which is not scaled with the cpu capacity.
 		 */
 
-		if (rq->nr_running == 1 && wl > env->imbalance &&
+		if (RQ_CFS_NR_RUNNING(rq) == 1 && wl > env->imbalance &&
 		    !check_cpu_capacity(rq, env->sd))
 			continue;
 
@@ -8135,7 +8139,7 @@ redo:
 	env.src_rq = busiest;
 
 	ld_moved = 0;
-	if (busiest->nr_running > 1) {
+	if (RQ_CFS_NR_RUNNING(busiest) > 1) {
 		/*
 		 * Attempt to move tasks. If find_busiest_group has found
 		 * an imbalance but busiest->nr_running <= 1, the group is
@@ -8143,7 +8147,7 @@ redo:
 		 * correctly treated as an imbalance.
 		 */
 		env.flags |= LBF_ALL_PINNED;
-		env.loop_max  = min(sysctl_sched_nr_migrate, busiest->nr_running);
+		env.loop_max  = min(sysctl_sched_nr_migrate, RQ_CFS_NR_RUNNING(busiest));
 
 more_balance:
 		rq_lock_irqsave(busiest, &rf);
@@ -8377,7 +8381,7 @@ update_next_balance(struct sched_domain *sd, unsigned long *next_balance)
  * idle_balance is called by schedule() if this_cpu is about to become
  * idle. Attempts to pull tasks from other CPUs.
  */
-static int idle_balance(struct rq *this_rq, struct rq_flags *rf)
+int idle_balance(struct rq *this_rq, struct rq_flags *rf)
 {
 	unsigned long next_balance = jiffies + HZ;
 	int this_cpu = this_rq->cpu;
@@ -8518,7 +8522,7 @@ static int active_load_balance_cpu_stop(void *data)
 		goto out_unlock;
 
 	/* Is there any task to move? */
-	if (busiest_rq->nr_running <= 1)
+	if (RQ_CFS_NR_RUNNING(busiest_rq) <= 1)
 		goto out_unlock;
 
 	/*
@@ -8916,7 +8920,11 @@ static inline bool nohz_kick_needed(struct rq *rq)
 	int nr_busy, i, cpu = rq->cpu;
 	bool kick = false;
 
+#ifdef	CONFIG_BT_SCHED
+	if (unlikely(rq->idle_balance && !rq->nr_running))
+#else
 	if (unlikely(rq->idle_balance))
+#endif
 		return false;
 
        /*
@@ -9521,7 +9529,11 @@ static unsigned int get_rr_interval_fair(struct rq *rq, struct task_struct *task
  * All the scheduling class methods:
  */
 const struct sched_class fair_sched_class = {
+#ifdef	CONFIG_BT_SCHED
+	.next			= &bt_sched_class,
+#else
 	.next			= &idle_sched_class,
+#endif
 	.enqueue_task		= enqueue_task_fair,
 	.dequeue_task		= dequeue_task_fair,
 	.yield_task		= yield_task_fair,

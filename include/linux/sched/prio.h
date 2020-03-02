@@ -22,7 +22,11 @@
 #define MAX_USER_RT_PRIO	100
 #define MAX_RT_PRIO		MAX_USER_RT_PRIO
 
+#ifdef	CONFIG_BT_SCHED
+#define MAX_PRIO		(MAX_RT_PRIO + NICE_WIDTH + 40)
+#else
 #define MAX_PRIO		(MAX_RT_PRIO + NICE_WIDTH)
+#endif
 #define DEFAULT_PRIO		(MAX_RT_PRIO + NICE_WIDTH / 2)
 
 /*

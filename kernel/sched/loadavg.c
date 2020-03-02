@@ -84,8 +84,8 @@ long calc_load_fold_active(struct rq *this_rq, long adjust)
 {
 	long nr_active, delta = 0;
 
-	nr_active = this_rq->nr_running - adjust;
-	nr_active += (long)this_rq->nr_uninterruptible;
+	nr_active = RQ_CFS_NR_RUNNING(this_rq) - adjust;
+	nr_active += (long)RQ_CFS_NR_UNINTERRUPTIBLE(this_rq);
 
 	if (nr_active != this_rq->calc_load_active) {
 		delta = nr_active - this_rq->calc_load_active;

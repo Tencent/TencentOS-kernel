@@ -28,6 +28,9 @@ enum cpu_usage_stat {
 	CPUTIME_STEAL,
 	CPUTIME_GUEST,
 	CPUTIME_GUEST_NICE,
+#ifdef	CONFIG_BT_SCHED
+	CPUTIME_BT,
+#endif
 	NR_STATS,
 };
 

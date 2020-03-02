@@ -947,6 +947,12 @@ config NET_NS
 
 endif # NAMESPACES
 
+config BT_SCHED
+	bool "offline sched class"
+	default n
+	help
+		Allow user to create offline task
+
 config SCHED_AUTOGROUP
 	bool "Automatic process group scheduling"
 	select CGROUPS

@@ -111,6 +111,16 @@ struct task_group;
 					 (task->flags & PF_FROZEN) == 0 && \
 					 (task->state & TASK_NOLOAD) == 0)
 
+#ifdef  CONFIG_BT_SCHED
+#define TASK_SUM_EXEC_RUNTIME(tsk)  \
+	(unsigned long long)((tsk)->se.sum_exec_runtime + (tsk)->bt.sum_exec_runtime)
+
+#else
+#define TASK_SUM_EXEC_RUNTIME(tsk)   \
+	(unsigned long long)((tsk)->se.sum_exec_runtime)
+
+#endif
+
 #ifdef CONFIG_DEBUG_ATOMIC_SLEEP
 
 /*
@@ -429,6 +439,9 @@ struct sched_entity {
 	u64				nr_migrations;
 
 	struct sched_statistics		statistics;
+#ifdef	CONFIG_BT_SCHED
+	struct sched_statistics		*bt_statistics;
+#endif
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	int				depth;
@@ -601,6 +614,9 @@ struct task_struct {
 
 	const struct sched_class	*sched_class;
 	struct sched_entity		se;
+#ifdef CONFIG_BT_SCHED
+	struct sched_entity		bt;
+#endif
 	struct sched_rt_entity		rt;
 #ifdef CONFIG_CGROUP_SCHED
 	struct task_group		*sched_task_group;
@@ -1477,17 +1493,7 @@ extern int yield_to(struct task_struct *p, bool preempt);
 extern void set_user_nice(struct task_struct *p, long nice);
 extern int task_prio(const struct task_struct *p);
 
-/**
- * task_nice - return the nice value of a given task.
- * @p: the task in question.
- *
- * Return: The nice value [ -20 ... 0 ... 19 ].
- */
-static inline int task_nice(const struct task_struct *p)
-{
-	return PRIO_TO_NICE((p)->static_prio);
-}
-
+extern int task_nice(const struct task_struct *p);
 extern int can_nice(const struct task_struct *p, const int nice);
 extern int task_curr(const struct task_struct *p);
 extern int idle_cpu(int cpu);

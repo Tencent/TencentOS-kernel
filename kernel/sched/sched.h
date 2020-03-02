@@ -39,6 +39,7 @@
 #include "cpupri.h"
 #include "cpudeadline.h"
 #include "cpuacct.h"
+#include "batch.h"
 
 #ifdef CONFIG_SCHED_DEBUG
 # define SCHED_WARN_ON(x)	WARN_ONCE(x, #x)
@@ -114,6 +115,23 @@ static inline void cpu_load_update_active(struct rq *this_rq) { }
  */
 #define DL_SCALE (10)
 
+
+#ifdef  CONFIG_BT_SCHED
+#define RQ_CFS_NR_UNINTERRUPTIBLE(rq)                           \
+	((rq)->nr_uninterruptible - (rq)->bt.nr_uninterruptible)
+
+#define RQ_CFS_NR_RUNNING(rq)       \
+	((rq)->nr_running - (rq)->bt_nr_running)
+
+#else
+#define RQ_CFS_NR_UNINTERRUPTIBLE(rq)    \
+	((rq)->nr_uninterruptible)
+
+#define RQ_CFS_NR_RUNNING(rq)       \
+	((rq)->nr_running)
+
+#endif
+
 /*
  * These are the 'tuning knobs' of the scheduler:
  */
@@ -141,9 +159,13 @@ static inline int dl_policy(int policy)
 {
 	return policy == SCHED_DEADLINE;
 }
+
 static inline bool valid_policy(int policy)
 {
 	return idle_policy(policy) || fair_policy(policy) ||
+#ifdef  CONFIG_BT_SCHED
+		bt_policy(policy) ||
+#endif
 		rt_policy(policy) || dl_policy(policy);
 }
 
@@ -690,6 +712,9 @@ struct rq {
 	 * remote CPUs use both these fields when doing load calculation.
 	 */
 	unsigned int nr_running;
+#ifdef CONFIG_BT_SCHED
+	unsigned int bt_nr_running;
+#endif
 #ifdef CONFIG_NUMA_BALANCING
 	unsigned int nr_numa_running;
 	unsigned int nr_preferred_running;
@@ -713,6 +738,9 @@ struct rq {
 	struct cfs_rq cfs;
 	struct rt_rq rt;
 	struct dl_rq dl;
+#ifdef CONFIG_BT_SCHED
+	struct bt_rq bt;
+#endif
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	/* list of leaf cfs_rq on this cpu: */
@@ -1106,6 +1134,13 @@ struct sched_group {
 	unsigned long cpumask[0];
 };
 
+#define tsk_cpus_allowed(tsk) (&(tsk)->cpus_allowed)
+
+static inline struct cpumask *sched_group_cpus(struct sched_group *sg)
+{
+	return to_cpumask(sg->cpumask);
+}
+
 static inline struct cpumask *sched_group_span(struct sched_group *sg)
 {
 	return to_cpumask(sg->cpumask);
@@ -1357,6 +1392,9 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
 #define WF_FORK		0x02		/* child wakeup after fork */
 #define WF_MIGRATED	0x4		/* internal use, task got migrated */
 
+extern inline void update_load_add(struct load_weight *lw, unsigned long inc);
+extern inline void update_load_sub(struct load_weight *lw, unsigned long dec);
+extern inline void update_load_set(struct load_weight *lw, unsigned long w);
 /*
  * To aid in avoiding the subversion of "niceness" due to uneven distribution
  * of tasks with abnormal "nice" values across CPUs the contribution that
@@ -1601,7 +1639,7 @@ static inline void add_nr_running(struct rq *rq, unsigned count)
 
 	if (prev_nr < 2 && rq->nr_running >= 2) {
 #ifdef CONFIG_SMP
-		if (!rq->rd->overload)
+		if (!rq->rd->overload && RQ_CFS_NR_RUNNING(rq) >= 2)
 			rq->rd->overload = true;
 #endif
 	}
