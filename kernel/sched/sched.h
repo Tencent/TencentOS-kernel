@@ -64,8 +64,14 @@ extern long calc_load_fold_active(struct rq *this_rq, long adjust);
 
 #ifdef CONFIG_SMP
 extern void cpu_load_update_active(struct rq *this_rq);
+#ifdef CONFIG_BT_SCHED
+extern void update_cpu_bt_load_active(struct rq *this_rq);
+#endif
 #else
 static inline void cpu_load_update_active(struct rq *this_rq) { }
+#ifdef CONFIG_BT_SCHED
+static inline void update_cpu_bt_load_active(struct rq *this_rq) { }
+#endif
 #endif
 
 /*
@@ -87,7 +93,8 @@ static inline void cpu_load_update_active(struct rq *this_rq) { }
  * Really only required when CONFIG_FAIR_GROUP_SCHED is also set, but to
  * increase coverage and consistency always enable it on 64bit platforms.
  */
-#ifdef CONFIG_64BIT
+//#ifdef CONFIG_64BIT
+#if 0
 # define NICE_0_LOAD_SHIFT	(SCHED_FIXEDPOINT_SHIFT + SCHED_FIXEDPOINT_SHIFT)
 # define scale_load(w)		((w) << SCHED_FIXEDPOINT_SHIFT)
 # define scale_load_down(w)	((w) >> SCHED_FIXEDPOINT_SHIFT)
@@ -656,6 +663,9 @@ struct root_domain {
 
 	/* Indicate more than one runnable task for any CPU */
 	bool overload;
+#ifdef CONFIG_BT_SCHED
+	bool overload_bt;
+#endif
 
 	/*
 	 * The bit corresponding to a CPU gets set here if such CPU has more
@@ -728,9 +738,15 @@ struct rq {
 #endif
 	#define CPU_LOAD_IDX_MAX 5
 	unsigned long cpu_load[CPU_LOAD_IDX_MAX];
+#ifdef CONFIG_BT_SCHED
+	unsigned long cpu_bt_load[CPU_LOAD_IDX_MAX];
+#endif
 #ifdef CONFIG_NO_HZ_COMMON
 #ifdef CONFIG_SMP
 	unsigned long last_load_update_tick;
+#ifdef CONFIG_BT_SCHED
+	unsigned long last_bt_load_update_tick;
+#endif
 #endif /* CONFIG_SMP */
 	unsigned long nohz_flags;
 #endif /* CONFIG_NO_HZ_COMMON */
@@ -741,6 +757,11 @@ struct rq {
 	struct load_weight load;
 	unsigned long nr_load_updates;
 	u64 nr_switches;
+
+#ifdef CONFIG_BT_SCHED
+	struct load_weight bt_load;
+	unsigned long nr_bt_load_updates;
+#endif
 
 	struct cfs_rq cfs;
 	struct rt_rq rt;
@@ -765,6 +786,9 @@ struct rq {
 
 	struct task_struct *curr, *idle, *stop;
 	unsigned long next_balance;
+#ifdef CONFIG_BT_SCHED
+	unsigned long next_balance_bt;
+#endif
 	struct mm_struct *prev_mm;
 
 	unsigned int clock_update_flags;
@@ -787,16 +811,30 @@ struct rq {
 	int active_balance;
 	int push_cpu;
 	struct cpu_stop_work active_balance_work;
+
+#ifdef CONFIG_BT_SCHED
+	int active_balance_bt;
+	int push_cpu_bt;
+	struct cpu_stop_work active_bt_balance_work;
+#endif
+
 	/* cpu of this runqueue: */
 	int cpu;
 	int online;
 
 	struct list_head cfs_tasks;
+#ifdef CONFIG_BT_SCHED
+	struct list_head bt_tasks;
+#endif
 
 	u64 rt_avg;
 	u64 age_stamp;
 	u64 idle_stamp;
 	u64 avg_idle;
+#ifdef CONFIG_BT_SCHED
+	u64 idle_bt_stamp;
+	u64 avg_idle_bt;
+#endif
 
 	/* This is used to determine avg_idle's max value */
 	u64 max_idle_balance_cost;
@@ -1112,6 +1150,10 @@ struct sched_group_capacity {
 	 * for a single CPU.
 	 */
 	unsigned long capacity;
+#ifdef CONFIG_BT_SCHED
+	unsigned long capacity_orig;
+	unsigned long capacity_bt;
+#endif
 	unsigned long min_capacity; /* Min per-CPU capacity in group */
 	unsigned long next_update;
 	int imbalance; /* XXX unrelated to capacity but shared group state */
@@ -1568,6 +1610,19 @@ extern void trigger_load_balance(struct rq *rq);
 
 extern void set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask);
 
+extern int idle_balance_bt(int this_cpu, struct rq *this_rq);
+
+extern int idle_balance(struct rq *this_rq, struct rq_flags *rf);
+#else
+int idle_balance_bt(int this_cpu, struct rq *this_rq)
+{
+	return 0;
+}
+
+static inline int idle_balance(struct rq *rq, struct rq_flags *rf)
+{
+	return 0;
+}
 #endif
 
 #ifdef CONFIG_CPU_IDLE
@@ -1603,6 +1658,10 @@ extern void update_max_interval(void);
 extern void init_sched_dl_class(void);
 extern void init_sched_rt_class(void);
 extern void init_sched_fair_class(void);
+#ifdef CONFIG_BT_SCHED
+extern void init_sched_bt_class(void);
+extern void update_idle_cpu_bt_load(struct rq *this_rq);
+#endif
 
 extern void resched_curr(struct rq *rq);
 extern void resched_cpu(int cpu);
@@ -1659,10 +1718,15 @@ static inline void add_nr_running(struct rq *rq, unsigned count)
 
 	rq->nr_running = prev_nr + count;
 
-	if (prev_nr < 2 && rq->nr_running >= 2) {
 #ifdef CONFIG_SMP
-		if (!rq->rd->overload && RQ_CFS_NR_RUNNING(rq) >= 2)
-			rq->rd->overload = true;
+	if (!rq->rd->overload && (rq->nr_running - rq->bt_nr_running >= 2))
+		 rq->rd->overload = true;
+#endif
+
+	if (rq->nr_running >= 2) {
+#ifdef CONFIG_SMP
+		if (rq->bt_nr_running && !rq->rd->overload_bt)
+			rq->rd->overload_bt = true;
 #endif
 	}
 

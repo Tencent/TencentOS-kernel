@@ -121,6 +121,15 @@ struct task_group;
 
 #endif
 
+/*
+ * Increase resolution of cpu_power calculations
+ */
+#define SCHED_POWER_SHIFT	10
+#define SCHED_POWER_SCALE	(1L << SCHED_POWER_SHIFT)
+
+#define SCHED_LOAD_SHIFT	10
+#define SCHED_LOAD_SCALE	(1L << SCHED_LOAD_SHIFT)
+
 #ifdef CONFIG_DEBUG_ATOMIC_SLEEP
 
 /*
@@ -219,6 +228,9 @@ struct task_group;
 extern cpumask_var_t			cpu_isolated_map;
 
 extern void scheduler_tick(void);
+#ifdef CONFIG_BT_SCHED
+extern void update_cpu_bt_load_nohz(void);
+#endif
 
 #define	MAX_SCHEDULE_TIMEOUT		LONG_MAX
 
@@ -1497,6 +1509,9 @@ extern int task_nice(const struct task_struct *p);
 extern int can_nice(const struct task_struct *p, const int nice);
 extern int task_curr(const struct task_struct *p);
 extern int idle_cpu(int cpu);
+#ifdef CONFIG_BT_SCHED
+extern int idle_bt_cpu(int cpu);
+#endif
 extern int sched_setscheduler(struct task_struct *, int, const struct sched_param *);
 extern int sched_setscheduler_nocheck(struct task_struct *, int, const struct sched_param *);
 extern int sched_setattr(struct task_struct *, const struct sched_attr *);

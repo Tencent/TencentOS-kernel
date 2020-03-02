@@ -1727,6 +1727,18 @@ static void ttwu_do_wakeup(struct rq *rq, struct task_struct *p, int wake_flags,
 		p->sched_class->task_woken(rq, p);
 		rq_repin_lock(rq, rf);
 	}
+#ifdef CONFIG_BT_SCHED
+	if (p->sched_class != &bt_sched_class && rq->idle_bt_stamp) {
+		u64 delta = rq->clock - rq->idle_bt_stamp;
+		u64 max = 2*sysctl_sched_migration_cost;
+
+		if (delta > max)
+			rq->avg_idle_bt = max;
+		else
+			update_avg(&rq->avg_idle_bt, delta);
+		rq->idle_bt_stamp = 0;
+	}
+#endif
 
 	if (rq->idle_stamp) {
 		u64 delta = rq_clock(rq) - rq->idle_stamp;
@@ -2234,6 +2246,7 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
 	p->bt.prev_sum_exec_runtime	= 0;
 	p->bt.nr_migrations		= 0;
 	p->bt.vruntime			= 0;
+	INIT_LIST_HEAD(&p->bt.group_node);
 #endif
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
@@ -3101,6 +3114,9 @@ void scheduler_tick(void)
 	update_rq_clock(rq);
 	curr->sched_class->task_tick(rq, curr, 0);
 	cpu_load_update_active(rq);
+#ifdef CONFIG_BT_SCHED
+	update_cpu_bt_load_active(rq);
+#endif
 	calc_global_load_tick(rq);
 
 	rq_unlock(rq, &rf);
@@ -3108,7 +3124,11 @@ void scheduler_tick(void)
 	perf_event_task_tick();
 
 #ifdef CONFIG_SMP
+#ifdef CONFIG_BT_SCHED
+	rq->idle_balance = idle_bt_cpu(cpu);
+#else
 	rq->idle_balance = idle_cpu(cpu);
+#endif
 	trigger_load_balance(rq);
 #endif
 	rq_last_tick_reset(rq);
@@ -3422,6 +3442,14 @@ static void __sched notrace __schedule(bool preempt)
 		}
 		switch_count = &prev->nvcsw;
 	}
+
+#ifdef CONFIG_BT_SCHED
+	if (unlikely(!(rq->nr_running - rq->bt_nr_running))){
+		if(idle_balance(rq, &rf) <= 0){
+			idle_balance_bt(cpu, rq);
+		}
+	}
+#endif
 
 	next = pick_next_task(rq, prev, &rf);
 	clear_tsk_need_resched(prev);
@@ -3999,6 +4027,28 @@ inline int task_nice(const struct task_struct *p)
 #endif
 }
 EXPORT_SYMBOL(task_nice);
+
+/**
+ * idle_bt_cpu - is a given cpu idle or bt task currently?
+ * @cpu: the processor in question.
+ */
+int idle_bt_cpu(int cpu)
+{
+	struct rq *rq = cpu_rq(cpu);
+
+	if (rq->curr != rq->idle && !bt_prio(rq->curr->prio))
+		return 0;
+
+	if (rq->nr_running - rq->bt_nr_running)
+		return 0;
+
+#ifdef CONFIG_SMP
+	if (!llist_empty(&rq->wake_list))
+		return 0;
+#endif
+
+	return 1;
+}
 
 /**
  * idle_cpu - is a given CPU idle currently?
@@ -5927,6 +5977,7 @@ static struct kmem_cache *task_group_cache __read_mostly;
 #endif
 
 DECLARE_PER_CPU(cpumask_var_t, load_balance_mask);
+DECLARE_PER_CPU(cpumask_var_t, bt_load_balance_mask);
 DECLARE_PER_CPU(cpumask_var_t, select_idle_mask);
 
 void __init sched_init(void)
@@ -5967,6 +6018,12 @@ void __init sched_init(void)
 	for_each_possible_cpu(i) {
 		per_cpu(load_balance_mask, i) = (cpumask_var_t)kzalloc_node(
 			cpumask_size(), GFP_KERNEL, cpu_to_node(i));
+
+#ifdef CONFIG_BT_SCHED
+		per_cpu(bt_load_balance_mask, i) = (cpumask_var_t)kzalloc_node(
+			cpumask_size(), GFP_KERNEL, cpu_to_node(i));
+#endif
+
 		per_cpu(select_idle_mask, i) = (cpumask_var_t)kzalloc_node(
 			cpumask_size(), GFP_KERNEL, cpu_to_node(i));
 	}
@@ -6046,8 +6103,12 @@ void __init sched_init(void)
 		init_tg_rt_entry(&root_task_group, &rq->rt, NULL, i, NULL);
 #endif
 
-		for (j = 0; j < CPU_LOAD_IDX_MAX; j++)
+		for (j = 0; j < CPU_LOAD_IDX_MAX; j++) {
 			rq->cpu_load[j] = 0;
+#ifdef CONFIG_BT_SCHED
+			rq->cpu_bt_load[j] = 0;
+#endif
+		}
 
 #ifdef CONFIG_SMP
 		rq->sd = NULL;
@@ -6062,12 +6123,24 @@ void __init sched_init(void)
 		rq->idle_stamp = 0;
 		rq->avg_idle = 2*sysctl_sched_migration_cost;
 		rq->max_idle_balance_cost = sysctl_sched_migration_cost;
+#ifdef CONFIG_BT_SCHED
+		rq->active_balance_bt = 0;
+		rq->next_balance_bt = jiffies + 1;
+		rq->push_cpu_bt = 0;
+		rq->idle_bt_stamp = 0;
+		rq->avg_idle_bt = 2*sysctl_sched_migration_cost;
+		INIT_LIST_HEAD(&rq->bt_tasks);
+#endif
 
 		INIT_LIST_HEAD(&rq->cfs_tasks);
 
 		rq_attach_root(rq, &def_root_domain);
 #ifdef CONFIG_NO_HZ_COMMON
+#ifdef CONFIG_BT_SCHED
+		rq->last_bt_load_update_tick = jiffies;
+#else
 		rq->last_load_update_tick = jiffies;
+#endif
 		rq->nohz_flags = 0;
 #endif
 #ifdef CONFIG_NO_HZ_FULL
@@ -6104,6 +6177,9 @@ void __init sched_init(void)
 	set_cpu_rq_start_time(smp_processor_id());
 #endif
 	init_sched_fair_class();
+#ifdef CONFIG_BT_SCHED
+	init_sched_bt_class();
+#endif
 
 	init_schedstats();
 
