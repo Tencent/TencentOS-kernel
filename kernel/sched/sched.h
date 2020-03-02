@@ -528,6 +528,13 @@ static inline int rt_bandwidth_enabled(void)
 	return sysctl_sched_rt_runtime >= 0;
 }
 
+#ifdef CONFIG_BT_SCHED
+static inline int bt_bandwidth_enabled(void)
+{
+	return sysctl_sched_bt_runtime >= 0;
+}
+#endif
+
 /* RT IPI pull logic requires IRQ_WORK */
 #if defined(CONFIG_IRQ_WORK) && defined(CONFIG_SMP)
 # define HAVE_RT_PUSH_IPI
@@ -1312,6 +1319,21 @@ static inline u64 global_rt_runtime(void)
 
 	return (u64)sysctl_sched_rt_runtime * NSEC_PER_USEC;
 }
+
+#ifdef CONFIG_BT_SCHED
+static inline u64 global_bt_period(void)
+{
+	return (u64)sysctl_sched_bt_period * NSEC_PER_USEC;
+}
+
+static inline u64 global_bt_runtime(void)
+{
+	if (sysctl_sched_bt_runtime < 0)
+		return RUNTIME_INF;
+
+	return (u64)sysctl_sched_bt_runtime * NSEC_PER_USEC;
+}
+#endif
 
 static inline int task_current(struct rq *rq, struct task_struct *p)
 {

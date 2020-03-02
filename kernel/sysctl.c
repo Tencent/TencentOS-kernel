@@ -506,6 +506,22 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &one,
 	},
 #endif
+#ifdef CONFIG_BT_SCHED
+	{
+		.procname       = "sched_bt_period_us",
+		.data           = &sysctl_sched_bt_period,
+		.maxlen         = sizeof(unsigned int),
+		.mode           = 0644,
+		.proc_handler   = sched_bt_handler,
+	},
+	{
+		.procname       = "sched_bt_runtime_us",
+		.data           = &sysctl_sched_bt_runtime,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = sched_bt_handler,
+	},
+#endif
 #ifdef CONFIG_PROVE_LOCKING
 	{
 		.procname	= "prove_locking",

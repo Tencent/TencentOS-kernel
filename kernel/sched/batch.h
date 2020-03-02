@@ -17,6 +17,13 @@
 /* nflag of task_struct */
 #define TNF_SCHED_BT    0x00000001
 
+struct bt_bandwidth {
+	raw_spinlock_t	bt_runtime_lock;
+	ktime_t         bt_period;
+	u64             bt_runtime;
+	struct hrtimer  bt_period_timer;
+	int             timer_active;
+};
 
 struct bt_rq {
 	struct load_weight load;
@@ -58,6 +65,13 @@ struct bt_rq {
 	 */
 	unsigned long h_load;
 #endif /* CONFIG_SMP */
+
+	int bt_throttled;
+	u64 bt_time;
+	u64 bt_runtime;
+
+	/* Nests inside the rq lock: */
+	raw_spinlock_t bt_runtime_lock;
 };
 
 extern const struct sched_class bt_sched_class;
@@ -79,5 +93,10 @@ static inline int task_has_bt_policy(struct task_struct *p)
 {
 	return bt_policy(p->policy);
 }
+
+extern int update_bt_runtime(struct notifier_block *nfb, unsigned long action, void *hcpu);
+
+extern struct bt_bandwidth def_bt_bandwidth;
+extern void init_bt_bandwidth(struct bt_bandwidth *bt_b, u64 period, u64 runtime);
 
 #endif

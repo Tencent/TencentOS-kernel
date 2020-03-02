@@ -85,6 +85,11 @@ __read_mostly int scheduler_running;
  */
 int sysctl_sched_rt_runtime = 950000;
 
+#ifdef CONFIG_BT_SCHED
+unsigned int sysctl_sched_bt_period = 1000000;
+int sysctl_sched_bt_runtime = -1;
+#endif
+
 /* CPUs with isolated domains */
 cpumask_var_t cpu_isolated_map;
 
@@ -748,6 +753,10 @@ static void set_load_weight(struct task_struct *p)
 		load->inv_weight = WMULT_IDLEPRIO;
 		return;
 	}
+#if CONFIG_BT_SCHED
+	if (bt_prio(p->static_prio))
+		prio -= 40;
+#endif
 
 	load->weight = scale_load(sched_prio_to_weight[prio]);
 	load->inv_weight = sched_prio_to_wmult[prio];
@@ -5965,6 +5974,9 @@ void __init sched_init(void)
 
 	init_rt_bandwidth(&def_rt_bandwidth, global_rt_period(), global_rt_runtime());
 	init_dl_bandwidth(&def_dl_bandwidth, global_rt_period(), global_rt_runtime());
+#ifdef CONFIG_BT_SCHED
+	init_bt_bandwidth(&def_bt_bandwidth, global_bt_period(), global_bt_runtime());
+#endif
 
 #ifdef CONFIG_SMP
 	init_defrootdomain();
@@ -6026,6 +6038,9 @@ void __init sched_init(void)
 		init_tg_cfs_entry(&root_task_group, &rq->cfs, NULL, i, NULL);
 #endif /* CONFIG_FAIR_GROUP_SCHED */
 
+#ifdef CONFIG_BT_SCHED
+		rq->bt.bt_runtime = def_bt_bandwidth.bt_runtime;
+#endif
 		rq->rt.rt_runtime = def_rt_bandwidth.rt_runtime;
 #ifdef CONFIG_RT_GROUP_SCHED
 		init_tg_rt_entry(&root_task_group, &rq->rt, NULL, i, NULL);

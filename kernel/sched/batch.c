@@ -17,6 +17,7 @@
 #include <linux/mempolicy.h>
 #include <linux/migrate.h>
 #include <linux/task_work.h>
+#include <linux/hrtimer.h>
 #include <linux/sched/batch.h>
 
 #include <trace/events/sched.h>
@@ -55,6 +56,11 @@ static inline struct bt_rq *task_bt_rq(struct task_struct *p)
 	return &task_rq(p)->bt;
 }
 
+static inline int bt_rq_throttled(struct bt_rq *bt_rq)
+{
+	return bt_rq->bt_throttled;
+}
+
 static inline struct bt_rq *bt_rq_of(struct sched_entity *bt_se)
 {
 	struct task_struct *p = bt_task_of(bt_se);
@@ -66,6 +72,466 @@ static inline struct bt_rq *bt_rq_of(struct sched_entity *bt_se)
 static inline struct sched_entity *parent_bt_entity(struct sched_entity *bt)
 {
 	return NULL;
+}
+
+static int do_sched_bt_period_timer(struct bt_bandwidth *bt_b, int overrun);
+
+struct bt_bandwidth def_bt_bandwidth;
+
+static enum hrtimer_restart sched_bt_period_timer(struct hrtimer *timer)
+{
+	struct bt_bandwidth *bt_b =
+		container_of(timer, struct bt_bandwidth, bt_period_timer);
+	ktime_t now;
+	int overrun;
+	int idle = 0;
+
+	for (;;) {
+		overrun = hrtimer_forward_now(timer, bt_b->bt_period);
+		if (!overrun){
+			break;
+		}
+
+		idle = do_sched_bt_period_timer(bt_b, overrun);
+	}
+
+	return idle ? HRTIMER_NORESTART : HRTIMER_RESTART;
+}
+
+void init_bt_bandwidth(struct bt_bandwidth *bt_b, u64 period, u64 runtime)
+{
+	bt_b->bt_period = ns_to_ktime(period);
+	bt_b->bt_runtime = runtime;
+	bt_b->timer_active = 0;
+
+	raw_spin_lock_init(&bt_b->bt_runtime_lock);
+
+	hrtimer_init(&bt_b->bt_period_timer,
+			CLOCK_MONOTONIC, HRTIMER_MODE_ABS_PINNED);
+	bt_b->bt_period_timer.function = sched_bt_period_timer;
+}
+
+static void start_bandwidth_timer(struct hrtimer *period_timer, ktime_t period)
+{
+	unsigned long delta;
+	ktime_t soft, hard, now;
+
+	for (;;) {
+		if (hrtimer_active(period_timer))
+			break;
+
+		now = hrtimer_cb_get_time(period_timer);
+		hrtimer_forward(period_timer, now, period);
+
+		soft = hrtimer_get_softexpires(period_timer);
+		hard = hrtimer_get_expires(period_timer);
+		delta = ktime_to_ns(ktime_sub(hard, soft));
+		hrtimer_start_range_ns(period_timer, soft, delta,
+					 HRTIMER_MODE_ABS_PINNED);
+	}
+}
+
+static void start_bt_bandwidth(struct bt_bandwidth *bt_b)
+{
+	if (!bt_bandwidth_enabled() || bt_b->bt_runtime == RUNTIME_INF)
+		return;
+
+	if (hrtimer_active(&bt_b->bt_period_timer))
+		return;
+
+	raw_spin_lock(&bt_b->bt_runtime_lock);
+	bt_b->timer_active = 1;
+	start_bandwidth_timer(&bt_b->bt_period_timer, bt_b->bt_period);
+	raw_spin_unlock(&bt_b->bt_runtime_lock);
+}
+
+static inline u64 sched_bt_runtime(struct bt_rq *bt_rq)
+{
+	return bt_rq->bt_runtime;
+}
+
+static inline u64 sched_bt_period(struct bt_rq *bt_rq)
+{
+	return ktime_to_ns(def_bt_bandwidth.bt_period);
+}
+
+typedef struct bt_rq *bt_rq_iter_t;
+
+#define for_each_bt_rq(bt_rq, iter, rq) \
+	for ((void) iter, bt_rq = &rq->bt; bt_rq; bt_rq = NULL)
+
+static inline void sched_bt_rq_enqueue(struct bt_rq *bt_rq)
+{
+	struct rq *rq = rq_of_bt_rq(bt_rq);
+
+	if (rq->curr == rq->idle && rq->bt_nr_running)
+		resched_curr(rq);
+}
+
+static inline const struct cpumask *sched_bt_period_mask(void)
+{
+	return cpu_online_mask;
+}
+
+static inline
+struct bt_rq *sched_bt_period_bt_rq(struct bt_bandwidth *bt_b, int cpu)
+{
+	return &cpu_rq(cpu)->bt;
+}
+
+static inline struct bt_bandwidth *sched_bt_bandwidth(struct bt_rq *bt_rq)
+{
+	return &def_bt_bandwidth;
+}
+
+#ifdef CONFIG_SMP
+/*
+ * We ran out of runtime, see if we can borrow some from our neighbours.
+ */
+static int do_balance_bt_runtime(struct bt_rq *bt_rq)
+{
+	struct bt_bandwidth *bt_b = sched_bt_bandwidth(bt_rq);
+	struct root_domain *rd = rq_of_bt_rq(bt_rq)->rd;
+	int i, weight, more = 0;
+	u64 bt_period;
+
+	weight = cpumask_weight(rd->span);
+
+	raw_spin_lock(&bt_b->bt_runtime_lock);
+	bt_period = ktime_to_ns(bt_b->bt_period);
+	for_each_cpu(i, rd->span) {
+		struct bt_rq *iter = sched_bt_period_bt_rq(bt_b, i);
+		s64 diff;
+
+		if (iter == bt_rq)
+			continue;
+
+		raw_spin_lock(&iter->bt_runtime_lock);
+		/*
+		 * Either all rqs have inf runtime and there's nothing to steal
+		 * or __disable_runtime() below sets a specific rq to inf to
+		 * indicate its been disabled and disalow stealing.
+		 */
+		if (iter->bt_runtime == RUNTIME_INF)
+			goto next;
+
+		/*
+		 * From runqueues with spare time, take 1/n part of their
+		 * spare time, but no more than our period.
+		 */
+		diff = iter->bt_runtime - iter->bt_time;
+		if (diff > 0) {
+			diff = div_u64((u64)diff, weight);
+			if (bt_rq->bt_runtime + diff > bt_period)
+				diff = bt_period - bt_rq->bt_runtime;
+			iter->bt_runtime -= diff;
+			bt_rq->bt_runtime += diff;
+			more = 1;
+			if (bt_rq->bt_runtime == bt_period) {
+				raw_spin_unlock(&iter->bt_runtime_lock);
+				break;
+			}
+		}
+next:
+		raw_spin_unlock(&iter->bt_runtime_lock);
+	}
+	raw_spin_unlock(&bt_b->bt_runtime_lock);
+
+	return more;
+}
+
+/*
+ * Ensure this BT takes back all the runtime it lend to its neighbours.
+ */
+static void __disable_bt_runtime(struct rq *rq)
+{
+	struct root_domain *rd = rq->rd;
+	bt_rq_iter_t iter;
+	struct bt_rq *bt_rq;
+
+	if (unlikely(!scheduler_running))
+		return;
+
+	for_each_bt_rq(bt_rq, iter, rq) {
+		struct bt_bandwidth *bt_b = sched_bt_bandwidth(bt_rq);
+		s64 want;
+		int i;
+
+		raw_spin_lock(&bt_b->bt_runtime_lock);
+		raw_spin_lock(&bt_rq->bt_runtime_lock);
+		/*
+		 * Either we're all inf and nobody needs to borrow, or we're
+		 * already disabled and thus have nothing to do, or we have
+		 * exactly the right amount of runtime to take out.
+		 */
+		if (bt_rq->bt_runtime == RUNTIME_INF ||
+				bt_rq->bt_runtime == bt_b->bt_runtime)
+			goto balanced;
+		raw_spin_unlock(&bt_rq->bt_runtime_lock);
+
+		/*
+		 * Calculate the difference between what we started out with
+		 * and what we current have, that's the amount of runtime
+		 * we lend and now have to reclaim.
+		 */
+		want = bt_b->bt_runtime - bt_rq->bt_runtime;
+
+		/*
+		 * Greedy reclaim, take back as much as we can.
+		 */
+		for_each_cpu(i, rd->span) {
+			struct bt_rq *iter = sched_bt_period_bt_rq(bt_b, i);
+			s64 diff;
+
+			/*
+			 * Can't reclaim from ourselves or disabled runqueues.
+			 */
+			if (iter == bt_rq || iter->bt_runtime == RUNTIME_INF)
+				continue;
+
+			raw_spin_lock(&iter->bt_runtime_lock);
+			if (want > 0) {
+				diff = min_t(s64, iter->bt_runtime, want);
+				iter->bt_runtime -= diff;
+				want -= diff;
+			} else {
+				iter->bt_runtime -= want;
+				want -= want;
+			}
+			raw_spin_unlock(&iter->bt_runtime_lock);
+
+			if (!want)
+				break;
+		}
+
+		raw_spin_lock(&bt_rq->bt_runtime_lock);
+		/*
+		 * We cannot be left wanting - that would mean some runtime
+		 * leaked out of the system.
+		 */
+		BUG_ON(want);
+balanced:
+		/*
+		 * Disable all the borrow logic by pretending we have inf
+		 * runtime - in which case borrowing doesn't make sense.
+		 */
+		bt_rq->bt_runtime = RUNTIME_INF;
+		bt_rq->bt_throttled = 0;
+		raw_spin_unlock(&bt_rq->bt_runtime_lock);
+		raw_spin_unlock(&bt_b->bt_runtime_lock);
+	}
+}
+
+static void disable_bt_runtime(struct rq *rq)
+{
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&rq->lock, flags);
+	__disable_bt_runtime(rq);
+	raw_spin_unlock_irqrestore(&rq->lock, flags);
+}
+
+static void __enable_bt_runtime(struct rq *rq)
+{
+	bt_rq_iter_t iter;
+	struct bt_rq *bt_rq;
+
+	if (unlikely(!scheduler_running))
+		return;
+
+	/*
+	 * Reset each runqueue's bandwidth settings
+	 */
+	for_each_bt_rq(bt_rq, iter, rq) {
+		struct bt_bandwidth *bt_b = sched_bt_bandwidth(bt_rq);
+
+		raw_spin_lock(&bt_b->bt_runtime_lock);
+		raw_spin_lock(&bt_rq->bt_runtime_lock);
+		bt_rq->bt_runtime = bt_b->bt_runtime;
+		bt_rq->bt_time = 0;
+		bt_rq->bt_throttled = 0;
+		raw_spin_unlock(&bt_rq->bt_runtime_lock);
+		raw_spin_unlock(&bt_b->bt_runtime_lock);
+	}
+}
+
+static void enable_bt_runtime(struct rq *rq)
+{
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&rq->lock, flags);
+	__enable_bt_runtime(rq);
+	raw_spin_unlock_irqrestore(&rq->lock, flags);
+}
+
+#if 0
+int update_bt_runtime(struct notifier_block *nfb, unsigned long action, void *hcpu)
+{
+	int cpu = (int)(long)hcpu;
+
+	switch (action) {
+	case CPU_DOWN_PREPARE:
+	case CPU_DOWN_PREPARE_FROZEN:
+		disable_bt_runtime(cpu_rq(cpu));
+		return NOTIFY_OK;
+
+	case CPU_DOWN_FAILED:
+	case CPU_DOWN_FAILED_FROZEN:
+	case CPU_ONLINE:
+	case CPU_ONLINE_FROZEN:
+		enable_bt_runtime(cpu_rq(cpu));
+		return NOTIFY_OK;
+
+	default:
+		return NOTIFY_DONE;
+	}
+}
+#endif
+
+static int balance_bt_runtime(struct bt_rq *bt_rq)
+{
+	int more = 0;
+
+	if (!sched_feat(BT_RUNTIME_SHARE))
+		return more;
+
+	if (bt_rq->bt_time > bt_rq->bt_runtime) {
+		raw_spin_unlock(&bt_rq->bt_runtime_lock);
+		more = do_balance_bt_runtime(bt_rq);
+		raw_spin_lock(&bt_rq->bt_runtime_lock);
+	}
+
+	return more;
+}
+#else /* !CONFIG_SMP */
+static inline int balance_bt_runtime(struct bt_rq *bt_rq)
+{
+	return 0;
+}
+#endif /* CONFIG_SMP */
+
+static int do_sched_bt_period_timer(struct bt_bandwidth *bt_b, int overrun)
+{
+	int i, idle = 1, throttled = 0;
+	const struct cpumask *span;
+
+	span = sched_bt_period_mask();
+
+	for_each_cpu(i, span) {
+		int enqueue = 0;
+		struct bt_rq *bt_rq = sched_bt_period_bt_rq(bt_b, i);
+		struct rq *rq = rq_of_bt_rq(bt_rq);
+
+		raw_spin_lock(&rq->lock);
+		if (bt_rq->bt_time) {
+			u64 runtime;
+
+			raw_spin_lock(&bt_rq->bt_runtime_lock);
+			if (bt_rq->bt_throttled)
+				balance_bt_runtime(bt_rq);
+			runtime = bt_rq->bt_runtime;
+			bt_rq->bt_time -= min(bt_rq->bt_time, overrun*runtime);
+			if (bt_rq->bt_throttled && bt_rq->bt_time < runtime) {
+				bt_rq->bt_throttled = 0;
+				enqueue = 1;
+#if 0
+				/*
+				 * Force a clock update if the CPU was idle,
+				 * lest wakeup -> unthrottle time accumulate.
+				 */
+				if (bt_rq->nr_running && rq->curr == rq->idle)
+					rq->skip_clock_update = -1;
+#endif
+			}
+			if (bt_rq->bt_time || bt_rq->nr_running)
+				idle = 0;
+			raw_spin_unlock(&bt_rq->bt_runtime_lock);
+		} else if (bt_rq->nr_running) {
+			idle = 0;
+			if (!bt_rq_throttled(bt_rq))
+				enqueue = 1;
+		}
+		if (bt_rq->bt_throttled)
+			throttled = 1;
+
+		if (enqueue)
+			sched_bt_rq_enqueue(bt_rq);
+		raw_spin_unlock(&rq->lock);
+	}
+
+	if (!throttled && (!bt_bandwidth_enabled() || bt_b->bt_runtime == RUNTIME_INF))
+		idle = 1;
+
+	if (idle)
+		bt_b->timer_active = 0;
+
+	return idle;
+}
+
+
+static int sched_bt_runtime_exceeded(struct bt_rq *bt_rq)
+{
+	u64 runtime = sched_bt_runtime(bt_rq);
+
+	if (bt_rq->bt_throttled)
+		return bt_rq_throttled(bt_rq);
+
+	if (runtime >= sched_bt_period(bt_rq))
+		return 0;
+
+	balance_bt_runtime(bt_rq);
+	runtime = sched_bt_runtime(bt_rq);
+	if (runtime == RUNTIME_INF)
+		return 0;
+
+	if (bt_rq->bt_time > runtime) {
+		struct bt_bandwidth *bt_b = sched_bt_bandwidth(bt_rq);
+
+		/*
+		 * Don't actually throttle groups that have no runtime assigned
+		 * but accrue some time due to boosting.
+		 */
+		if (likely(bt_b->bt_runtime)) {
+			static bool once = false;
+
+			bt_rq->bt_throttled = 1;
+
+			if (!once) {
+				once = true;
+				printk_deferred("sched: BT throttling activated\n");
+			}
+		} else {
+			/*
+			 * In case we did anyway, make it go away,
+			 * replenishment is a joke, since it will replenish us
+			 * with exactly 0 ns.
+			 */
+			bt_rq->bt_time = 0;
+		}
+
+		if (bt_rq_throttled(bt_rq)) {
+			if (!bt_b->timer_active)
+				start_bt_bandwidth(bt_b);
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+static void
+account_bt_rq_runtime(struct bt_rq *bt_rq,
+			unsigned long delta_exec)
+{
+	if (!bt_bandwidth_enabled() || sched_bt_runtime(bt_rq) == RUNTIME_INF)
+		return;
+
+	raw_spin_lock(&bt_rq->bt_runtime_lock);
+	bt_rq->bt_time += delta_exec;
+	if (sched_bt_runtime_exceeded(bt_rq) && likely(bt_rq->curr)){
+		resched_curr(rq_of_bt_rq(bt_rq));
+	}
+	raw_spin_unlock(&bt_rq->bt_runtime_lock);
 }
 
 /**************************************************************
@@ -280,6 +746,8 @@ static void update_curr_bt(struct bt_rq *bt_rq)
 		trace_sched_stat_runtime(curtask, delta_exec, curr->vruntime);
 		cpuacct_charge(curtask, delta_exec);
 	}
+
+	account_bt_rq_runtime(bt_rq, delta_exec);
 }
 
 static inline void
@@ -507,6 +975,7 @@ enqueue_bt_entity(struct bt_rq *bt_rq, struct sched_entity *se, int flags)
 	if (se != bt_rq->curr)
 		__enqueue_bt_entity(bt_rq, se);
 	se->on_rq = 1;
+	start_bt_bandwidth(&def_bt_bandwidth);
 }
 
 static void __clear_buddies_last_bt(struct sched_entity *se)
@@ -795,6 +1264,9 @@ static void dequeue_task_bt(struct rq *rq, struct task_struct *p, int flags)
 	for_each_sched_bt_entity(se) {
 		bt_rq = bt_rq_of(se);
 		dequeue_bt_entity(bt_rq, se, flags);
+
+		if (bt_rq_throttled(bt_rq))
+			break;
 
 		bt_rq->h_nr_running--;
 
@@ -1134,6 +1606,9 @@ again:
 	if (!bt_rq->nr_running)
 		goto idle;
 
+	if (bt_rq_throttled(bt_rq))
+		return NULL;
+
 	put_prev_task(rq, prev);
 
 	se = pick_next_bt_entity(bt_rq);
@@ -1223,15 +1698,82 @@ static bool yield_to_task_bt(struct rq *rq, struct task_struct *p, bool preempt)
 	return true;
 }
 
+#ifdef CONFIG_CFS_BANDWIDTH
+/* cpu online calback */
+static void __maybe_unused update_runtime_enabled(struct rq *rq)
+{
+	return;
+	#if 0
+	struct task_group *tg;
+
+	lockdep_assert_held(&rq->lock);
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(tg, &task_groups, list) {
+		struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
+		struct cfs_rq *cfs_rq = tg->cfs_rq[cpu_of(rq)];
+
+		raw_spin_lock(&cfs_b->lock);
+		cfs_rq->runtime_enabled = cfs_b->quota != RUNTIME_INF;
+		raw_spin_unlock(&cfs_b->lock);
+	}
+	rcu_read_unlock();
+	#endif
+}
+
+/* cpu offline callback */
+static void __maybe_unused unthrottle_offline_cfs_rqs(struct rq *rq)
+{
+	return;
+	#if 0
+	struct task_group *tg;
+
+	lockdep_assert_held(&rq->lock);
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(tg, &task_groups, list) {
+		struct bt_rq *bt_rq = tg->bt_rq[cpu_of(rq)];
+
+		if (!bt_rq->runtime_enabled)
+			continue;
+
+		/*
+		 * clock_task is not advancing so we just need to make sure
+		 * there's some valid quota amount
+		 */
+		bt_rq->runtime_remaining = 1;
+		/*
+		 * Offline rq is schedulable till cpu is completely disabled
+		 * in take_cpu_down(), so we prevent new cfs throttling here.
+		 */
+		bt_rq->runtime_enabled = 0;
+
+		if (bt_rq_throttled(bt_rq))
+			unthrottle_bt_rq(bt_rq);
+	}
+	rcu_read_unlock();
+	#endif
+}
+#else
+static inline void update_runtime_enabled(struct rq *rq) {}
+static inline void unthrottle_offline_cfs_rqs(struct rq *rq) {}
+#endif
+
 #ifdef CONFIG_SMP
 static void rq_online_bt(struct rq *rq)
 {
 	update_sysctl();
+	__enable_bt_runtime(rq);
+
+	update_runtime_enabled(rq);
 }
 
 static void rq_offline_bt(struct rq *rq)
 {
 	update_sysctl();
+	__disable_bt_runtime(rq);
+
+	unthrottle_offline_cfs_rqs(rq);
 }
 
 #endif /* CONFIG_SMP */
@@ -1385,6 +1927,8 @@ static void set_curr_task_bt(struct rq *rq)
 		struct bt_rq *bt_rq = bt_rq_of(se);
 
 		set_next_bt_entity(bt_rq, se);
+		/* ensure bandwidth has been allocated on our new cfs_rq */
+		account_bt_rq_runtime(bt_rq, 0);
 	}
 }
 
@@ -1396,6 +1940,10 @@ void init_bt_rq(struct bt_rq *bt_rq)
 #ifndef CONFIG_64BIT
 	bt_rq->min_vruntime_copy = bt_rq->min_vruntime;
 #endif
+	bt_rq->bt_time = 0;
+	bt_rq->bt_throttled = 0;
+	bt_rq->bt_runtime = 0;
+	raw_spin_lock_init(&bt_rq->bt_runtime_lock);
 }
 
 static unsigned int get_rr_interval_bt(struct rq *rq, struct task_struct *task)
@@ -1432,6 +1980,7 @@ const struct sched_class bt_sched_class = {
 	.select_task_rq		= select_task_rq_bt,
 	.rq_online		= rq_online_bt,
 	.rq_offline		= rq_offline_bt,
+	.set_cpus_allowed       = set_cpus_allowed_common,
 #endif
 
 	.set_curr_task		= set_curr_task_bt,
@@ -1444,3 +1993,61 @@ const struct sched_class bt_sched_class = {
 
 	.get_rr_interval	= get_rr_interval_bt,
 };
+
+static int sched_bt_global_constraints(void)
+{
+	unsigned long flags;
+	int i;
+
+	if (sysctl_sched_bt_period <= 0)
+		return -EINVAL;
+
+	/*
+	 * There's always some BT tasks in the root group
+	 * -- migration, kstopmachine etc..
+	 */
+	if (sysctl_sched_bt_runtime == 0)
+		return -EBUSY;
+
+	raw_spin_lock_irqsave(&def_bt_bandwidth.bt_runtime_lock, flags);
+	for_each_possible_cpu(i) {
+		struct bt_rq *bt_rq = &cpu_rq(i)->bt;
+
+		raw_spin_lock(&bt_rq->bt_runtime_lock);
+		bt_rq->bt_runtime = global_bt_runtime();
+		raw_spin_unlock(&bt_rq->bt_runtime_lock);
+	}
+	raw_spin_unlock_irqrestore(&def_bt_bandwidth.bt_runtime_lock, flags);
+
+	return 0;
+}
+
+int sched_bt_handler(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp,
+		loff_t *ppos)
+{
+	int ret;
+	int old_period, old_runtime;
+	static DEFINE_MUTEX(mutex);
+
+	mutex_lock(&mutex);
+	old_period = sysctl_sched_bt_period;
+	old_runtime = sysctl_sched_bt_runtime;
+
+	ret = proc_dointvec(table, write, buffer, lenp, ppos);
+
+	if (!ret && write) {
+		ret = sched_bt_global_constraints();
+		if (ret) {
+			sysctl_sched_bt_period = old_period;
+			sysctl_sched_bt_runtime = old_runtime;
+		} else {
+			def_bt_bandwidth.bt_runtime = global_bt_runtime();
+			def_bt_bandwidth.bt_period =
+				ns_to_ktime(global_bt_period());
+		}
+	}
+	mutex_unlock(&mutex);
+
+	return ret;
+}
