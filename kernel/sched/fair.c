@@ -424,7 +424,7 @@ find_matching_se(struct sched_entity **se, struct sched_entity **pse)
 		*pse = parent_entity(*pse);
 	}
 
-	while (!is_same_group(*se, *pse)) {
+	while (*se && *pse && !is_same_group(*se, *pse)) {
 		*se = parent_entity(*se);
 		*pse = parent_entity(*pse);
 	}
@@ -1419,9 +1419,9 @@ bool should_numa_migrate_memory(struct task_struct *p, struct page * page,
 	       group_faults_cpu(ng, src_nid) * group_faults(p, dst_nid) * 4;
 }
 
-static unsigned long weighted_cpuload(struct rq *rq);
-static unsigned long source_load(int cpu, int type);
-static unsigned long target_load(int cpu, int type);
+unsigned long weighted_cpuload(struct rq *rq);
+unsigned long source_load(int cpu, int type);
+unsigned long target_load(int cpu, int type);
 static unsigned long capacity_of(int cpu);
 
 /* Cached statistics for all CPUs within a node */
@@ -5145,7 +5145,7 @@ static void cpu_load_update(struct rq *this_rq, unsigned long this_load,
 }
 
 /* Used instead of source_load when we know the type == 0 */
-static unsigned long weighted_cpuload(struct rq *rq)
+unsigned long weighted_cpuload(struct rq *rq)
 {
 	return cfs_rq_runnable_load_avg(&rq->cfs);
 }
@@ -5345,7 +5345,7 @@ void cpu_load_update_active(struct rq *this_rq)
  * We want to under-estimate the load of migration sources, to
  * balance conservatively.
  */
-static unsigned long source_load(int cpu, int type)
+unsigned long source_load(int cpu, int type)
 {
 	struct rq *rq = cpu_rq(cpu);
 	unsigned long total = weighted_cpuload(rq);
@@ -5360,7 +5360,7 @@ static unsigned long source_load(int cpu, int type)
  * Return a high guess at the load of a migration-target cpu weighted
  * according to the scheduling class and "nice" value.
  */
-static unsigned long target_load(int cpu, int type)
+unsigned long target_load(int cpu, int type)
 {
 	struct rq *rq = cpu_rq(cpu);
 	unsigned long total = weighted_cpuload(rq);
@@ -6327,10 +6327,11 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
 		return;
 
 	/* Idle tasks are by definition preempted by non-idle tasks. */
-	if (unlikely(curr->policy == SCHED_IDLE) &&
 #ifdef	CONFIG_BT_SCHED
+	if (unlikely(curr->policy == SCHED_IDLE) &&
 	    likely(p->policy != SCHED_IDLE && p->policy != SCHED_BT))
 #else
+	if (unlikely(curr->policy == SCHED_IDLE) &&
 	    likely(p->policy != SCHED_IDLE))
 #endif
 		goto preempt;
@@ -8804,6 +8805,9 @@ void nohz_balance_enter_idle(int cpu)
 	cpumask_set_cpu(cpu, nohz.idle_cpus_mask);
 	atomic_inc(&nohz.nr_cpus);
 	set_bit(NOHZ_TICK_STOPPED, nohz_flags(cpu));
+#ifdef CONFIG_BT_SCHED
+	cpu_rq(cpu)->do_lb = 0;
+#endif
 }
 #endif
 

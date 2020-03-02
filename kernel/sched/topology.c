@@ -713,6 +713,9 @@ static void init_overlap_sched_group(struct sched_domain *sd,
 	 */
 	sg_span = sched_group_span(sg);
 	sg->sgc->capacity = SCHED_CAPACITY_SCALE * cpumask_weight(sg_span);
+#ifdef CONFIG_BT_SCHED
+	sg->sgc->capacity_bt = 0;
+#endif
 	sg->sgc->min_capacity = SCHED_CAPACITY_SCALE;
 }
 
@@ -872,6 +875,9 @@ static struct sched_group *get_group(int cpu, struct sd_data *sdd)
 	}
 
 	sg->sgc->capacity = SCHED_CAPACITY_SCALE * cpumask_weight(sched_group_span(sg));
+#ifdef CONFIG_BT_SCHED
+	sg->sgc->capacity_bt = 0;
+#endif
 	sg->sgc->min_capacity = SCHED_CAPACITY_SCALE;
 
 	return sg;
@@ -939,6 +945,9 @@ static void init_sched_groups_capacity(int cpu, struct sched_domain *sd)
 	do {
 		int cpu, max_cpu = -1;
 
+#ifdef CONFIG_BT_SCHED
+		sg->bt_balance_cpu = -1;
+#endif
 		sg->group_weight = cpumask_weight(sched_group_span(sg));
 
 		if (!(sd->flags & SD_ASYM_PACKING))
@@ -1149,6 +1158,7 @@ sd_init(struct sched_domain_topology_level *tl,
 		.last_balance		= jiffies,
 #ifdef CONFIG_BT_SCHED
 		.last_balance_bt	= jiffies,
+		.balance_interval_bt	= sd_weight,
 #endif
 		.balance_interval	= sd_weight,
 		.smt_gain		= 0,

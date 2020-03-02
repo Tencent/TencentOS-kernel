@@ -39,7 +39,9 @@
 #include "cpupri.h"
 #include "cpudeadline.h"
 #include "cpuacct.h"
+#ifdef CONFIG_BT_SCHED
 #include "batch.h"
+#endif
 
 #ifdef CONFIG_SCHED_DEBUG
 # define SCHED_WARN_ON(x)	WARN_ONCE(x, #x)
@@ -759,6 +761,7 @@ struct rq {
 	unsigned int nr_running;
 #ifdef CONFIG_BT_SCHED
 	unsigned int bt_nr_running;
+	u64 bt_blocked_clock;
 #endif
 #ifdef CONFIG_NUMA_BALANCING
 	unsigned int nr_numa_running;
@@ -774,6 +777,7 @@ struct rq {
 	unsigned long last_load_update_tick;
 #ifdef CONFIG_BT_SCHED
 	unsigned long last_bt_load_update_tick;
+	unsigned long do_lb;
 #endif
 #endif /* CONFIG_SMP */
 	unsigned long nohz_flags;
@@ -1204,6 +1208,9 @@ struct sched_group {
 	struct sched_group *next;	/* Must be a circular list */
 	atomic_t ref;
 
+#ifdef CONFIG_BT_SCHED
+	int bt_balance_cpu;
+#endif
 	unsigned int group_weight;
 	struct sched_group_capacity *sgc;
 	int asym_prefer_cpu;		/* cpu of highest priority in group */
@@ -1651,7 +1658,7 @@ extern void trigger_load_balance(struct rq *rq);
 
 extern void set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_mask);
 
-extern int idle_balance_bt(int this_cpu, struct rq *this_rq);
+extern int idle_balance_bt(struct rq *this_rq, struct rq_flags *rf);
 
 extern int idle_balance(struct rq *this_rq, struct rq_flags *rf);
 
@@ -1664,7 +1671,7 @@ static inline void idle_exit_bt(struct rq *this_rq) {}
 #endif
 
 #else
-int idle_balance_bt(int this_cpu, struct rq *this_rq)
+int idle_balance_bt(struct rq *this_rq, struct rq_flags *rf)
 {
 	return 0;
 }
@@ -1770,6 +1777,14 @@ static inline void add_nr_running(struct rq *rq, unsigned count)
 
 	rq->nr_running = prev_nr + count;
 
+#ifndef CONFIG_BT_SCHED
+	if (prev_nr < 2 && rq->nr_running >= 2) {
+#ifdef CONFIG_SMP
+		if (!rq->rd->overload)
+			rq->rd->overload = true;
+#endif
+	}
+#else
 #ifdef CONFIG_SMP
 	if (!rq->rd->overload && (rq->nr_running - rq->bt_nr_running >= 2))
 		 rq->rd->overload = true;
@@ -1781,6 +1796,7 @@ static inline void add_nr_running(struct rq *rq, unsigned count)
 			rq->rd->overload_bt = true;
 #endif
 	}
+#endif
 
 	sched_update_tick_dependency(rq);
 }

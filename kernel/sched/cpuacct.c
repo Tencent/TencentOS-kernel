@@ -67,10 +67,16 @@ static inline struct cpuacct *parent_ca(struct cpuacct *ca)
 }
 
 static DEFINE_PER_CPU(struct cpuacct_usage, root_cpuacct_cpuusage);
+#ifdef CONFIG_BT_SCHED
 static DEFINE_PER_CPU(struct cpuacct_usage, root_bt_cpuacct_cpuusage);
+#endif
 static struct cpuacct root_cpuacct = {
 	.cpustat	= &kernel_cpustat,
 	.cpuusage	= &root_cpuacct_cpuusage,
+#ifdef CONFIG_BT_SCHED
+	.bt_cpuusage	= &root_bt_cpuacct_cpuusage,
+#endif
+
 };
 
 /* create a new cpu accounting group */
@@ -182,6 +188,7 @@ static void cpuacct_cpuusage_write(struct cpuacct *ca, int cpu, u64 val)
 #endif
 }
 
+#ifdef CONFIG_BT_SCHED
 static u64 cpuacct_bt_cpuusage_read(struct cpuacct *ca, int cpu, enum cpuacct_stat_index index)
 {
     struct cpuacct_usage *bt_cpuusage = per_cpu_ptr(ca->bt_cpuusage, cpu);
@@ -240,10 +247,10 @@ static void cpuacct_bt_cpuusage_write(struct cpuacct *ca, int cpu, u64 val)
 static u64 bt_cpuusage_read(struct cgroup_subsys_state *css, struct cftype *cft)
 {
 	struct cpuacct *ca = css_ca(css);
-    u64 totalcpuusage = 0;
-    int i;
+	u64 totalcpuusage = 0;
+	int i;
 
-    for_each_present_cpu(i)
+	for_each_present_cpu(i)
 		totalcpuusage += cpuacct_bt_cpuusage_read(ca, i, CPUACCT_STAT_NSTATS);
 
 	return totalcpuusage;
@@ -251,16 +258,16 @@ static u64 bt_cpuusage_read(struct cgroup_subsys_state *css, struct cftype *cft)
 
 static int bt_cpuusage_write(struct cgroup_subsys_state *css, struct cftype *cftype, u64 reset)
 {
-    struct cpuacct *ca = css_ca(css);
-    int err = 0;
-    int i;
+	struct cpuacct *ca = css_ca(css);
+	int err = 0;
+	int i;
 
-    if (reset) {
-        err = -EINVAL;
-        goto out;
-    }
+	if (reset) {
+		err = -EINVAL;
+		goto out;
+	}
 
-    for_each_present_cpu(i)
+	for_each_present_cpu(i)
 		cpuacct_bt_cpuusage_write(ca, i, 0);
 
 out:
@@ -271,14 +278,14 @@ static int bt_cpuacct_percpu_seq_read(struct seq_file *m,
 				     enum cpuacct_stat_index index)
 {
 	struct cpuacct *ca = css_ca(seq_css(m));
-    u64 percpu;
-    int i;
+	u64 percpu;
+	int i;
 
-    for_each_present_cpu(i) {
+	for_each_present_cpu(i) {
 		percpu = cpuacct_bt_cpuusage_read(ca, i, CPUACCT_STAT_NSTATS);
-            seq_printf(m, "%llu ", (unsigned long long) percpu);
+		seq_printf(m, "%llu ", (unsigned long long) percpu);
 	}
-    seq_printf(m, "\n");
+	seq_printf(m, "\n");
 
 	return 0;
 }
@@ -287,6 +294,7 @@ static int bt_cpuacct_percpu_seq_show(struct seq_file *m, void *V)
 {
 	return bt_cpuacct_percpu_seq_read(m, CPUACCT_STAT_NSTATS);
 }
+#endif
 
 /* return total cpu usage (in nanoseconds) of a group */
 static u64 __cpuusage_read(struct cgroup_subsys_state *css,
@@ -403,6 +411,7 @@ static int cpuacct_all_seq_show(struct seq_file *m, void *V)
 	return 0;
 }
 
+#ifdef CONFIG_BT_SCHED
 static int bt_cpuacct_stats_show(struct seq_file *sf, void *v)
 {
 	struct cpuacct *ca = css_ca(seq_css(sf));
@@ -429,6 +438,7 @@ static int bt_cpuacct_stats_show(struct seq_file *sf, void *v)
 
     return 0;
 }
+#endif
 
 static int cpuacct_stats_show(struct seq_file *sf, void *v)
 {
@@ -486,12 +496,14 @@ static struct cftype files[] = {
 		.read_u64 = cpuusage_read,
 		.write_u64 = cpuusage_write,
 	},
+#ifdef CONFIG_BT_SCHED
 	{
 		.name = "bt_usage",
 		.flags = CFTYPE_BT_SHARES,
 		.read_u64 = bt_cpuusage_read,
 		.write_u64 = bt_cpuusage_write,
 	},
+#endif
 	{
 		.name = "usage_user",
 		.read_u64 = cpuusage_user_read,
@@ -504,10 +516,12 @@ static struct cftype files[] = {
 		.name = "usage_percpu",
 		.seq_show = cpuacct_percpu_seq_show,
 	},
+#ifdef CONFIG_BT_SCHED
 	{
 		.name = "bt_usage_percpu",
 		.seq_show = bt_cpuacct_percpu_seq_show,
 	},
+#endif
 	{
 		.name = "usage_percpu_user",
 		.seq_show = cpuacct_percpu_user_seq_show,
@@ -524,10 +538,12 @@ static struct cftype files[] = {
 		.name = "stat",
 		.seq_show = cpuacct_stats_show,
 	},
+#ifdef CONFIG_BT_SCHED
 	{
 		.name = "bt_stat",
 		.seq_show = bt_cpuacct_stats_show,
 	},
+#endif
 	{
 		.name = "uptime",
 		.seq_show = cpuacct_uptime_show,

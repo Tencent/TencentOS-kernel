@@ -21,8 +21,8 @@
 #include <linux/sched/batch.h>
 
 #include <trace/events/sched.h>
-#include "batch.h"
 #include "sched.h"
+#include "batch.h"
 #include "fair.h"
 #include "bt_debug.h"
 
@@ -37,6 +37,8 @@ void set_bt_load_weight(struct task_struct *p)
 
 const struct sched_class bt_sched_class;
 unsigned int sysctl_idle_balance_bt_cost = 300000UL;
+unsigned int sysctl_sched_bt_granularity_ns = 4000000;
+unsigned int sysctl_sched_bt_load_fair = 1;
 
 /*
  * sd_lb_stats_bt - Structure to store the statistics of a sched_domain
@@ -333,7 +335,6 @@ static enum hrtimer_restart sched_bt_period_timer(struct hrtimer *timer)
 {
 	struct bt_bandwidth *bt_b =
 		container_of(timer, struct bt_bandwidth, bt_period_timer);
-	ktime_t now;
 	int overrun;
 	int idle = 0;
 
@@ -420,7 +421,7 @@ static inline void sched_bt_rq_enqueue(struct bt_rq *bt_rq)
 {
 	struct rq *rq = rq_of_bt_rq(bt_rq);
 
-	if (rq->curr == rq->idle && rq->bt_nr_running)
+	if (rq->curr == rq->idle)
 		resched_curr(rq);
 }
 
@@ -583,15 +584,6 @@ balanced:
 	}
 }
 
-static void disable_bt_runtime(struct rq *rq)
-{
-	unsigned long flags;
-
-	raw_spin_lock_irqsave(&rq->lock, flags);
-	__disable_bt_runtime(rq);
-	raw_spin_unlock_irqrestore(&rq->lock, flags);
-}
-
 static void __enable_bt_runtime(struct rq *rq)
 {
 	bt_rq_iter_t iter;
@@ -614,15 +606,6 @@ static void __enable_bt_runtime(struct rq *rq)
 		raw_spin_unlock(&bt_rq->bt_runtime_lock);
 		raw_spin_unlock(&bt_b->bt_runtime_lock);
 	}
-}
-
-static void enable_bt_runtime(struct rq *rq)
-{
-	unsigned long flags;
-
-	raw_spin_lock_irqsave(&rq->lock, flags);
-	__enable_bt_runtime(rq);
-	raw_spin_unlock_irqrestore(&rq->lock, flags);
 }
 
 #if 0
@@ -700,11 +683,15 @@ static void throttle_bt_rq(struct bt_rq *bt_rq)
 	if (!bt) {
 		rq->nr_running -= task_delta;
 		rq->bt_nr_running -= task_delta;
+
+		if (!rq->bt_nr_running && task_delta && !rq->bt_blocked_clock){
+			rq->bt_blocked_clock = rq_clock(rq);
+		}
 	}
 
 	bt_rq->bt_throttled = 1;
-	bt_rq->throttled_clock = rq->clock;
-	bt_rq->throttled_clock_task = rq->clock_task;
+	bt_rq->throttled_clock = rq_clock(rq);
+	bt_rq->throttled_clock_task = rq_clock_task(rq);
 }
 
 static void
@@ -719,8 +706,7 @@ void unthrottle_bt_rq(struct bt_rq *bt_rq)
 
 
 	bt_rq->bt_throttled = 0;
-	bt_rq->throttled_clock_task_time += rq->clock_task -
-					     bt_rq->throttled_clock_task;
+	bt_rq->throttled_clock_task_time += rq_clock_task(rq) - bt_rq->throttled_clock_task;
 	if (!bt_rq->load.weight)
 		return;
 
@@ -742,8 +728,11 @@ void unthrottle_bt_rq(struct bt_rq *bt_rq)
 	if (!bt) {
 		rq->nr_running += task_delta;
 		rq->bt_nr_running += task_delta;
-	}
 
+		if (!rq->bt_nr_running && task_delta && !rq->bt_blocked_clock){
+			rq->bt_blocked_clock = rq_clock(rq);
+		}
+	}
 }
 
 /* rq->task_clock normalized against any time this bt_rq has spent throttled */
@@ -754,7 +743,7 @@ static inline u64 bt_rq_clock_task(struct bt_rq *bt_rq)
 	if (unlikely(bt_rq_throttled(bt_rq)))
 		return bt_rq->throttled_clock_task;
 
-	return rq->clock_task - bt_rq->throttled_clock_task_time;
+	return rq_clock_task(rq) - bt_rq->throttled_clock_task_time;
 }
 
 static int do_sched_bt_period_timer(struct bt_bandwidth *bt_b, int overrun)
@@ -1157,7 +1146,7 @@ __update_curr_bt(struct bt_rq *bt_rq, struct sched_entity *curr,
 static void update_curr_bt(struct bt_rq *bt_rq)
 {
 	struct sched_entity *curr = bt_rq->curr;
-	u64 now = rq_of_bt_rq(bt_rq)->clock_task;
+	u64 now = rq_clock_task(rq_of_bt_rq(bt_rq));
 	unsigned long delta_exec;
 
 	if (unlikely(!curr))
@@ -1196,7 +1185,7 @@ static inline void
 update_stats_wait_start_bt(struct bt_rq *bt_rq, struct sched_entity *bt_se)
 {
 	schedstat_set(bt_se->bt_statistics->wait_start,
-			rq_of_bt_rq(bt_rq)->clock);
+			rq_clock(rq_of_bt_rq(bt_rq)));
 }
 
 /*
@@ -1216,18 +1205,15 @@ update_stats_enqueue_bt(struct bt_rq *bt_rq, struct sched_entity *se)
 static void
 update_stats_wait_end_bt(struct bt_rq *bt_rq, struct sched_entity *se)
 {
+	u64 delta = rq_clock(rq_of_bt_rq(bt_rq)) - schedstat_val(se->bt_statistics->wait_start);
+
 	schedstat_set(se->bt_statistics->wait_max,
-			max(se->bt_statistics->wait_max,
-			rq_of_bt_rq(bt_rq)->clock - se->bt_statistics->wait_start));
-	schedstat_set(se->bt_statistics->wait_count,
-			se->bt_statistics->wait_count + 1);
-	schedstat_set(se->bt_statistics->wait_sum,
-			se->bt_statistics->wait_sum +
-			rq_of_bt_rq(bt_rq)->clock - se->bt_statistics->wait_start);
+			max(se->bt_statistics->wait_max, delta));
+	schedstat_inc(se->bt_statistics->wait_count);
+	schedstat_add(se->bt_statistics->wait_sum, delta);
 #ifdef CONFIG_SCHEDSTATS
 	if (bt_entity_is_task(se)) {
-		trace_sched_stat_wait(bt_task_of(se),
-			rq_of_bt_rq(bt_rq)->clock - se->bt_statistics->wait_start);
+		trace_sched_stat_wait(bt_task_of(se), delta);
 	}
 #endif
 	schedstat_set(se->bt_statistics->wait_start, 0);
@@ -1778,7 +1764,7 @@ static void enqueue_bt_sleeper(struct bt_rq *bt_rq, struct sched_entity *se)
 		tsk = bt_task_of(se);
 
 	if (se->bt_statistics->sleep_start) {
-		u64 delta = rq_of_bt_rq(bt_rq)->clock - se->bt_statistics->sleep_start;
+		u64 delta = rq_clock(rq_of_bt_rq(bt_rq)) - schedstat_val(se->bt_statistics->sleep_start);
 
 		if ((s64)delta < 0)
 			delta = 0;
@@ -1801,7 +1787,7 @@ static void enqueue_bt_sleeper(struct bt_rq *bt_rq, struct sched_entity *se)
 		}
 	}
 	if (se->bt_statistics->block_start) {
-		u64 delta = rq_of_bt_rq(bt_rq)->clock - se->bt_statistics->block_start;
+		u64 delta = rq_clock(rq_of_bt_rq(bt_rq)) - schedstat_val(se->bt_statistics->block_start);
 
 		if ((s64)delta < 0)
 			delta = 0;
@@ -1893,11 +1879,12 @@ enqueue_bt_entity(struct bt_rq *bt_rq, struct sched_entity *se, int flags)
 {
 	bool renorm = !(flags & ENQUEUE_WAKEUP) || (flags & ENQUEUE_MIGRATED);
 	bool curr = bt_rq->curr == se;
+
 	/*
 	 * Update the normalized vruntime before updating min_vruntime
 	 * through callig update_curr().
 	 */
-	if (renorm && curr)
+	if (renorm)
 		se->vruntime += bt_rq->min_vruntime;
 
 	/*
@@ -1905,10 +1892,6 @@ enqueue_bt_entity(struct bt_rq *bt_rq, struct sched_entity *se, int flags)
 	 */
 	update_curr_bt(bt_rq);
 	enqueue_bt_entity_load_avg(bt_rq, se);
-
-	if (renorm && !curr)
-		se->vruntime += bt_rq->min_vruntime;
-
 	account_bt_entity_enqueue(bt_rq, se);
 	update_bt_shares(bt_rq);
 
@@ -1992,9 +1975,11 @@ dequeue_bt_entity(struct bt_rq *bt_rq, struct sched_entity *se, int flags)
 			struct task_struct *tsk = bt_task_of(se);
 
 			if (tsk->state & TASK_INTERRUPTIBLE)
-				se->bt_statistics->sleep_start = rq_of_bt_rq(bt_rq)->clock;
+				schedstat_set(se->bt_statistics->sleep_start,
+						rq_clock(rq_of_bt_rq(bt_rq)));
 			if (tsk->state & TASK_UNINTERRUPTIBLE)
-				se->bt_statistics->block_start = rq_of_bt_rq(bt_rq)->clock;
+				schedstat_set(se->bt_statistics->block_start,
+						rq_clock(rq_of_bt_rq(bt_rq)));
 		}
 #endif
 	}
@@ -2216,6 +2201,10 @@ enqueue_task_bt(struct rq *rq, struct task_struct *p, int flags)
 	}
 
 	if (!se) {
+		if (!rq->bt_nr_running){
+			rq->bt_blocked_clock = rq_clock(rq);
+		}
+
 		rq->bt_nr_running++;
 		add_nr_running(rq, 1);
 	}
@@ -2273,6 +2262,10 @@ static void dequeue_task_bt(struct rq *rq, struct task_struct *p, int flags)
 	if (!se) {
 		sub_nr_running(rq, 1);
 		rq->bt_nr_running--;
+
+		if (!rq->bt_nr_running){
+			rq->bt_blocked_clock = 0;
+		}
 	}
 }
 
@@ -2328,153 +2321,19 @@ static unsigned long cpu_avg_bt_load_per_task(int cpu)
 	return 0;
 }
 
-#ifdef CONFIG_BT_GROUP_SCHED
-static long effective_bt_load(struct task_group *tg, int cpu, long wl, long wg)
+static unsigned int bt_load_factor(struct rq *rq)
 {
-	struct sched_entity *se = tg->bt[cpu];
+	u64 diff = 0;
 
-	if (!tg->parent)	/* the trivial, non-cgroup case */
-		return wl;
+	if (rq->bt_blocked_clock) {
+		u32 gran_ns = sysctl_sched_bt_granularity_ns;
 
-	for_each_sched_bt_entity(se) {
-		long w, W;
-
-		tg = se->bt_my_q->tg;
-
-		/*
-		 * W = @wg + \Sum rw_j
-		 */
-		W = wg + calc_tg_weight_bt(tg, se->bt_my_q);
-
-		/*
-		 * w = rw_i + @wl
-		 */
-		w = se->bt_my_q->load.weight + wl;
-
-		/*
-		 * wl = S * s'_i; see (2)
-		 */
-		if (W > 0 && w < W)
-			wl = (w * tg->bt_shares) / W;
-		else
-			wl = tg->bt_shares;
-
-		/*
-		 * Per the above, wl is the new se->load.weight value; since
-		 * those are clipped to [MIN_SHARES, ...) do so now. See
-		 * calc_cfs_shares().
-		 */
-		if (wl < MIN_BT_SHARES)
-			wl = MIN_BT_SHARES;
-
-		/*
-		 * wl = dw_i = S * (s'_i - s_i); see (3)
-		 */
-		wl -= se->load.weight;
-
-		/*
-		 * Recursively apply this logic to all parent groups to compute
-		 * the final effective load change on the root group. Since
-		 * only the @tg group gets extra weight, all parent groups can
-		 * only redistribute existing shares. @wl is the shift in shares
-		 * resulting from this level per the above.
-		 */
-		wg = 0;
+		// should be using rq_clock
+		diff = rq->clock - rq->bt_blocked_clock;
+		diff = (diff + (gran_ns >> 1)) / gran_ns;
 	}
 
-	return wl;
-}
-#else
-static inline unsigned long effective_bt_load(struct task_group *tg, int cpu,
-		unsigned long wl, unsigned long wg)
-{
-	return wl;
-}
-#endif
-
-static int wake_affine_bt(struct sched_domain *sd, struct task_struct *p, int sync)
-{
-	s64 this_load, load;
-	int idx, this_cpu, prev_cpu;
-	unsigned long tl_per_task;
-	struct task_group *tg;
-	unsigned long weight;
-	int balanced;
-
-	idx	  = sd->wake_idx;
-	this_cpu  = smp_processor_id();
-	prev_cpu  = task_cpu(p);
-	load	  = source_bt_load(prev_cpu, idx) + source_bt_load(prev_cpu, idx);
-	this_load = target_bt_load(this_cpu, idx) + target_bt_load(this_cpu, idx);
-
-	/*
-	 * If sync wakeup then subtract the (maximum possible)
-	 * effect of the currently running task from the load
-	 * of the current CPU:
-	 */
-	if (sync) {
-		tg = task_group(current);
-		weight = current->bt.load.weight;
-
-		this_load += effective_bt_load(tg, this_cpu, -weight, -weight);
-		load += effective_bt_load(tg, prev_cpu, 0, -weight);
-	}
-
-	tg = task_group(p);
-	weight = p->bt.load.weight;
-
-	/*
-	 * In low-load situations, where prev_cpu is idle and this_cpu is idle
-	 * due to the sync cause above having dropped this_load to 0, we'll
-	 * always have an imbalance, but there's really nothing you can do
-	 * about that, so that's good too.
-	 *
-	 * Otherwise check if either cpus are near enough in load to allow this
-	 * task to be woken on this_cpu.
-	 */
-	if (this_load > 0) {
-		s64 this_eff_load, prev_eff_load;
-
-		this_eff_load = 100;
-		this_eff_load *= capacity_of_bt(prev_cpu);
-		this_eff_load *= this_load +
-			effective_bt_load(tg, this_cpu, weight, weight);
-
-		prev_eff_load = 100 + (sd->imbalance_pct - 100) / 2;
-		prev_eff_load *= capacity_of_bt(this_cpu);
-		prev_eff_load *= load + effective_bt_load(tg, prev_cpu, 0, weight);
-
-		balanced = this_eff_load <= prev_eff_load;
-	} else
-		balanced = true;
-
-	/*
-	 * If the currently running task will sleep within
-	 * a reasonable amount of time then attract this newly
-	 * woken task:
-	 */
-	if (sync && balanced)
-		return 1;
-
-	schedstat_inc(p->se.bt_statistics->nr_wakeups_affine_attempts);
-	tl_per_task = cpu_avg_bt_load_per_task(this_cpu) +
-			cpu_avg_bt_load_per_task(this_cpu);
-
-	if (balanced ||
-	    (this_load <= load &&
-	     (this_load + target_bt_load(prev_cpu, idx) +
-	      target_bt_load(prev_cpu, idx)) <= tl_per_task)) {
-		/*
-		 * This domain has SD_WAKE_AFFINE and
-		 * p is cache cold in this domain, and
-		 * there is no bad imbalance.
-		 */
-		schedstat_inc(sd->ttwu_move_affine);
-		schedstat_inc(p->se.bt_statistics->nr_wakeups_affine);
-
-		return 1;
-	}
-	return 0;
+	return min(diff >> 1, (u64)12);
 }
 
 /*
@@ -2488,11 +2347,15 @@ find_idlest_group_bt(struct sched_domain *sd, struct task_struct *p,
 	struct sched_group *idlest = NULL, *group = sd->groups;
 	unsigned long min_load = ULONG_MAX, this_load = 0;
 	int imbalance = 100 + (sd->imbalance_pct-100)/2;
+	unsigned int sg_vain_power, fair_load;
+
+	fair_load = sysctl_sched_bt_load_fair ? 1 : 0;
 
 	do {
 		unsigned long load, avg_load;
 		int local_group;
 		int i;
+		struct rq *rq = NULL;
 
 		/* Skip over this group if it has no CPUs allowed */
 		if (!cpumask_intersects(sched_group_cpus(group),
@@ -2504,19 +2367,33 @@ find_idlest_group_bt(struct sched_domain *sd, struct task_struct *p,
 
 		/* Tally up the load of all CPUs in the group */
 		avg_load = 0;
+		sg_vain_power = 0;
 
 		for_each_cpu(i, sched_group_cpus(group)) {
+			rq = cpu_rq(i);
+
 			/* Bias balancing toward cpus of our domain */
-			if (local_group)
-				load = source_bt_load(i, load_idx)+source_bt_load(i, load_idx);
-			else
-				load = target_bt_load(i, load_idx)+target_bt_load(i, load_idx);
+			if (local_group){
+				load = source_bt_load(i, load_idx) << bt_load_factor(rq);
+				if(fair_load){
+					load += source_load(i, load_idx);
+				}
+			}else{
+				load = target_bt_load(i, load_idx) << bt_load_factor(rq);
+				if(fair_load){
+					load += target_load(i, load_idx);
+				}
+			}
 
 			avg_load += load;
+			if (rq->nr_running > rq->bt_nr_running || rq->bt.bt_throttled){
+				sg_vain_power += rq->cpu_capacity;
+			}
 		}
 
 		/* Adjust by relative CPU power of the group */
-		avg_load = (avg_load * SCHED_CAPACITY_SCALE) / group->sgc->capacity;
+		avg_load = (avg_load * SCHED_CAPACITY_SCALE) /
+				max((s64)(group->sgc->capacity - sg_vain_power), (s64)1);
 
 		if (local_group) {
 			this_load = avg_load;
@@ -2539,13 +2416,19 @@ find_idlest_cpu_bt(struct sched_group *group, struct task_struct *p, int this_cp
 {
 	unsigned long load, min_load = ULONG_MAX;
 	int idlest = -1;
-	int i;
+	int i, fair_load;
 	struct rq *rq;
+
+	fair_load = sysctl_sched_bt_load_fair ? 1 : 0;
 
 	/* Traverse only the allowed CPUs */
 	for_each_cpu_and(i, sched_group_cpus(group), tsk_cpus_allowed(p)) {
-		load = bt_weighted_cpuload(i) + bt_weighted_cpuload(i);
 		rq = cpu_rq(i);
+
+		load = bt_weighted_cpuload(i) << bt_load_factor(rq);
+		if(fair_load){
+			load += weighted_cpuload(rq);
+		}
 
 		if ((load < min_load || (load == min_load && i == this_cpu))&&
 		    !cpu_rq(i)->bt.bt_throttled && rq->nr_running == rq->bt_nr_running) {
@@ -2621,7 +2504,6 @@ select_task_rq_bt(struct task_struct *p, int prev_cpu, int sd_flag, int wake_fla
 	int cpu = smp_processor_id();
 	int new_cpu = prev_cpu;
 	int want_affine = 0;
-	int sync = wake_flags & WF_SYNC;
 
 	if (p->nr_cpus_allowed == 1)
 		return prev_cpu;
@@ -2652,10 +2534,11 @@ select_task_rq_bt(struct task_struct *p, int prev_cpu, int sd_flag, int wake_fla
 	}
 
 	if (affine_sd) {
-		if (cpu != prev_cpu && wake_affine_bt(affine_sd, p, sync))
-			prev_cpu = cpu;
-
 		new_cpu = select_idle_sibling_bt(p, prev_cpu);
+		if (new_cpu == -1 && cpu != prev_cpu){
+			new_cpu = select_idle_sibling_bt(p, cpu);
+		}
+
 		goto unlock;
 	}
 
@@ -3311,6 +3194,11 @@ void fix_small_imbalance_bt(struct lb_env *env, struct sd_lb_stats_bt *sds)
 	unsigned long tmp, pwr_now = 0, pwr_move = 0;
 	unsigned int imbn = 2;
 	unsigned long scaled_busy_load_per_task;
+	unsigned long mid_load;
+	unsigned int busiest_power = max(sds->busiest->sgc->capacity_bt,
+					(unsigned long)SCHED_CAPACITY_SCALE);
+	unsigned int this_power = max(sds->this->sgc->capacity_bt,
+					(unsigned long)SCHED_CAPACITY_SCALE);
 
 	if (sds->this_nr_running) {
 		sds->this_load_per_task /= sds->this_nr_running;
@@ -3325,9 +3213,10 @@ void fix_small_imbalance_bt(struct lb_env *env, struct sd_lb_stats_bt *sds)
 
 	scaled_busy_load_per_task = sds->busiest_load_per_task
 					 * SCHED_CAPACITY_SCALE;
-	scaled_busy_load_per_task /= sds->busiest->sgc->capacity;
+	scaled_busy_load_per_task /= busiest_power;
 
-	if (sds->max_load - sds->this_load + scaled_busy_load_per_task >=
+	mid_load = (sds->max_load + sds->max_bt_load) >> 1;
+	if (mid_load - sds->this_load + scaled_busy_load_per_task >=
 			(scaled_busy_load_per_task * imbn)) {
 		env->imbalance = sds->busiest_load_per_task;
 		return;
@@ -3339,29 +3228,26 @@ void fix_small_imbalance_bt(struct lb_env *env, struct sd_lb_stats_bt *sds)
 	 * moving them.
 	 */
 
-	pwr_now += sds->busiest->sgc->capacity *
-			min(sds->busiest_load_per_task, sds->max_load);
-	pwr_now += sds->this->sgc->capacity *
-			min(sds->this_load_per_task, sds->this_load);
+	pwr_now += busiest_power *
+			min(sds->busiest_load_per_task, mid_load);
+	pwr_now += this_power *
+			min(sds->this_load_per_task, sds->this_bt_load);
 	pwr_now /= SCHED_CAPACITY_SCALE;
 
 	/* Amount of load we'd subtract */
-	tmp = (sds->busiest_load_per_task * SCHED_CAPACITY_SCALE) /
-		sds->busiest->sgc->capacity;
-	if (sds->max_load > tmp)
-		pwr_move += sds->busiest->sgc->capacity *
-			min(sds->busiest_load_per_task, sds->max_load - tmp);
+	tmp = (sds->busiest_load_per_task * SCHED_CAPACITY_SCALE) / busiest_power;
+	if (mid_load > tmp)
+		pwr_move += busiest_power *
+			min(sds->busiest_load_per_task, mid_load - tmp);
 
 	/* Amount of load we'd add */
-	if (sds->max_load * sds->busiest->sgc->capacity <
+	if (mid_load * busiest_power <
 		sds->busiest_load_per_task * SCHED_CAPACITY_SCALE)
-		tmp = (sds->max_load * sds->busiest->sgc->capacity) /
-			sds->this->sgc->capacity;
+		tmp = (mid_load * busiest_power) / this_power;
 	else
-		tmp = (sds->busiest_load_per_task * SCHED_CAPACITY_SCALE) /
-			sds->this->sgc->capacity;
-	pwr_move += sds->this->sgc->capacity *
-			min(sds->this_load_per_task, sds->this_load + tmp);
+		tmp = (sds->busiest_load_per_task * SCHED_CAPACITY_SCALE) / this_power;
+
+	pwr_move += this_power * min(sds->this_load_per_task, sds->this_bt_load + tmp);
 	pwr_move /= SCHED_CAPACITY_SCALE;
 
 	/* Move if we gain throughput */
@@ -3378,11 +3264,12 @@ void fix_small_imbalance_bt(struct lb_env *env, struct sd_lb_stats_bt *sds)
 static inline void calculate_imbalance_bt(struct lb_env *env, struct sd_lb_stats_bt *sds)
 {
 	unsigned long max_pull, load_above_capacity = ~0UL;
+	unsigned int busiest_power, this_power;
 
 	sds->busiest_load_per_task /= sds->busiest_nr_running;
 	if (sds->group_imb) {
 		sds->busiest_load_per_task =
-			min(sds->busiest_load_per_task, sds->avg_load);
+			min(sds->busiest_load_per_task, sds->avg_bt_load);
 	}
 
 	/*
@@ -3390,11 +3277,13 @@ static inline void calculate_imbalance_bt(struct lb_env *env, struct sd_lb_stats
 	 * max load less than avg load(as we skip the groups at or below
 	 * its cpu_capacity, while calculating max_load..)
 	 */
-	if (sds->max_load < sds->avg_load) {
+	if (sds->max_load < sds->avg_bt_load) {
 		env->imbalance = 0;
 		return fix_small_imbalance_bt(env, sds);
 	}
 
+	busiest_power = max(sds->busiest->sgc->capacity_bt, (unsigned long)SCHED_CAPACITY_SCALE);
+	this_power = max(sds->this->sgc->capacity_bt, (unsigned long)SCHED_CAPACITY_SCALE);
 	if (!sds->group_imb) {
 		/*
 		 * Don't want to pull so many tasks that a group would go idle.
@@ -3404,7 +3293,7 @@ static inline void calculate_imbalance_bt(struct lb_env *env, struct sd_lb_stats
 
 		load_above_capacity *= (SCHED_LOAD_SCALE * SCHED_CAPACITY_SCALE);
 
-		load_above_capacity /= sds->busiest->sgc->capacity;
+		load_above_capacity /= busiest_power;
 	}
 
 	/*
@@ -3417,11 +3306,12 @@ static inline void calculate_imbalance_bt(struct lb_env *env, struct sd_lb_stats
 	 * Be careful of negative numbers as they'll appear as very large values
 	 * with unsigned longs.
 	 */
-	max_pull = min(sds->max_load - sds->avg_load, load_above_capacity);
+	max_pull = min(((sds->max_bt_load + sds->max_load) >> 1) - sds->avg_bt_load,
+			load_above_capacity);
 
 	/* How much load to actually move to equalise the imbalance */
-	env->imbalance = min(max_pull * sds->busiest->sgc->capacity,
-		(sds->avg_load - sds->this_load) * sds->this->sgc->capacity)
+	env->imbalance = min(max_pull * busiest_power,
+		(sds->avg_bt_load - sds->this_bt_load) * this_power)
 			/ SCHED_CAPACITY_SCALE;
 
 	/*
@@ -3433,6 +3323,31 @@ static inline void calculate_imbalance_bt(struct lb_env *env, struct sd_lb_stats
 	if (env->imbalance < sds->busiest_load_per_task)
 		return fix_small_imbalance_bt(env, sds);
 
+}
+
+static int bt_group_balance_cpu(int cpu, struct sched_group *sg)
+{
+	int balance_cpu = sg->bt_balance_cpu;
+	struct rq *rq = NULL;
+
+	if (balance_cpu != -1) {
+		rq = cpu_rq(balance_cpu);
+		if (rq->bt.bt_throttled || !rq->bt.bt_runtime)
+			rq->do_lb = 0;
+	}
+
+	if (balance_cpu == -1 || !rq->do_lb) {
+		if (cpumask_test_cpu(cpu, group_balance_mask(sg))) {
+			balance_cpu = cpu;
+
+			if (!test_bit(NOHZ_TICK_STOPPED, &cpu_rq(balance_cpu)->nohz_flags)) {
+				sg->bt_balance_cpu = balance_cpu;
+				cpu_rq(balance_cpu)->do_lb = 1;
+			}
+		}
+	}
+
+	return balance_cpu;
 }
 
 static inline int
@@ -3467,25 +3382,46 @@ static inline void update_sg_lb_stats_bt(struct lb_env *env,
 			int local_group, int *balance, struct sg_lb_stats_bt *sgs,
 			bool *overload)
 {
-	unsigned long nr_running, max_nr_running, min_nr_running;
+	unsigned long nr_running, bt_nr_running;
+	unsigned long max_nr_running, min_nr_running;
 	unsigned long load, max_cpu_load, min_cpu_load;
 	unsigned int balance_cpu = -1, first_idle_cpu = 0;
 	unsigned long avg_load_per_task = 0;
-	int i;
+	unsigned long vain_power = 0, use_power = 0;
+	int cpu_num = 0, cpu_i = 0;
+	bool sg_vain = false;
+	int i, fair_load;
 
-	if (local_group)
-		balance_cpu = group_balance_cpu(group);
+	fair_load = sysctl_sched_bt_load_fair ? 1 : 0;
+
+	if (local_group){
+		balance_cpu = bt_group_balance_cpu(env->dst_cpu, group);
+		balance_cpu = balance_cpu != -1 ? balance_cpu : group_balance_cpu(group);
+	}
 
 	/* Tally up the load of all CPUs in the group */
 	max_cpu_load = 0;
-	min_cpu_load = ~0UL;
+	min_cpu_load = (~0UL) >> 1;
 	max_nr_running = 0;
-	min_nr_running = ~0UL;
+	min_nr_running = (~0UL) >> 1;
 
 	for_each_cpu_and(i, sched_group_cpus(group), env->cpus) {
 		struct rq *rq = cpu_rq(i);
+		u32 load_factor;
+		bool block;
 
-		nr_running = rq->nr_running;
+		bt_nr_running = rq->bt.h_nr_running;
+		nr_running = rq->nr_running + bt_nr_running - rq->bt_nr_running;
+		load_factor = bt_load_factor(rq);
+
+		cpu_num++;
+		block = false;
+		if (rq->nr_running > rq->bt_nr_running || rq->bt.bt_throttled ||
+		    !rq->bt.bt_runtime) {
+			cpu_i++;
+			block = true;
+			vain_power += rq->cpu_capacity;
+		}
 
 		/* Bias balancing toward cpus of our domain */
 		if (local_group) {
@@ -3495,30 +3431,41 @@ static inline void update_sg_lb_stats_bt(struct lb_env *env,
 				balance_cpu = i;
 			}
 
-			load = target_bt_load(i, load_idx)+target_bt_load(i, load_idx);
+			load = fair_load ? target_load(i, load_idx) : 0;
+			sgs->group_bt_load += load + target_bt_load(i, load_idx);
+			load += target_bt_load(i, load_idx) << load_factor;
+			sgs->group_load += load;
 		} else {
-			load = source_bt_load(i, load_idx)+source_bt_load(i, load_idx);
+			load = fair_load ? source_load(i, load_idx) : 0;
+			sgs->group_bt_load += load + source_bt_load(i, load_idx);
+			load += source_bt_load(i, load_idx) << load_factor;
+			sgs->group_load += load;
 			if (load > max_cpu_load)
 				max_cpu_load = load;
-			if (min_cpu_load > load)
+			if (min_cpu_load > load && !block)
 				min_cpu_load = load;
 
 			if (nr_running > max_nr_running)
 				max_nr_running = nr_running;
-			if (min_nr_running > nr_running)
+			if (min_nr_running > nr_running && !block)
 				min_nr_running = nr_running;
 		}
 
-		sgs->group_load += load;
-		sgs->sum_nr_running += nr_running;
+		if (load || rq->nr_running > rq->bt_nr_running)
+			use_power += rq->cpu_capacity;
 
-		if (rq->nr_running > 1 && rq->bt_nr_running)
+		sgs->sum_nr_running += bt_nr_running;
+
+		if (rq->bt.h_nr_running && (rq->nr_running > 1 || block))
 			*overload = true;
 
-		sgs->sum_weighted_load += bt_weighted_cpuload(i)+bt_weighted_cpuload(i);
+		sgs->sum_weighted_load += bt_weighted_cpuload(i);
 		if (idle_cpu(i))
 			sgs->idle_cpus++;
 	}
+
+	if(cpu_num && cpu_num == cpu_i)
+		sg_vain = true;
 
 	/*
 	 * First idle cpu or the first cpu(busiest) in this sched group
@@ -3527,6 +3474,11 @@ static inline void update_sg_lb_stats_bt(struct lb_env *env,
 	 * to do the newly idle load balance.
 	 */
 	if (local_group) {
+		if (unlikely(sg_vain)) {
+			*balance = 0;
+			return;
+		}
+
 		if (env->idle != CPU_NEWLY_IDLE) {
 			if (balance_cpu != env->dst_cpu) {
 				*balance = 0;
@@ -3538,7 +3490,15 @@ static inline void update_sg_lb_stats_bt(struct lb_env *env,
 	}
 
 	/* Adjust by relative CPU power of the group */
-	sgs->avg_load = (sgs->group_load*SCHED_CAPACITY_SCALE) / group->sgc->capacity;
+	sgs->avg_load = (sgs->group_load * SCHED_CAPACITY_SCALE) /
+				max(use_power, (unsigned long)SCHED_CAPACITY_SCALE);
+	sgs->avg_bt_load = (sgs->group_bt_load * SCHED_CAPACITY_SCALE) /
+				max(use_power, (unsigned long)SCHED_CAPACITY_SCALE);
+
+	group->sgc->capacity_bt = max((s64)(group->sgc->capacity - vain_power), (s64)1);
+
+	if (unlikely(sg_vain))
+		return;
 
 	/*
 	 * Consider the group unbalanced when the imbalance is larger
@@ -3552,15 +3512,15 @@ static inline void update_sg_lb_stats_bt(struct lb_env *env,
 	if (sgs->sum_nr_running)
 		avg_load_per_task = sgs->sum_weighted_load / sgs->sum_nr_running;
 
-	if ((max_cpu_load - min_cpu_load) >= avg_load_per_task &&
-	    (max_nr_running - min_nr_running) > 1)
+	if (max_cpu_load >= (min_cpu_load + avg_load_per_task) &&
+	    max_nr_running > (min_nr_running + 1))
 		sgs->group_imb = 1;
 
-	sgs->group_capacity = DIV_ROUND_CLOSEST(group->sgc->capacity,
+	sgs->group_capacity = DIV_ROUND_CLOSEST(group->sgc->capacity_bt,
 						SCHED_CAPACITY_SCALE);
 	if (!sgs->group_capacity)
 		sgs->group_capacity = fix_small_capacity_bt(env->sd, group);
-	sgs->group_weight = group->group_weight;
+	sgs->group_weight = group->group_weight - cpu_i;
 
 	if (sgs->group_capacity > sgs->sum_nr_running)
 		sgs->group_has_capacity = 1;
@@ -3632,7 +3592,8 @@ static inline void update_sd_lb_stats_bt(struct lb_env *env,
 			return;
 
 		sds->total_load += sgs.group_load;
-		sds->total_pwr += sg->sgc->capacity;
+		sds->total_bt_load += sgs.group_bt_load;
+		sds->total_pwr += sg->sgc->capacity_bt;
 
 		/*
 		 * In case the child domain prefers tasks go to siblings
@@ -3649,6 +3610,7 @@ static inline void update_sd_lb_stats_bt(struct lb_env *env,
 
 		if (local_group) {
 			sds->this_load = sgs.avg_load;
+			sds->this_bt_load = sgs.avg_bt_load;
 			sds->this = sg;
 			sds->this_nr_running = sgs.sum_nr_running;
 			sds->this_load_per_task = sgs.sum_weighted_load;
@@ -3656,6 +3618,7 @@ static inline void update_sd_lb_stats_bt(struct lb_env *env,
 			sds->this_idle_cpus = sgs.idle_cpus;
 		} else if (update_sd_pick_busiest_bt(env, sds, sg, &sgs)) {
 			sds->max_load = sgs.avg_load;
+			sds->max_bt_load = sgs.avg_bt_load;
 			sds->busiest = sg;
 			sds->busiest_nr_running = sgs.sum_nr_running;
 			sds->busiest_idle_cpus = sgs.idle_cpus;
@@ -3692,7 +3655,7 @@ static int check_asym_packing_bt(struct lb_env *env, struct sd_lb_stats_bt *sds)
 	if (env->dst_cpu > busiest_cpu)
 		return 0;
 
-	power = max(sds->busiest->sgc->capacity_bt, (u32)SCHED_CAPACITY_SCALE);
+	power = max(sds->busiest->sgc->capacity_bt, (unsigned long)SCHED_CAPACITY_SCALE);
 	env->imbalance = DIV_ROUND_CLOSEST(
 		(sds->max_load + sds->max_bt_load) * power >> 1, SCHED_CAPACITY_SCALE);
 
@@ -3748,7 +3711,8 @@ find_busiest_group_bt(struct lb_env *env, int *balance)
 	if (!sds.busiest || sds.busiest_nr_running == 0)
 		goto out_balanced;
 
-	sds.avg_load = (SCHED_CAPACITY_SCALE * sds.total_load) / sds.total_pwr;
+	sds.avg_load = (SCHED_CAPACITY_SCALE * sds.total_load) / (sds.total_pwr + 1);
+	sds.avg_bt_load = (SCHED_CAPACITY_SCALE * sds.total_bt_load)/(sds.total_pwr+1);
 
 	/*
 	 * If the busiest group is imbalanced the below checks don't
@@ -3767,7 +3731,7 @@ find_busiest_group_bt(struct lb_env *env, int *balance)
 	 * If the local group is more busy than the selected busiest group
 	 * don't try and pull any tasks.
 	 */
-	if (sds.this_load >= sds.max_load)
+	if (sds.this_load >= sds.max_load || sds.this_bt_load >= sds.avg_bt_load)
 		goto out_balanced;
 
 	/*
@@ -3815,13 +3779,16 @@ static struct rq *find_busiest_queue_bt(struct lb_env *env,
 {
 	struct rq *busiest = NULL, *rq;
 	unsigned long max_load = 0;
-	int i;
+	int i, fair_load, max_factor = 0;
+
+	fair_load = sysctl_sched_bt_load_fair ? 1 : 0;
 
 	for_each_cpu(i, sched_group_cpus(group)) {
 		unsigned long power = capacity_of_bt(i);
 		unsigned long capacity = DIV_ROUND_CLOSEST(power,
 							   SCHED_CAPACITY_SCALE);
 		unsigned long wl;
+		u32 load_factor;
 
 		if (!capacity)
 			capacity = fix_small_capacity_bt(env->sd, group);
@@ -3830,13 +3797,16 @@ static struct rq *find_busiest_queue_bt(struct lb_env *env,
 			continue;
 
 		rq = cpu_rq(i);
-		wl = bt_weighted_cpuload(i) + bt_weighted_cpuload(i);
+		load_factor = bt_load_factor(rq);
+		wl = bt_weighted_cpuload(i) << load_factor;
+		if(fair_load)
+			wl += weighted_cpuload(rq);
 
 		/*
 		 * When comparing with imbalance, use bt_weighted_cpuload()
 		 * which is not scaled with the cpu power.
 		 */
-		if (capacity && (rq->nr_running == 1 || !rq->bt_nr_running) &&
+		if (capacity && (rq->nr_running == 1 || !rq->bt.h_nr_running) &&
 		    wl > env->imbalance)
 			continue;
 
@@ -3851,7 +3821,12 @@ static struct rq *find_busiest_queue_bt(struct lb_env *env,
 		if (wl > max_load) {
 			max_load = wl;
 			busiest = rq;
+			max_factor = load_factor;
 		}
+	}
+
+	if (unlikely(max_factor)){
+		 env->flags |= LBF_BT_LB;
 	}
 
 	return busiest;
@@ -3960,13 +3935,13 @@ static int load_balance_bt(int this_cpu, struct rq *this_rq,
 	struct sched_group *group;
 	struct rq *busiest;
 	unsigned long flags;
-	struct cpumask *cpus = get_cpu_var(bt_load_balance_mask);
+	struct cpumask *cpus = this_cpu_cpumask_var_ptr(bt_load_balance_mask);
 
 	struct lb_env env = {
 		.sd		= sd,
 		.dst_cpu	= this_cpu,
 		.dst_rq		= this_rq,
-		.dst_grpmask    = sched_group_cpus(sd->groups),
+		.dst_grpmask    = sched_group_span(sd->groups),
 		.idle		= idle,
 		.loop_break	= sched_nr_migrate_break,
 		.cpus		= cpus,
@@ -3979,7 +3954,7 @@ static int load_balance_bt(int this_cpu, struct rq *this_rq,
 	if (idle == CPU_NEWLY_IDLE)
 		env.dst_grpmask = NULL;
 
-	cpumask_copy(cpus, cpu_active_mask);
+	cpumask_and(cpus, sched_domain_span(sd), cpu_active_mask);
 
 	schedstat_inc(sd->lb_count[idle]);
 
@@ -4005,7 +3980,8 @@ redo:
 	schedstat_add(sd->lb_imbalance[idle], env.imbalance);
 
 	ld_moved = 0;
-	if (busiest->nr_running > 1) {
+	if ((busiest->nr_running > 1 || busiest->bt.bt_throttled
+	     || !busiest->bt.bt_runtime) && busiest->bt.h_nr_running) {
 		/*
 		 * Attempt to move tasks. If find_busiest_group has found
 		 * an imbalance but busiest->nr_running <= 1, the group is
@@ -4015,7 +3991,7 @@ redo:
 		env.flags |= LBF_ALL_PINNED;
 		env.src_cpu   = busiest->cpu;
 		env.src_rq    = busiest;
-		env.loop_max  = min(sysctl_sched_nr_migrate, busiest->nr_running);
+		env.loop_max  = min(sysctl_sched_nr_migrate, busiest->bt.h_nr_running);
 
 		update_h_bt_load(env.src_cpu);
 more_balance:
@@ -4174,6 +4150,10 @@ out_one_pinned:
 
 	ld_moved = 0;
 out:
+	if(unlikely(env.flags & LBF_BT_LB)){
+		sd->balance_interval_bt = 0;
+	}
+
 	return ld_moved;
 }
 
@@ -4181,16 +4161,19 @@ out:
  * idle_balance_bt is called by schedule() if this_cpu is about to become
  * idle. Attempts to pull tasks from other CPUs.
  */
-int idle_balance_bt(int this_cpu, struct rq *this_rq)
+int idle_balance_bt(struct rq *this_rq, struct rq_flags *rf)
 {
 	struct sched_domain *sd;
+	int this_cpu = this_rq->cpu;
 	int pulled_task = 0;
 	unsigned long next_balance = jiffies + HZ;
 
 	if (this_rq->bt.bt_throttled || !this_rq->bt.bt_runtime)
 		return 0;
 
-	this_rq->idle_stamp = this_rq->clock;
+	this_rq->idle_stamp = rq_clock(this_rq);
+
+	rq_unpin_lock(this_rq, rf);
 
 	if (this_rq->avg_idle < sysctl_idle_balance_bt_cost ||
 			!this_rq->rd->overload_bt)
@@ -4200,8 +4183,8 @@ int idle_balance_bt(int this_cpu, struct rq *this_rq)
 	 * Drop the rq->lock, but keep IRQ/preempt disabled.
 	 */
 	raw_spin_unlock(&this_rq->lock);
-	update_blocked_averages_bt(this_cpu);
 
+	update_blocked_averages_bt(this_cpu);
 	rcu_read_lock();
 	for_each_domain(this_cpu, sd) {
 		unsigned long interval;
@@ -4236,6 +4219,8 @@ int idle_balance_bt(int this_cpu, struct rq *this_rq)
 		this_rq->next_balance_bt = next_balance;
 	}
 
+	rq_repin_lock(this_rq, rf);
+
 	return pulled_task;
 }
 
@@ -4259,6 +4244,11 @@ static void rebalance_domains_bt(int cpu, enum cpu_idle_type idle)
 	int need_serialize;
 
 	update_blocked_averages_bt(cpu);
+
+	if (rq->nr_running > rq->bt_nr_running || rq->bt.bt_throttled) {
+		rq->do_lb = 0;
+		return;
+	}
 
 	rcu_read_lock();
 	for_each_domain(cpu, sd) {
@@ -4713,7 +4703,7 @@ static void sync_throttle_bt(struct task_group *tg, int cpu)
 
 	pbt_rq = tg->parent->bt_rq[cpu];
 
-	pbt_rq->throttled_clock_task = cpu_rq(cpu)->clock_task;
+	pbt_rq->throttled_clock_task = rq_clock_task(cpu_rq(cpu));
 }
 
 
@@ -4872,7 +4862,7 @@ const struct sched_class bt_sched_class = {
 	.rq_online		= rq_online_bt,
 	.rq_offline		= rq_offline_bt,
 #ifdef CONFIG_SMP
-	.task_dead			= task_dead_bt,
+	.task_dead		= task_dead_bt,
 #endif
 	.set_cpus_allowed       = set_cpus_allowed_common,
 #endif

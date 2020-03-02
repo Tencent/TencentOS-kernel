@@ -80,6 +80,9 @@ u64 __sched_period(unsigned long nr_running);
 
 void task_tick_numa(struct rq *rq, struct task_struct *curr);
 
+extern unsigned long weighted_cpuload(struct rq *rq);
+extern unsigned long source_load(int cpu, int type);
+extern unsigned long target_load(int cpu, int type);
 
 #ifdef CONFIG_NO_HZ_COMMON
 /*

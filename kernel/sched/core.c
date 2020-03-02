@@ -35,7 +35,9 @@
 #endif
 
 #include "sched.h"
+#ifdef CONFIG_BT_SCHED
 #include "batch.h"
+#endif
 #include "../workqueue_internal.h"
 #include "../smpboot.h"
 
@@ -754,7 +756,7 @@ static void set_load_weight(struct task_struct *p)
 		load->inv_weight = WMULT_IDLEPRIO;
 		return;
 	}
-#if CONFIG_BT_SCHED
+#ifdef CONFIG_BT_SCHED
 	if (bt_prio(p->static_prio))
 		prio -= 40;
 #endif
@@ -3455,7 +3457,8 @@ static void __sched notrace __schedule(bool preempt)
 #ifdef CONFIG_BT_SCHED
 	if (unlikely(!(rq->nr_running - rq->bt_nr_running))){
 		if(idle_balance(rq, &rf) <= 0){
-			idle_balance_bt(cpu, rq);
+			if (unlikely(!rq->nr_running && rq->idle_bt_stamp))
+				idle_balance_bt(rq, &rf);
 		}
 	}
 #endif
@@ -3923,14 +3926,14 @@ void set_user_nice(struct task_struct *p, long nice)
 
 #ifdef	CONFIG_BT_SCHED
 	if (task_has_bt_policy(p)) {
-       p->static_prio = NICE_TO_BT_PRIO(nice);
-       set_bt_load_weight(p);
-   } else
+		p->static_prio = NICE_TO_BT_PRIO(nice);
+		set_bt_load_weight(p);
+	} else
 #endif
-   {
-       p->static_prio = NICE_TO_PRIO(nice);
-       set_load_weight(p);
-   }
+	{
+		p->static_prio = NICE_TO_PRIO(nice);
+		set_load_weight(p);
+	}
 
 	old_prio = p->prio;
 	p->prio = effective_prio(p);
@@ -4037,6 +4040,7 @@ inline int task_nice(const struct task_struct *p)
 }
 EXPORT_SYMBOL(task_nice);
 
+#ifdef CONFIG_BT_SCHED
 /**
  * idle_bt_cpu - is a given cpu idle or bt task currently?
  * @cpu: the processor in question.
@@ -4058,6 +4062,7 @@ int idle_bt_cpu(int cpu)
 
 	return 1;
 }
+#endif
 
 /**
  * idle_cpu - is a given CPU idle currently?
@@ -4128,12 +4133,12 @@ static void __setscheduler_params(struct task_struct *p,
 
 #ifdef	CONFIG_BT_SCHED
 	if (unlikely(policy == SCHED_BT)) {
-       bt_prio_adjust_pos(&p->static_prio);
-       set_bt_load_weight(p);
-   } else if (policy == SCHED_NORMAL || policy == SCHED_BATCH ||
-              policy == SCHED_IDLE) {
-       bt_prio_adjust_neg(&p->static_prio);
-   }
+		bt_prio_adjust_pos(&p->static_prio);
+		set_bt_load_weight(p);
+	} else if (policy == SCHED_NORMAL || policy == SCHED_BATCH ||
+		policy == SCHED_IDLE) {
+		bt_prio_adjust_neg(&p->static_prio);
+	}
 #endif
 	/*
 	 * __sched_setscheduler() ensures attr->sched_priority == 0 when
@@ -4204,8 +4209,10 @@ static int __sched_setscheduler(struct task_struct *p,
 	/* The pi code expects interrupts enabled */
 	BUG_ON(pi && in_interrupt());
 
+#ifdef CONFIG_BT_SCHED
 	if(!sched_bt_on && SCHED_BT == policy)
 		return -EINVAL;
+#endif
 
 recheck:
 	/* Double check policy once rq lock held: */
@@ -6085,6 +6092,8 @@ void __init sched_init(void)
 		init_dl_rq(&rq->dl);
 #ifdef  CONFIG_BT_SCHED
 		rq->bt_nr_running = 0;
+		rq->bt_blocked_clock = 0;
+		rq->do_lb = 0;
 		init_bt_rq(&rq->bt);
 #endif
 #ifdef CONFIG_FAIR_GROUP_SCHED
@@ -6162,9 +6171,8 @@ void __init sched_init(void)
 #ifdef CONFIG_NO_HZ_COMMON
 #ifdef CONFIG_BT_SCHED
 		rq->last_bt_load_update_tick = jiffies;
-#else
-		rq->last_load_update_tick = jiffies;
 #endif
+		rq->last_load_update_tick = jiffies;
 		rq->nohz_flags = 0;
 #endif
 #ifdef CONFIG_NO_HZ_FULL

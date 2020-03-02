@@ -528,6 +528,20 @@ static struct ctl_table kern_table[] = {
 		.mode           = 0644,
 		.proc_handler   = sched_bt_handler,
 	},
+	{
+		.procname	= "sched_bt_granularity_ns",
+		.data		= &sysctl_sched_bt_granularity_ns,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "sched_bt_load_fair",
+		.data		= &sysctl_sched_bt_load_fair,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
 #endif
 #ifdef CONFIG_PROVE_LOCKING
 	{
