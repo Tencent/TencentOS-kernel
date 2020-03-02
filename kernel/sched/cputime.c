@@ -110,7 +110,13 @@ static inline void task_group_account_field(struct task_struct *p, int index,
 	__this_cpu_add(kernel_cpustat.cpustat[index], tmp);
 #ifdef	CONFIG_BT_SCHED
 	if(p->sched_class == &bt_sched_class) {
-        __this_cpu_add(kernel_cpustat.cpustat[CPUTIME_BT], tmp);
+		int bt_index = index + CPUTIME_BT_USER - CPUTIME_USER;
+
+		__this_cpu_add(kernel_cpustat.cpustat[bt_index], tmp);
+		__this_cpu_add(kernel_cpustat.cpustat[CPUTIME_BT], tmp);
+
+		if (index <= CPUTIME_IRQ)
+			cpuacct_account_field(p, bt_index, tmp);
 	}
 #endif
 

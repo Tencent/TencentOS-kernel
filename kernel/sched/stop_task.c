@@ -73,6 +73,10 @@ static void put_prev_task_stop(struct rq *rq, struct task_struct *prev)
 
 	curr->se.exec_start = rq_clock_task(rq);
 	cpuacct_charge(curr, delta_exec);
+#ifdef CONFIG_BT_SCHED
+	if (curr->sched_class == &bt_sched_class)
+		bt_cpuacct_charge(curr, delta_exec);
+#endif
 }
 
 static void task_tick_stop(struct rq *rq, struct task_struct *curr, int queued)

@@ -730,6 +730,11 @@ config FAIR_GROUP_SCHED
 	depends on CGROUP_SCHED
 	default CGROUP_SCHED
 
+config BT_GROUP_SCHED
+	bool "Group scheduling for SCHED_BT"
+	depends on CGROUP_SCHED
+	default CGROUP_SCHED
+
 config CFS_BANDWIDTH
 	bool "CPU bandwidth provisioning for FAIR_GROUP_SCHED"
 	depends on FAIR_GROUP_SCHED

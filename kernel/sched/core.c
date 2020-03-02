@@ -696,7 +696,8 @@ void sched_avg_update(struct rq *rq)
 #endif /* CONFIG_SMP */
 
 #if defined(CONFIG_RT_GROUP_SCHED) || (defined(CONFIG_FAIR_GROUP_SCHED) && \
-			(defined(CONFIG_SMP) || defined(CONFIG_CFS_BANDWIDTH)))
+			(defined(CONFIG_SMP) || defined(CONFIG_CFS_BANDWIDTH)))  || \
+			defined(CONFIG_BT_GROUP_SCHED)
 /*
  * Iterate task_group tree rooted at *from, calling @down when first entering a
  * node and @up when leaving it for the final time.
@@ -2543,6 +2544,14 @@ void wake_up_new_task(struct task_struct *p)
 	 */
 	__set_task_cpu(p, select_task_rq(p, task_cpu(p), SD_BALANCE_FORK, 0));
 #endif
+#ifdef CONFIG_BT_GROUP_SCHED
+	/* Post initialize new task's util average when its cfs_rq is set */
+	post_init_bt_entity_util_avg(&p->bt);
+
+	/* Initialize new task's runnable average */
+	init_bt_entity_runnable_average(&p->bt);
+#endif
+
 	rq = __task_rq_lock(p, &rf);
 	update_rq_clock(rq);
 	post_init_entity_util_avg(&p->se);
@@ -5991,6 +6000,9 @@ void __init sched_init(void)
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	alloc_size += 2 * nr_cpu_ids * sizeof(void **);
 #endif
+#ifdef CONFIG_BT_GROUP_SCHED
+	alloc_size += 2 * nr_cpu_ids * sizeof(void **);
+#endif
 #ifdef CONFIG_RT_GROUP_SCHED
 	alloc_size += 2 * nr_cpu_ids * sizeof(void **);
 #endif
@@ -6005,6 +6017,13 @@ void __init sched_init(void)
 		ptr += nr_cpu_ids * sizeof(void **);
 
 #endif /* CONFIG_FAIR_GROUP_SCHED */
+#ifdef CONFIG_BT_GROUP_SCHED
+		root_task_group.bt = (struct sched_entity **)ptr;
+		ptr += nr_cpu_ids * sizeof(void **);
+
+		root_task_group.bt_rq = (struct bt_rq **)ptr;
+		ptr += nr_cpu_ids * sizeof(void **);
+#endif /* CONFIG_BT_GROUP_SCHED */
 #ifdef CONFIG_RT_GROUP_SCHED
 		root_task_group.rt_se = (struct sched_rt_entity **)ptr;
 		ptr += nr_cpu_ids * sizeof(void **);
@@ -6094,6 +6113,11 @@ void __init sched_init(void)
 		init_cfs_bandwidth(&root_task_group.cfs_bandwidth);
 		init_tg_cfs_entry(&root_task_group, &rq->cfs, NULL, i, NULL);
 #endif /* CONFIG_FAIR_GROUP_SCHED */
+#ifdef CONFIG_BT_GROUP_SCHED
+		root_task_group.bt_shares = ROOT_TASK_GROUP_BT_LOAD;
+		INIT_LIST_HEAD(&rq->leaf_bt_rq_list);
+		init_tg_bt_entry(&root_task_group, &rq->bt, NULL, i, NULL);
+#endif /* CONFIG_BT_GROUP_SCHED */
 
 #ifdef CONFIG_BT_SCHED
 		rq->bt.bt_runtime = def_bt_bandwidth.bt_runtime;
@@ -6358,6 +6382,9 @@ static DEFINE_SPINLOCK(task_group_lock);
 static void sched_free_group(struct task_group *tg)
 {
 	free_fair_sched_group(tg);
+#ifdef CONFIG_BT_GROUP_SCHED
+	free_bt_sched_group(tg);
+#endif
 	free_rt_sched_group(tg);
 	autogroup_free(tg);
 	kmem_cache_free(task_group_cache, tg);
@@ -6374,6 +6401,10 @@ struct task_group *sched_create_group(struct task_group *parent)
 
 	if (!alloc_fair_sched_group(tg, parent))
 		goto err;
+#ifdef CONFIG_BT_GROUP_SCHED
+	if (!alloc_bt_sched_group(tg, parent))
+		goto err;
+#endif
 
 	if (!alloc_rt_sched_group(tg, parent))
 		goto err;
@@ -6401,6 +6432,9 @@ void sched_online_group(struct task_group *tg, struct task_group *parent)
 	spin_unlock_irqrestore(&task_group_lock, flags);
 
 	online_fair_sched_group(tg);
+#ifdef CONFIG_BT_SCHED
+	online_bt_sched_group(tg);
+#endif
 }
 
 /* rcu callback to free various structures associated with a task group */
@@ -6422,6 +6456,9 @@ void sched_offline_group(struct task_group *tg)
 
 	/* End participation in shares distribution: */
 	unregister_fair_sched_group(tg);
+#ifdef CONFIG_BT_SCHED
+	unregister_bt_sched_group(tg);
+#endif
 
 	spin_lock_irqsave(&task_group_lock, flags);
 	list_del_rcu(&tg->list);
@@ -6443,7 +6480,7 @@ static void sched_change_group(struct task_struct *tsk, int type)
 	tg = autogroup_task_group(tsk, tg);
 	tsk->sched_task_group = tg;
 
-#ifdef CONFIG_FAIR_GROUP_SCHED
+#if defined(CONFIG_FAIR_GROUP_SCHED) || defined (CONFIG_BT_GROUP_SCHED)
 	if (tsk->sched_class->task_change_group)
 		tsk->sched_class->task_change_group(tsk, type);
 	else
@@ -6566,8 +6603,13 @@ static int cpu_cgroup_can_attach(struct cgroup_taskset *tset)
 			return -EINVAL;
 #else
 		/* We don't support RT-tasks being in separate groups */
-		if (task->sched_class != &fair_sched_class)
+#ifdef CONFIG_BT_SCHED
+		if (task->sched_class != &fair_sched_class && task->sched_class != &bt_sched_class) {
+#else
+		if (task->sched_class != &fair_sched_class) {
+#endif
 			return -EINVAL;
+		}
 #endif
 		/*
 		 * Serialize against wake_up_new_task() such that if its
@@ -6859,6 +6901,22 @@ static int cpu_stats_show(struct seq_file *sf, void *v)
 #endif /* CONFIG_CFS_BANDWIDTH */
 #endif /* CONFIG_FAIR_GROUP_SCHED */
 
+#ifdef CONFIG_BT_GROUP_SCHED
+static int cpu_bt_shares_write_u64(struct cgroup_subsys_state *css,
+				struct cftype *cftype, u64 shareval)
+{
+	return sched_group_set_bt_shares(css_tg(css), scale_load(shareval));
+}
+
+static u64 cpu_bt_shares_read_u64(struct cgroup_subsys_state *css,
+				struct cftype *cft)
+{
+	struct task_group *tg = css_tg(css);
+
+	return (u64) scale_load_down(tg->bt_shares);
+}
+#endif
+
 #ifdef CONFIG_RT_GROUP_SCHED
 static int cpu_rt_runtime_write(struct cgroup_subsys_state *css,
 				struct cftype *cft, s64 val)
@@ -6891,6 +6949,13 @@ static struct cftype cpu_files[] = {
 		.name = "shares",
 		.read_u64 = cpu_shares_read_u64,
 		.write_u64 = cpu_shares_write_u64,
+	},
+#endif
+#ifdef CONFIG_BT_GROUP_SCHED
+	{
+		.name = "bt_shares",
+		.read_u64 = cpu_bt_shares_read_u64,
+		.write_u64 = cpu_bt_shares_write_u64,
 	},
 #endif
 #ifdef CONFIG_CFS_BANDWIDTH

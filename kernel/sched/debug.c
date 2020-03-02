@@ -443,7 +443,7 @@ static void print_cfs_group_stats(struct seq_file *m, int cpu, struct task_group
 #ifdef CONFIG_CGROUP_SCHED
 static char group_path[PATH_MAX];
 
-static char *task_group_path(struct task_group *tg)
+char *task_group_path(struct task_group *tg)
 {
 	if (autogroup_path(tg, group_path, PATH_MAX))
 		return group_path;

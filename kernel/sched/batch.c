@@ -24,6 +24,7 @@
 #include "batch.h"
 #include "sched.h"
 #include "fair.h"
+#include "bt_debug.h"
 
 void set_bt_load_weight(struct task_struct *p)
 {
@@ -126,6 +127,140 @@ static void move_task_bt(struct task_struct *p, struct lb_env *env)
 	check_preempt_curr(env->dst_rq, p, 0);
 }
 
+/**************************************************************
+ * BT operations on generic schedulable entities:
+ */
+
+#ifdef CONFIG_BT_GROUP_SCHED
+
+/* cpu runqueue to which this cfs_rq is attached */
+static inline struct rq *rq_of_bt_rq(struct bt_rq *bt_rq)
+{
+	return bt_rq->rq;
+}
+
+/* An entity is a task if it doesn't "own" a runqueue */
+#define bt_entity_is_task(se)	(!se->bt_my_q)
+
+static inline struct task_struct *bt_task_of(struct sched_entity *bt)
+{
+#ifdef CONFIG_SCHED_DEBUG
+	WARN_ON_ONCE(!bt_entity_is_task(bt));
+#endif
+	return container_of(bt, struct task_struct, bt);
+}
+
+/* Walk up scheduling entities hierarchy */
+#define for_each_sched_bt_entity(se) \
+		for (; se; se = se->parent)
+
+static inline struct bt_rq *task_bt_rq(struct task_struct *p)
+{
+	return p->bt.bt_rq;
+}
+
+/* runqueue on which this entity is (to be) queued */
+static inline struct bt_rq *bt_rq_of(struct sched_entity *se)
+{
+	return se->bt_rq;
+}
+
+/* runqueue "owned" by this group */
+static inline struct bt_rq *group_bt_rq(struct sched_entity *grp)
+{
+	return grp->bt_my_q;
+}
+
+static inline void list_add_leaf_bt_rq(struct bt_rq *bt_rq)
+{
+	if (!bt_rq->on_list) {
+		/*
+		 * Ensure we either appear before our parent (if already
+		 * enqueued) or force our parent to appear after us when it is
+		 * enqueued.  The fact that we always enqueue bottom-up
+		 * reduces this to two cases.
+		 */
+		if (bt_rq->tg->parent &&
+			bt_rq->tg->parent->bt_rq[cpu_of(rq_of_bt_rq(bt_rq))]->on_list) {
+			list_add_rcu(&bt_rq->leaf_bt_rq_list,
+				&rq_of_bt_rq(bt_rq)->leaf_bt_rq_list);
+		} else {
+			list_add_tail_rcu(&bt_rq->leaf_bt_rq_list,
+				&rq_of_bt_rq(bt_rq)->leaf_bt_rq_list);
+		}
+
+		bt_rq->on_list = 1;
+	}
+}
+
+static inline void list_del_leaf_bt_rq(struct bt_rq *bt_rq)
+{
+	if (bt_rq->on_list) {
+		list_del_rcu(&bt_rq->leaf_bt_rq_list);
+		bt_rq->on_list = 0;
+	}
+}
+
+/* Do the two (enqueued) entities belong to the same group ? */
+static inline int
+bt_is_same_group(struct sched_entity *se, struct sched_entity *pse)
+{
+	if (se->bt_rq == pse->bt_rq)
+		return 1;
+
+	return 0;
+}
+
+static inline struct sched_entity *parent_bt_entity(struct sched_entity *se)
+{
+	return se->parent;
+}
+
+/* return depth at which a sched entity is present in the hierarchy */
+static inline int depth_bt(struct sched_entity *se)
+{
+	int depth = 0;
+
+	for_each_sched_bt_entity(se)
+		depth++;
+
+	return depth;
+}
+
+static void
+find_matching_bt(struct sched_entity **se, struct sched_entity **pse)
+{
+	int se_depth, pse_depth;
+
+	/*
+	 * preemption test can be made between sibling entities who are in the
+	 * same cfs_rq i.e who have a common parent. Walk up the hierarchy of
+	 * both tasks until we find their ancestors who are siblings of common
+	 * parent.
+	 */
+
+	/* First walk up until both entities are at same depth */
+	se_depth = depth_bt(*se);
+	pse_depth = depth_bt(*pse);
+
+	while (se_depth > pse_depth) {
+		se_depth--;
+		*se = parent_bt_entity(*se);
+	}
+
+	while (pse_depth > se_depth) {
+		pse_depth--;
+		*pse = parent_bt_entity(*pse);
+	}
+
+	while (!bt_is_same_group(*se, *pse)) {
+		*se = parent_bt_entity(*se);
+		*pse = parent_bt_entity(*pse);
+	}
+}
+
+#else	/* !CONFIG_BT_GROUP_SCHED */
+
 static inline struct task_struct *bt_task_of(struct sched_entity *bt_se)
 {
 	return container_of(bt_se, struct task_struct, bt);
@@ -159,10 +294,36 @@ static inline struct bt_rq *bt_rq_of(struct sched_entity *bt_se)
 	return &rq->bt;
 }
 
+/* runqueue "owned" by this group */
+static inline struct bt_rq *group_bt_rq(struct sched_entity *grp)
+{
+	return NULL;
+}
+
+static inline void list_add_leaf_bt_rq(struct bt_rq *bt_rq)
+{
+}
+
+static inline void list_del_leaf_bt_rq(struct bt_rq *bt_rq)
+{
+}
+
+static inline int
+bt_is_same_group(struct sched_entity *se, struct sched_entity *pse)
+{
+	return 1;
+}
+
 static inline struct sched_entity *parent_bt_entity(struct sched_entity *bt)
 {
 	return NULL;
 }
+
+static inline void
+find_matching_bt(struct sched_entity **se, struct sched_entity **pse)
+{
+}
+#endif	/* CONFIG_BT_GROUP_SCHED */
 
 static int do_sched_bt_period_timer(struct bt_bandwidth *bt_b, int overrun);
 
@@ -249,6 +410,11 @@ typedef struct bt_rq *bt_rq_iter_t;
 
 #define for_each_bt_rq(bt_rq, iter, rq) \
 	for ((void) iter, bt_rq = &rq->bt; bt_rq; bt_rq = NULL)
+
+static inline int bt_rq_throttled(struct bt_rq *bt_rq)
+{
+	return bt_rq->bt_throttled;
+}
 
 static inline void sched_bt_rq_enqueue(struct bt_rq *bt_rq)
 {
@@ -505,6 +671,92 @@ static inline int balance_bt_runtime(struct bt_rq *bt_rq)
 }
 #endif /* CONFIG_SMP */
 
+static void
+dequeue_bt_entity(struct bt_rq *bt_rq, struct sched_entity *se, int flags);
+
+static void throttle_bt_rq(struct bt_rq *bt_rq)
+{
+	struct rq *rq = rq_of_bt_rq(bt_rq);
+	struct sched_entity *bt;
+	long task_delta, dequeue = 1;
+
+	bt = bt_rq->tg->bt[cpu_of(rq)];
+
+	task_delta = bt_rq->h_nr_running;
+	for_each_sched_bt_entity(bt) {
+		struct bt_rq *qbt_rq = bt_rq_of(bt);
+
+		if (!bt->on_rq)
+			break;
+
+		if (dequeue)
+			dequeue_bt_entity(qbt_rq, bt, DEQUEUE_SLEEP);
+		qbt_rq->h_nr_running -= task_delta;
+
+		if (qbt_rq->load.weight)
+			dequeue = 0;
+	}
+
+	if (!bt) {
+		rq->nr_running -= task_delta;
+		rq->bt_nr_running -= task_delta;
+	}
+
+	bt_rq->bt_throttled = 1;
+	bt_rq->throttled_clock = rq->clock;
+	bt_rq->throttled_clock_task = rq->clock_task;
+}
+
+static void
+enqueue_bt_entity(struct bt_rq *bt_rq, struct sched_entity *se, int flags);
+void unthrottle_bt_rq(struct bt_rq *bt_rq)
+{
+	struct rq *rq = rq_of_bt_rq(bt_rq);
+	struct sched_entity *bt;
+	long task_delta, enqueue = 1;
+
+	bt = bt_rq->tg->bt[cpu_of(rq)];
+
+
+	bt_rq->bt_throttled = 0;
+	bt_rq->throttled_clock_task_time += rq->clock_task -
+					     bt_rq->throttled_clock_task;
+	if (!bt_rq->load.weight)
+		return;
+
+	task_delta = bt_rq->h_nr_running;
+	for_each_sched_bt_entity(bt) {
+		struct bt_rq *qbt_rq = bt_rq_of(bt);
+
+		if (bt->on_rq)
+			enqueue = 0;
+
+		if (enqueue)
+			enqueue_bt_entity(qbt_rq, bt, ENQUEUE_WAKEUP);
+		qbt_rq->h_nr_running += task_delta;
+
+		if (bt_rq_throttled(bt_rq))
+			break;
+	}
+
+	if (!bt) {
+		rq->nr_running += task_delta;
+		rq->bt_nr_running += task_delta;
+	}
+
+}
+
+/* rq->task_clock normalized against any time this bt_rq has spent throttled */
+static inline u64 bt_rq_clock_task(struct bt_rq *bt_rq)
+{
+	struct rq *rq = rq_of_bt_rq(bt_rq);
+
+	if (unlikely(bt_rq_throttled(bt_rq)))
+		return bt_rq->throttled_clock_task;
+
+	return rq->clock_task - bt_rq->throttled_clock_task_time;
+}
+
 static int do_sched_bt_period_timer(struct bt_bandwidth *bt_b, int overrun)
 {
 	int i, idle = 1, throttled = 0;
@@ -527,8 +779,8 @@ static int do_sched_bt_period_timer(struct bt_bandwidth *bt_b, int overrun)
 			runtime = bt_rq->bt_runtime;
 			bt_rq->bt_time -= min(bt_rq->bt_time, overrun*runtime);
 			if (bt_rq->bt_throttled && bt_rq->bt_time < runtime) {
-				bt_rq->bt_throttled = 0;
 				enqueue = 1;
+				unthrottle_bt_rq(bt_rq);
 #if 0
 				/*
 				 * Force a clock update if the CPU was idle,
@@ -589,7 +841,7 @@ static int sched_bt_runtime_exceeded(struct bt_rq *bt_rq)
 		if (likely(bt_b->bt_runtime)) {
 			static bool once = false;
 
-			bt_rq->bt_throttled = 1;
+			throttle_bt_rq(bt_rq);
 
 			if (!once) {
 				once = true;
@@ -793,6 +1045,94 @@ static u64 sched_bt_vslice(struct bt_rq *bt_rq, struct sched_entity *se)
 	return calc_delta_bt(sched_bt_slice(bt_rq, se), se);
 }
 
+#ifdef CONFIG_SMP
+
+/*
+ * We choose a half-life close to 1 scheduling period.
+ * Note: The tables below are dependent on this value.
+ */
+#define BT_LOAD_AVG_PERIOD	32
+#define BT_LOAD_AVG_MAX		47742	/* maximum possible load avg */
+#define BT_LOAD_AVG_MAX_N	345	/* number of full periods to produce LOAD_MAX_AVG */
+
+/* Give new sched_entity start runnable values to heavy its load in infant time */
+void init_bt_entity_runnable_average(struct sched_entity *se)
+{
+	struct sched_avg_bt *sa = &se->bt_avg;
+
+	sa->last_update_time = 0;
+	/*
+	 * sched_avg's period_contrib should be strictly less then 1024, so
+	 * we give it 1023 to make sure it is almost a period (1024us), and
+	 * will definitely be update (after enqueue).
+	 */
+	sa->period_contrib = 1023;
+	sa->load_avg = scale_load_down(se->load.weight);
+	sa->load_sum = sa->load_avg * BT_LOAD_AVG_MAX;
+
+	/*
+	 * At this point, util_avg won't be used in select_task_rq_fair anyway
+	 */
+	sa->util_avg = 0;
+	sa->util_sum = 0;
+	/* when this task enqueue'ed, it will contribute to its cfs_rq's load_avg */
+}
+
+/*
+ * With new tasks being created, their initial util_avgs are extrapolated
+ * based on the bt_rq's current util_avg:
+ *
+ *   util_avg = bt_rq->util_avg / (bt_rq->load_avg + 1) * se.load.weight
+ *
+ * However, in many cases, the above util_avg does not give a desired
+ * value. Moreover, the sum of the util_avgs may be divergent, such
+ * as when the series is a harmonic series.
+ *
+ * To solve this problem, we also cap the util_avg of successive tasks to
+ * only 1/2 of the left utilization budget:
+ *
+ *   util_avg_cap = (1024 - bt_rq->avg.util_avg) / 2^n
+ *
+ * where n denotes the nth task.
+ *
+ * For example, a simplest series from the beginning would be like:
+ *
+ *  task  util_avg: 512, 256, 128,  64,  32,   16,    8, ...
+ * cfs_rq util_avg: 512, 768, 896, 960, 992, 1008, 1016, ...
+ *
+ * Finally, that extrapolated util_avg is clamped to the cap (util_avg_cap)
+ * if util_avg > util_avg_cap.
+ */
+void post_init_bt_entity_util_avg(struct sched_entity *se)
+{
+	struct bt_rq *bt_rq = bt_rq_of(se);
+	struct sched_avg_bt *sa = &se->bt_avg;
+	long cap = (long)(scale_load_down(SCHED_LOAD_SCALE) - bt_rq->avg.util_avg) / 2;
+
+	if (cap > 0) {
+		if (bt_rq->avg.util_avg != 0) {
+			sa->util_avg  = bt_rq->avg.util_avg * se->load.weight;
+			sa->util_avg /= (bt_rq->avg.load_avg + 1);
+
+			if (sa->util_avg > cap)
+				sa->util_avg = cap;
+		} else {
+			sa->util_avg = cap;
+		}
+		sa->util_sum = sa->util_avg * BT_LOAD_AVG_MAX;
+	}
+}
+
+#else
+void init_bt_entity_runnable_average(struct sched_entity *se)
+{
+}
+
+void post_init_bt_entity_util_avg(struct sched_entity *se)
+{
+}
+#endif
+
 /*
  * Update the current task's runtime bt_statistics. Skip current tasks that
  * are not in our scheduling class.
@@ -840,6 +1180,8 @@ static void update_curr_bt(struct bt_rq *bt_rq)
 
 		trace_sched_stat_runtime(curtask, delta_exec, curr->vruntime);
 		cpuacct_charge(curtask, delta_exec);
+		bt_cpuacct_charge(curtask, delta_exec);
+		account_group_exec_runtime(curtask, delta_exec);
 	}
 
 	account_bt_rq_runtime(bt_rq, delta_exec);
@@ -943,6 +1285,489 @@ account_bt_entity_dequeue(struct bt_rq *bt_rq, struct sched_entity *se)
 
 	bt_rq->nr_running--;
 }
+
+#ifdef CONFIG_BT_GROUP_SCHED
+#ifdef CONFIG_SMP
+static inline long calc_tg_weight_bt(struct task_group *tg, struct bt_rq *bt_rq)
+{
+	long tg_weight;
+
+	/*
+	 * Use this CPU's real-time load instead of the last load contribution
+	 * as the updating of the contribution is delayed, and we will use the
+	 * the real-time load to calc the share. See update_tg_load_avg().
+	 */
+	tg_weight = atomic64_read(&tg->bt_load_avg);
+	tg_weight -= bt_rq->tg_load_avg_contrib;
+	tg_weight += bt_rq->load.weight;
+
+	return tg_weight;
+}
+
+static long calc_bt_shares(struct bt_rq *bt_rq, struct task_group *tg)
+{
+	long tg_weight, load, shares;
+
+	tg_weight = calc_tg_weight_bt(tg, bt_rq);
+	load = bt_rq->load.weight;
+
+	shares = (tg->bt_shares * load);
+	if (tg_weight)
+		shares /= tg_weight;
+
+	if (shares < MIN_BT_SHARES)
+		shares = MIN_BT_SHARES;
+	if (shares > tg->bt_shares)
+		shares = tg->bt_shares;
+
+	return shares;
+}
+#else /* CONFIG_SMP */
+static inline long calc_bt_shares(struct bt_rq *bt_rq, struct task_group *tg)
+{
+	return tg->bt_shares;
+}
+#endif /* CONFIG_SMP */
+
+static void reweight_bt_entity(struct bt_rq *bt_rq, struct sched_entity *se,
+			    unsigned long weight)
+{
+	if (se->on_rq) {
+		/* commit outstanding execution time */
+		if (bt_rq->curr == se)
+			update_curr_bt(bt_rq);
+		account_bt_entity_dequeue(bt_rq, se);
+	}
+
+	update_load_set(&se->load, weight);
+
+	if (se->on_rq)
+		account_bt_entity_enqueue(bt_rq, se);
+}
+
+static void update_bt_shares(struct bt_rq *bt_rq)
+{
+	struct task_group *tg;
+	struct sched_entity *se;
+	long shares;
+
+	tg = bt_rq->tg;
+	se = tg->bt[cpu_of(rq_of_bt_rq(bt_rq))];
+	if (!se || bt_rq_throttled(bt_rq))
+		return;
+#ifndef CONFIG_SMP
+	if (likely(se->load.weight == tg->bt_shares))
+		return;
+#endif
+	shares = calc_bt_shares(bt_rq, tg);
+
+	reweight_bt_entity(bt_rq_of(se), se, shares);
+}
+#else /* CONFIG_BT_GROUP_SCHED */
+static inline void update_bt_shares(struct bt_rq *bt_rq)
+{
+}
+#endif /* CONFIG_BT_GROUP_SCHED */
+
+#if defined(CONFIG_SMP) && defined(CONFIG_BT_GROUP_SCHED)
+/* Precomputed fixed inverse multiplies for multiplication by y^n */
+static const u32 bt_runnable_avg_yN_inv[] = {
+	0xffffffff, 0xfa83b2da, 0xf5257d14, 0xefe4b99a, 0xeac0c6e6, 0xe5b906e6,
+	0xe0ccdeeb, 0xdbfbb796, 0xd744fcc9, 0xd2a81d91, 0xce248c14, 0xc9b9bd85,
+	0xc5672a10, 0xc12c4cc9, 0xbd08a39e, 0xb8fbaf46, 0xb504f333, 0xb123f581,
+	0xad583ee9, 0xa9a15ab4, 0xa5fed6a9, 0xa2704302, 0x9ef5325f, 0x9b8d39b9,
+	0x9837f050, 0x94f4efa8, 0x91c3d373, 0x8ea4398a, 0x8b95c1e3, 0x88980e80,
+	0x85aac367, 0x82cd8698,
+};
+
+/*
+ * Precomputed \Sum y^k { 1<=k<=n }.  These are floor(true_value) to prevent
+ * over-estimates when re-combining.
+ */
+static const u32 bt_runnable_avg_yN_sum[] = {
+	    0, 1002, 1982, 2941, 3880, 4798, 5697, 6576, 7437, 8279, 9103,
+	 9909,10698,11470,12226,12966,13690,14398,15091,15769,16433,17082,
+	17718,18340,18949,19545,20128,20698,21256,21802,22336,22859,23371,
+};
+
+/*
+ * Approximate:
+ *   val * y^n,    where y^32 ~= 0.5 (~1 scheduling period)
+ */
+static __always_inline u64 decay_bt_load(u64 val, u64 n)
+{
+	unsigned int local_n;
+
+	if (!n)
+		return val;
+	else if (unlikely(n > BT_LOAD_AVG_PERIOD * 63))
+		return 0;
+
+	/* after bounds checking we can collapse to 32-bit */
+	local_n = n;
+
+	/*
+	 * As y^PERIOD = 1/2, we can combine
+	 *    y^n = 1/2^(n/PERIOD) * k^(n%PERIOD)
+	 * With a look-up table which covers k^n (n<PERIOD)
+	 *
+	 * To achieve constant time decay_load.
+	 */
+	if (unlikely(local_n >= BT_LOAD_AVG_PERIOD)) {
+		val >>= local_n / BT_LOAD_AVG_PERIOD;
+		local_n %= BT_LOAD_AVG_PERIOD;
+	}
+
+	val *= bt_runnable_avg_yN_inv[local_n];
+	/* We don't use SRR here since we always want to round down. */
+	return val >> 32;
+}
+
+/*
+ * For updates fully spanning n periods, the contribution to runnable
+ * average will be: \Sum 1024*y^n
+ *
+ * We can compute this reasonably efficiently by combining:
+ *   y^PERIOD = 1/2 with precomputed \Sum 1024*y^n {for  n <PERIOD}
+ */
+static u32 __compute_runnable_contrib_bt(u64 n)
+{
+	u32 contrib = 0;
+
+	if (likely(n <= BT_LOAD_AVG_PERIOD))
+		return bt_runnable_avg_yN_sum[n];
+	else if (unlikely(n >= BT_LOAD_AVG_MAX_N))
+		return BT_LOAD_AVG_MAX;
+
+	/* Compute \Sum k^n combining precomputed values for k^i, \Sum k^j */
+	do {
+		contrib /= 2; /* y^LOAD_AVG_PERIOD = 1/2 */
+		contrib += bt_runnable_avg_yN_sum[BT_LOAD_AVG_PERIOD];
+
+		n -= BT_LOAD_AVG_PERIOD;
+	} while (n > BT_LOAD_AVG_PERIOD);
+
+	contrib = decay_bt_load(contrib, n);
+	return contrib + bt_runnable_avg_yN_sum[n];
+}
+
+/*
+ * We can represent the historical contribution to runnable average as the
+ * coefficients of a geometric series.  To do this we sub-divide our runnable
+ * history into segments of approximately 1ms (1024us); label the segment that
+ * occurred N-ms ago p_N, with p_0 corresponding to the current period, e.g.
+ *
+ * [<- 1024us ->|<- 1024us ->|<- 1024us ->| ...
+ *      p0            p1           p2
+ *     (now)       (~1ms ago)  (~2ms ago)
+ *
+ * Let u_i denote the fraction of p_i that the entity was runnable.
+ *
+ * We then designate the fractions u_i as our co-efficients, yielding the
+ * following representation of historical load:
+ *   u_0 + u_1*y + u_2*y^2 + u_3*y^3 + ...
+ *
+ * We choose y based on the with of a reasonably scheduling period, fixing:
+ *   y^32 = 0.5
+ *
+ * This means that the contribution to load ~32ms ago (u_32) will be weighted
+ * approximately half as much as the contribution to load within the last ms
+ * (u_0).
+ *
+ * When a period "rolls over" and we have new u_0`, multiplying the previous
+ * sum again by y is sufficient to update:
+ *   load_avg = u_0` + y*(u_0 + u_1*y + u_2*y^2 + ... )
+ *            = u_0 + u_1*y + u_2*y^2 + ... [re-labeling u_i --> u_{i+1}]
+ */
+static __always_inline int
+__update_bt_load_avg(u64 now, struct sched_avg_bt *sa,
+		  unsigned long weight, int running, struct bt_rq *bt_rq)
+{
+	u64 delta, periods;
+	u32 contrib;
+	int delta_w, decayed = 0;
+
+	delta = now - sa->last_update_time;
+	/*
+	 * This should only happen when time goes backwards, which it
+	 * unfortunately does during sched clock init when we swap over to TSC.
+	 */
+	if ((s64)delta < 0) {
+		sa->last_update_time = now;
+		return 0;
+	}
+
+	/*
+	 * Use 1024ns as the unit of measurement since it's a reasonable
+	 * approximation of 1us and fast to compute.
+	 */
+	delta >>= 10;
+	if (!delta)
+		return 0;
+	sa->last_update_time = now;
+
+	/* delta_w is the amount already accumulated against our next period */
+	delta_w = sa->period_contrib;
+	if (delta + delta_w >= 1024) {
+		decayed = 1;
+
+		/* how much left for next period will start over, we don't know yet */
+		sa->period_contrib = 0;
+
+		/*
+		 * Now that we know we're crossing a period boundary, figure
+		 * out how much from delta we need to complete the current
+		 * period and accrue it.
+		 */
+		delta_w = 1024 - delta_w;
+		if (weight) {
+			sa->load_sum += weight * delta_w;
+			if (bt_rq)
+				bt_rq->runnable_load_sum += weight * delta_w;
+		}
+		if (running)
+			sa->util_sum += delta_w;
+
+		delta -= delta_w;
+
+		/* Figure out how many additional periods this update spans */
+		periods = delta / 1024;
+		delta %= 1024;
+
+		sa->load_sum = decay_bt_load(sa->load_sum, periods + 1);
+		if (bt_rq) {
+			bt_rq->runnable_load_sum =
+				decay_bt_load(bt_rq->runnable_load_sum, periods + 1);
+		}
+		sa->util_sum = decay_bt_load((u64)(sa->util_sum), periods + 1);
+
+		/* Efficiently calculate \sum (1..n_period) 1024*y^i */
+		contrib = __compute_runnable_contrib_bt(periods);
+		if (weight) {
+			sa->load_sum += weight * contrib;
+			if (bt_rq)
+				bt_rq->runnable_load_sum += weight * contrib;
+		}
+		if (running)
+			sa->util_sum += contrib;
+	}
+
+	/* Remainder of delta accrued against u_0` */
+	if (weight) {
+		sa->load_sum += weight * delta;
+		if (bt_rq)
+			bt_rq->runnable_load_sum += weight * delta;
+	}
+	if (running)
+		sa->util_sum += delta;
+
+	sa->period_contrib += delta;
+	if (decayed) {
+		sa->load_avg = div_u64(sa->load_sum, BT_LOAD_AVG_MAX);
+		if (bt_rq) {
+			bt_rq->runnable_load_avg =
+				div_u64(bt_rq->runnable_load_sum, BT_LOAD_AVG_MAX);
+		}
+		sa->util_avg = (sa->util_sum << SCHED_LOAD_SHIFT) / BT_LOAD_AVG_MAX;
+	}
+
+	return decayed;
+}
+
+#ifdef CONFIG_BT_GROUP_SCHED
+/*
+ * Updating tg's load_avg is necessary before update_cfs_share (which is done)
+ * and effective_load (which is not done because it is too costly).
+ */
+static inline void update_tg_bt_load_avg(struct bt_rq *bt_rq, int force)
+{
+	long delta = bt_rq->avg.load_avg - bt_rq->tg_load_avg_contrib;
+
+	if (force || abs(delta) > bt_rq->tg_load_avg_contrib / 64) {
+		atomic_long_add(delta, &bt_rq->tg->bt_load_avg);
+		bt_rq->tg_load_avg_contrib = bt_rq->avg.load_avg;
+	}
+}
+#else
+static inline void update_tg_bt_load_avg(struct bt_rq *bt_rq, int force) {}
+#endif
+
+/*
+ * Unsigned subtract and clamp on underflow.
+ *
+ * Explicitly do a load-store to ensure the intermediate value never hits
+ * memory. This allows lockless observations without ever seeing the negative
+ * values.
+ */
+#define sub_positive(_ptr, _val) do {				\
+	typeof(_ptr) ptr = (_ptr);				\
+	typeof(*ptr) val = (_val);				\
+	typeof(*ptr) res, var = READ_ONCE(*ptr);		\
+	res = var - val;					\
+	if (res > var)						\
+		res = 0;					\
+	WRITE_ONCE(*ptr, res);					\
+} while (0)
+
+/* Group cfs_rq's load_avg is used for task_h_load and update_bt_share */
+static inline int update_bt_rq_load_avg(u64 now, struct bt_rq *bt_rq)
+{
+	struct sched_avg_bt *sa = &bt_rq->avg;
+	int decayed, removed = 0;
+
+	if (atomic_long_read(&bt_rq->removed_load_avg)) {
+		long r = atomic_long_xchg(&bt_rq->removed_load_avg, 0);
+		sub_positive(&sa->load_avg, r);
+		sub_positive(&sa->load_sum, r * BT_LOAD_AVG_MAX);
+		removed = 1;
+	}
+	if (atomic_long_read(&bt_rq->removed_util_avg)) {
+		long r = atomic_long_xchg(&bt_rq->removed_util_avg, 0);
+		sub_positive(&sa->util_avg, r);
+		sub_positive(&sa->util_sum,
+			((r *BT_LOAD_AVG_MAX) >> SCHED_LOAD_SHIFT));
+	}
+
+	decayed = __update_bt_load_avg(now, sa,
+		scale_load_down(bt_rq->load.weight), bt_rq->curr != NULL, bt_rq);
+
+#ifndef CONFIG_64BIT
+	smp_wmb();
+	bt_rq->load_last_update_time_copy = sa->last_update_time;
+#endif
+	return decayed || removed;
+}
+
+/* Update task and its cfs_rq load average */
+static inline void update_bt_load_avg(struct sched_entity *se, int update_tg)
+{
+	struct bt_rq *bt_rq = bt_rq_of(se);
+	u64 now = bt_rq_clock_task(bt_rq);;
+
+	/*
+	 * Track task load average for carrying it to new CPU after migrated, and
+	 * track group sched_entity load average for task_h_load calc in migration
+	 */
+	__update_bt_load_avg(now, &se->bt_avg,
+		se->on_rq * scale_load_down(se->load.weight), bt_rq->curr == se, NULL);
+	if (update_bt_rq_load_avg(now, bt_rq) && update_tg)
+		update_tg_bt_load_avg(bt_rq, 0);
+}
+
+/* Add the load generated by se into cfs_rq's load average */
+static inline void
+enqueue_bt_entity_load_avg(struct bt_rq *bt_rq, struct sched_entity *se)
+{
+	struct sched_avg_bt *sa = &se->bt_avg;
+	u64 now = bt_rq_clock_task(bt_rq);
+	int migrated = 0, decayed;
+
+	if (sa->last_update_time == 0) {
+		sa->last_update_time = now;
+		migrated = 1;
+	} else {
+		__update_bt_load_avg(now, sa,
+			se->on_rq * scale_load_down(se->load.weight),
+			bt_rq->curr == se, NULL);
+	}
+
+	decayed = update_bt_rq_load_avg(now, bt_rq);
+	bt_rq->runnable_load_avg += sa->load_avg;
+	bt_rq->runnable_load_sum += sa->load_sum;
+
+	if (migrated) {
+		bt_rq->avg.load_avg += sa->load_avg;
+		bt_rq->avg.load_sum += sa->load_sum;
+		bt_rq->avg.util_avg += sa->util_avg;
+		bt_rq->avg.util_sum += sa->util_sum;
+	}
+
+	if (decayed || migrated)
+		update_tg_bt_load_avg(bt_rq, 0);
+}
+
+/* Remove the runnable load generated by se from cfs_rq's runnable load average */
+static inline void
+dequeue_bt_entity_load_avg(struct bt_rq *bt_rq, struct sched_entity *se)
+{
+	update_bt_load_avg(se, 1);
+
+	bt_rq->runnable_load_avg =
+		max_t(long, bt_rq->runnable_load_avg - se->bt_avg.load_avg, 0);
+	bt_rq->runnable_load_sum =
+		max_t(s64, bt_rq->runnable_load_sum - se->bt_avg.load_sum, 0);
+}
+
+#ifndef CONFIG_64BIT
+static inline u64 bt_rq_last_update_time(struct bt_rq *bt_rq)
+{
+	u64 last_update_time_copy;
+	u64 last_update_time;
+
+	do {
+		last_update_time_copy = bt_rq->load_last_update_time_copy;
+		smp_rmb();
+		last_update_time = bt_rq->avg.last_update_time;
+	} while (last_update_time != last_update_time_copy);
+
+	return last_update_time;
+}
+#else
+static inline u64 bt_rq_last_update_time(struct bt_rq *bt_rq)
+{
+	return bt_rq->avg.last_update_time;
+}
+#endif
+
+/*
+ * Task first catches up with cfs_rq, and then subtract
+ * itself from the cfs_rq (task must be off the queue now).
+ */
+void remove_bt_entity_load_avg(struct sched_entity *se)
+{
+	struct bt_rq *bt_rq = bt_rq_of(se);
+	u64 last_update_time;
+
+	/*
+	 * Newly created task or never used group entity should not be removed
+	 * from its (source) cfs_rq
+	 */
+	if (se->bt_avg.last_update_time == 0)
+		return;
+
+	last_update_time = bt_rq_last_update_time(bt_rq);
+
+	__update_bt_load_avg(last_update_time, &se->bt_avg, 0, 0, NULL);
+	atomic_long_add(se->bt_avg.load_avg, &bt_rq->removed_load_avg);
+	atomic_long_add(se->bt_avg.util_avg, &bt_rq->removed_util_avg);
+}
+
+/*
+ * Update the rq's load with the elapsed running time before entering
+ * idle. if the last scheduled task is not a CFS task, idle_enter will
+ * be the only way to update the runnable statistic.
+ */
+void idle_enter_bt(struct rq *this_rq)
+{
+}
+
+/*
+ * Update the rq's load with the elapsed idle time before a task is
+ * scheduled. if the newly scheduled task is not a CFS task, idle_exit will
+ * be the only way to update the runnable statistic.
+ */
+void idle_exit_bt(struct rq *this_rq)
+{
+}
+
+#else
+static inline void update_bt_load_avg(struct sched_entity *se, int update_tg) {}
+static inline void
+enqueue_bt_entity_load_avg(struct bt_rq *bt_rq, struct sched_entity *se) {}
+static inline void remove_bt_entity_load_avg(struct sched_entity *se) {}
+static inline void
+dequeue_bt_entity_load_avg(struct bt_rq *bt_rq, struct sched_entity *se) {}
+#endif
 
 static void enqueue_bt_sleeper(struct bt_rq *bt_rq, struct sched_entity *se)
 {
@@ -1066,18 +1891,26 @@ place_bt_entity(struct bt_rq *bt_rq, struct sched_entity *se, int initial)
 static void
 enqueue_bt_entity(struct bt_rq *bt_rq, struct sched_entity *se, int flags)
 {
+	bool renorm = !(flags & ENQUEUE_WAKEUP) || (flags & ENQUEUE_MIGRATED);
+	bool curr = bt_rq->curr == se;
 	/*
 	 * Update the normalized vruntime before updating min_vruntime
 	 * through callig update_curr().
 	 */
-	if (!(flags & ENQUEUE_WAKEUP) || (flags & ENQUEUE_MIGRATED))
+	if (renorm && curr)
 		se->vruntime += bt_rq->min_vruntime;
 
 	/*
 	 * Update run-time bt_statistics of the 'current'.
 	 */
 	update_curr_bt(bt_rq);
+	enqueue_bt_entity_load_avg(bt_rq, se);
+
+	if (renorm && !curr)
+		se->vruntime += bt_rq->min_vruntime;
+
 	account_bt_entity_enqueue(bt_rq, se);
+	update_bt_shares(bt_rq);
 
 	if (flags & ENQUEUE_WAKEUP) {
 		place_bt_entity(bt_rq, se, 0);
@@ -1086,9 +1919,12 @@ enqueue_bt_entity(struct bt_rq *bt_rq, struct sched_entity *se, int flags)
 
 	update_stats_enqueue_bt(bt_rq, se);
 	check_bt_spread(bt_rq, se);
-	if (se != bt_rq->curr)
+	if (!curr)
 		__enqueue_bt_entity(bt_rq, se);
+
 	se->on_rq = 1;
+	if (bt_rq->nr_running == 1)
+		list_add_leaf_bt_rq(bt_rq);
 	start_bt_bandwidth(&def_bt_bandwidth);
 }
 
@@ -1147,6 +1983,7 @@ dequeue_bt_entity(struct bt_rq *bt_rq, struct sched_entity *se, int flags)
 	 * Update run-time bt_statistics of the 'current'.
 	 */
 	update_curr_bt(bt_rq);
+	update_bt_load_avg(se, 1);
 
 	update_stats_dequeue_bt(bt_rq, se);
 	if (flags & DEQUEUE_SLEEP) {
@@ -1177,7 +2014,9 @@ dequeue_bt_entity(struct bt_rq *bt_rq, struct sched_entity *se, int flags)
 	if (!(flags & DEQUEUE_SLEEP))
 		se->vruntime -= bt_rq->min_vruntime;
 
-	update_bt_min_vruntime(bt_rq);
+	if ((flags & (DEQUEUE_SAVE | DEQUEUE_MOVE)) != DEQUEUE_SAVE)
+		update_bt_min_vruntime(bt_rq);
+	update_bt_shares(bt_rq);
 }
 
 /*
@@ -1232,6 +2071,7 @@ set_next_bt_entity(struct bt_rq *bt_rq, struct sched_entity *se)
 		 */
 		update_stats_wait_end_bt(bt_rq, se);
 		__dequeue_bt_entity(bt_rq, se);
+		update_bt_load_avg(se, 1);
 	}
 
 	update_stats_curr_start_bt(bt_rq, se);
@@ -1242,7 +2082,7 @@ set_next_bt_entity(struct bt_rq *bt_rq, struct sched_entity *se)
 	 * least twice that of our own weight (i.e. dont track it
 	 * when there are only lesser-weight tasks around):
 	 */
-	if (bt_rq->load.weight >= 2*se->load.weight) {
+	if (rq_of_bt_rq(bt_rq)->bt_load.weight >= 2*se->load.weight) {
 		se->bt_statistics->slice_max = max(se->bt_statistics->slice_max,
 			se->sum_exec_runtime - se->prev_sum_exec_runtime);
 	}
@@ -1307,6 +2147,8 @@ static void put_prev_bt_entity(struct bt_rq *bt_rq, struct sched_entity *prev)
 		update_stats_wait_start_bt(bt_rq, prev);
 		/* Put 'current' back into the tree. */
 		__enqueue_bt_entity(bt_rq, prev);
+		/* in !on_rq case, update occurred at dequeue */
+		update_bt_load_avg(prev, 0);
 	}
 	bt_rq->curr = NULL;
 }
@@ -1318,6 +2160,9 @@ bt_entity_tick(struct bt_rq *bt_rq, struct sched_entity *curr, int queued)
 	 * Update run-time bt_statistics of the 'current'.
 	 */
 	update_curr_bt(bt_rq);
+	/* Ensure that runnable average is periodically updated */
+	update_bt_load_avg(curr, 1);
+	update_bt_shares(bt_rq);
 
 #ifdef CONFIG_SCHED_HRTICK
 	/*
@@ -1351,9 +2196,23 @@ enqueue_task_bt(struct rq *rq, struct task_struct *p, int flags)
 		bt_rq = bt_rq_of(se);
 		enqueue_bt_entity(bt_rq, se, flags);
 
+		if (bt_rq_throttled(bt_rq))
+			break;
+
 		bt_rq->h_nr_running++;
 
 		flags = ENQUEUE_WAKEUP;
+	}
+
+	for_each_sched_bt_entity(se) {
+		bt_rq =bt_rq_of(se);
+		bt_rq->h_nr_running++;
+
+		if (bt_rq_throttled(bt_rq))
+			break;
+
+		update_bt_load_avg(se, 1);
+		update_bt_shares(bt_rq);
 	}
 
 	if (!se) {
@@ -1398,6 +2257,17 @@ static void dequeue_task_bt(struct rq *rq, struct task_struct *p, int flags)
 			break;
 		}
 		flags |= DEQUEUE_SLEEP;
+	}
+
+	for_each_sched_bt_entity(se) {
+		bt_rq =bt_rq_of(se);
+		bt_rq->h_nr_running--;
+
+		if (bt_rq_throttled(bt_rq))
+			break;
+
+		update_bt_load_avg(se, 1);
+		update_bt_shares(bt_rq);
 	}
 
 	if (!se) {
@@ -1458,11 +2328,69 @@ static unsigned long cpu_avg_bt_load_per_task(int cpu)
 	return 0;
 }
 
+#ifdef CONFIG_BT_GROUP_SCHED
+static long effective_bt_load(struct task_group *tg, int cpu, long wl, long wg)
+{
+	struct sched_entity *se = tg->bt[cpu];
+
+	if (!tg->parent)	/* the trivial, non-cgroup case */
+		return wl;
+
+	for_each_sched_bt_entity(se) {
+		long w, W;
+
+		tg = se->bt_my_q->tg;
+
+		/*
+		 * W = @wg + \Sum rw_j
+		 */
+		W = wg + calc_tg_weight_bt(tg, se->bt_my_q);
+
+		/*
+		 * w = rw_i + @wl
+		 */
+		w = se->bt_my_q->load.weight + wl;
+
+		/*
+		 * wl = S * s'_i; see (2)
+		 */
+		if (W > 0 && w < W)
+			wl = (w * tg->bt_shares) / W;
+		else
+			wl = tg->bt_shares;
+
+		/*
+		 * Per the above, wl is the new se->load.weight value; since
+		 * those are clipped to [MIN_SHARES, ...) do so now. See
+		 * calc_cfs_shares().
+		 */
+		if (wl < MIN_BT_SHARES)
+			wl = MIN_BT_SHARES;
+
+		/*
+		 * wl = dw_i = S * (s'_i - s_i); see (3)
+		 */
+		wl -= se->load.weight;
+
+		/*
+		 * Recursively apply this logic to all parent groups to compute
+		 * the final effective load change on the root group. Since
+		 * only the @tg group gets extra weight, all parent groups can
+		 * only redistribute existing shares. @wl is the shift in shares
+		 * resulting from this level per the above.
+		 */
+		wg = 0;
+	}
+
+	return wl;
+}
+#else
 static inline unsigned long effective_bt_load(struct task_group *tg, int cpu,
 		unsigned long wl, unsigned long wg)
 {
 	return wl;
 }
+#endif
 
 static int wake_affine_bt(struct sched_domain *sd, struct task_struct *p, int sync)
 {
@@ -1528,7 +2456,7 @@ static int wake_affine_bt(struct sched_domain *sd, struct task_struct *p, int sy
 	if (sync && balanced)
 		return 1;
 
-	schedstat_inc(p->se.statistics.nr_wakeups_affine_attempts);
+	schedstat_inc(p->se.bt_statistics->nr_wakeups_affine_attempts);
 	tl_per_task = cpu_avg_bt_load_per_task(this_cpu) +
 			cpu_avg_bt_load_per_task(this_cpu);
 
@@ -1542,7 +2470,7 @@ static int wake_affine_bt(struct sched_domain *sd, struct task_struct *p, int sy
 		 * there is no bad imbalance.
 		 */
 		schedstat_inc(sd->ttwu_move_affine);
-		schedstat_inc(p->se.statistics.nr_wakeups_affine);
+		schedstat_inc(p->se.bt_statistics->nr_wakeups_affine);
 
 		return 1;
 	}
@@ -1588,7 +2516,7 @@ find_idlest_group_bt(struct sched_domain *sd, struct task_struct *p,
 		}
 
 		/* Adjust by relative CPU power of the group */
-		avg_load = (avg_load * SCHED_POWER_SCALE) / group->sgc->capacity;
+		avg_load = (avg_load * SCHED_CAPACITY_SCALE) / group->sgc->capacity;
 
 		if (local_group) {
 			this_load = avg_load;
@@ -1779,53 +2707,16 @@ unlock:
 	return new_cpu;
 }
 
-void remove_entity_load_avg_bt(struct sched_entity *se)
+#ifdef CONFIG_BT_GROUP_SCHED
+/*
+ * Called immediately before a task is migrated to a new cpu; task_cpu(p) and
+ * cfs_rq_of(p) references at time of call are still valid and identify the
+ * previous cpu.  However, the caller only guarantees p->pi_lock is held; no
+ * other assumptions, including the state of rq->lock, should be made.
+ */
+static void
+migrate_task_rq_bt(struct task_struct *p)
 {
-	struct bt_rq *bt_rq = bt_rq_of(se);
-
-	/*
-	 * tasks cannot exit without having gone through wake_up_new_task() ->
-	 * post_init_entity_util_avg() which will have added things to the
-	 * cfs_rq, so we can remove unconditionally.
-	 *
-	 * Similarly for groups, they will have passed through
-	 * post_init_entity_util_avg() before unregister_sched_fair_group()
-	 * calls this.
-	 */
-
-//	sync_entity_load_avg(se);
-//	atomic_long_add(se->avg.load_avg, &bt_rq->removed_load_avg);
-//	atomic_long_add(se->avg.util_avg, &bt_rq->removed_util_avg);
-}
-
-static void migrate_task_rq_bt(struct task_struct *p)
-{
-	/*
-	 * As blocked tasks retain absolute vruntime the migration needs to
-	 * deal with this by subtracting the old and adding the new
-	 * min_vruntime -- the latter is done by enqueue_entity() when placing
-	 * the task on the new runqueue.
-	 */
-	if (p->state == TASK_WAKING) {
-		struct sched_entity *se = &p->bt;
-		struct bt_rq *bt_rq = bt_rq_of(se);
-		u64 min_vruntime;
-
-#ifndef CONFIG_64BIT
-		u64 min_vruntime_copy;
-
-		do {
-			min_vruntime_copy = bt_rq->min_vruntime_copy;
-			smp_rmb();
-			min_vruntime = bt_rq->min_vruntime;
-		} while (min_vruntime != min_vruntime_copy);
-#else
-		min_vruntime = bt_rq->min_vruntime;
-#endif
-
-		se->vruntime -= min_vruntime;
-	}
-
 	/*
 	 * We are supposed to update the task to "current" time, then its up to date
 	 * and ready to go to new CPU/cfs_rq. But we have difficulty in getting
@@ -1833,18 +2724,19 @@ static void migrate_task_rq_bt(struct task_struct *p)
 	 * will result in the wakee task is less decayed, but giving the wakee more
 	 * load sounds not bad.
 	 */
-	remove_entity_load_avg_bt(&p->bt);
+	remove_bt_entity_load_avg(&p->bt);
 
-//	/* Tell new CPU we are migrated */
-//	p->bt.avg.last_update_time = 0;
+	/* Tell new CPU we are migrated */
+	p->bt.bt_avg.last_update_time = 0;
 
 	/* We have migrated, no longer consider this task hot */
 	p->bt.exec_start = 0;
 }
+#endif
 
 static void task_dead_bt(struct task_struct *p)
 {
-	remove_entity_load_avg_bt(&p->bt);
+	remove_bt_entity_load_avg(&p->bt);
 }
 #endif
 
@@ -1961,6 +2853,7 @@ static void check_preempt_wakeup_bt(struct rq *rq, struct task_struct *p, int wa
 	if (!sched_feat(WAKEUP_PREEMPTION))
 		return;
 
+	find_matching_bt(&se, &pse);
 	update_curr_bt(bt_rq_of(se));
 	BUG_ON(!pse);
 	if (wakeup_preempt_bt_entity(se, pse) == 1) {
@@ -2008,8 +2901,11 @@ static struct task_struct *pick_next_task_bt(struct rq *rq, struct task_struct *
 
 	put_prev_task(rq, prev);
 
-	se = pick_next_bt_entity(bt_rq);
-	set_next_bt_entity(bt_rq, se);
+	do {
+		se = pick_next_bt_entity(bt_rq);
+		set_next_bt_entity(bt_rq, se);
+		bt_rq = group_bt_rq(se);
+	}while(bt_rq && bt_rq->nr_running);
 
 	p = bt_task_of(se);
 
@@ -2095,7 +2991,7 @@ int can_migrate_bt_task(struct task_struct *p, struct lb_env *env)
 	if (!cpumask_test_cpu(env->dst_cpu, tsk_cpus_allowed(p))) {
 		int cpu;
 
-		schedstat_inc(p->se.statistics.nr_failed_migrations_affine);
+		schedstat_inc(p->se.bt_statistics->nr_failed_migrations_affine);
 
 		/*
 		 * Remember if this task can be migrated to any other cpu in
@@ -2124,7 +3020,7 @@ int can_migrate_bt_task(struct task_struct *p, struct lb_env *env)
 	env->flags &= ~LBF_ALL_PINNED;
 
 	if (task_running(env->src_rq, p)) {
-		schedstat_inc(p->se.statistics.nr_failed_migrations_running);
+		schedstat_inc(p->se.bt_statistics->nr_failed_migrations_running);
 		return 0;
 	}
 
@@ -2239,10 +3135,90 @@ next:
 	return pulled;
 }
 
+#ifdef CONFIG_BT_GROUP_SCHED
+static void update_blocked_averages_bt(int cpu)
+{
+	struct rq *rq = cpu_rq(cpu);
+	struct bt_rq *bt_rq;
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&rq->lock, flags);
+	update_rq_clock(rq);
+
+	/*
+	 * Iterates the task_group tree in a bottom up fashion, see
+	 * list_add_leaf_cfs_rq() for details.
+	 */
+	for_each_leaf_bt_rq(rq, bt_rq) {
+		if (update_bt_rq_load_avg(bt_rq_clock_task(bt_rq), bt_rq))
+			update_tg_bt_load_avg(bt_rq, 0);
+	}
+
+	raw_spin_unlock_irqrestore(&rq->lock, flags);
+}
+
+/*
+ * Compute the cpu's hierarchical load factor for each task group.
+ * This needs to be done in a top-down fashion because the load of a child
+ * group is a fraction of its parents load.
+ */
+static int tg_bt_load_down(struct task_group *tg, void *data)
+{
+	unsigned long load;
+	long cpu = (long)data;
+
+	if (!tg->parent) {
+		load = cpu_rq(cpu)->bt_load.weight;
+	} else {
+		load = tg->parent->bt_rq[cpu]->h_load;
+		load *= tg->bt[cpu]->load.weight;
+		load /= tg->parent->bt_rq[cpu]->load.weight + 1;
+	}
+
+	tg->bt_rq[cpu]->h_load = load;
+
+	return 0;
+}
+
+static void update_h_bt_load(long cpu)
+{
+	struct rq *rq = cpu_rq(cpu);
+	unsigned long now = jiffies;
+
+	if (rq->h_bt_load_throttle == now)
+		return;
+
+	rq->h_bt_load_throttle = now;
+
+	rcu_read_lock();
+	walk_tg_tree(tg_bt_load_down, tg_nop, (void *)cpu);
+	rcu_read_unlock();
+}
+
+static unsigned long task_h_bt_load(struct task_struct *p)
+{
+	struct bt_rq *bt_rq = task_bt_rq(p);
+	unsigned long load;
+
+	load = p->bt.load.weight;
+	load = div_u64(load * bt_rq->h_load, bt_rq->load.weight + 1);
+
+	return load;
+}
+#else
+static inline void update_blocked_averages_bt(int cpu)
+{
+}
+
+static inline void update_h_bt_load(long cpu)
+{
+}
+
 static unsigned long task_h_bt_load(struct task_struct *p)
 {
 	return p->bt.load.weight;
 }
+#endif
 
 #ifdef CONFIG_CFS_BANDWIDTH
 /* cpu online calback */
@@ -2348,7 +3324,7 @@ void fix_small_imbalance_bt(struct lb_env *env, struct sd_lb_stats_bt *sds)
 	}
 
 	scaled_busy_load_per_task = sds->busiest_load_per_task
-					 * SCHED_POWER_SCALE;
+					 * SCHED_CAPACITY_SCALE;
 	scaled_busy_load_per_task /= sds->busiest->sgc->capacity;
 
 	if (sds->max_load - sds->this_load + scaled_busy_load_per_task >=
@@ -2367,10 +3343,10 @@ void fix_small_imbalance_bt(struct lb_env *env, struct sd_lb_stats_bt *sds)
 			min(sds->busiest_load_per_task, sds->max_load);
 	pwr_now += sds->this->sgc->capacity *
 			min(sds->this_load_per_task, sds->this_load);
-	pwr_now /= SCHED_POWER_SCALE;
+	pwr_now /= SCHED_CAPACITY_SCALE;
 
 	/* Amount of load we'd subtract */
-	tmp = (sds->busiest_load_per_task * SCHED_POWER_SCALE) /
+	tmp = (sds->busiest_load_per_task * SCHED_CAPACITY_SCALE) /
 		sds->busiest->sgc->capacity;
 	if (sds->max_load > tmp)
 		pwr_move += sds->busiest->sgc->capacity *
@@ -2378,15 +3354,15 @@ void fix_small_imbalance_bt(struct lb_env *env, struct sd_lb_stats_bt *sds)
 
 	/* Amount of load we'd add */
 	if (sds->max_load * sds->busiest->sgc->capacity <
-		sds->busiest_load_per_task * SCHED_POWER_SCALE)
+		sds->busiest_load_per_task * SCHED_CAPACITY_SCALE)
 		tmp = (sds->max_load * sds->busiest->sgc->capacity) /
 			sds->this->sgc->capacity;
 	else
-		tmp = (sds->busiest_load_per_task * SCHED_POWER_SCALE) /
+		tmp = (sds->busiest_load_per_task * SCHED_CAPACITY_SCALE) /
 			sds->this->sgc->capacity;
 	pwr_move += sds->this->sgc->capacity *
 			min(sds->this_load_per_task, sds->this_load + tmp);
-	pwr_move /= SCHED_POWER_SCALE;
+	pwr_move /= SCHED_CAPACITY_SCALE;
 
 	/* Move if we gain throughput */
 	if (pwr_move > pwr_now)
@@ -2426,7 +3402,7 @@ static inline void calculate_imbalance_bt(struct lb_env *env, struct sd_lb_stats
 		load_above_capacity = (sds->busiest_nr_running -
 						sds->busiest_group_capacity);
 
-		load_above_capacity *= (SCHED_LOAD_SCALE * SCHED_POWER_SCALE);
+		load_above_capacity *= (SCHED_LOAD_SCALE * SCHED_CAPACITY_SCALE);
 
 		load_above_capacity /= sds->busiest->sgc->capacity;
 	}
@@ -2446,7 +3422,7 @@ static inline void calculate_imbalance_bt(struct lb_env *env, struct sd_lb_stats
 	/* How much load to actually move to equalise the imbalance */
 	env->imbalance = min(max_pull * sds->busiest->sgc->capacity,
 		(sds->avg_load - sds->this_load) * sds->this->sgc->capacity)
-			/ SCHED_POWER_SCALE;
+			/ SCHED_CAPACITY_SCALE;
 
 	/*
 	 * if *imbalance is less than the average load per runnable task
@@ -2463,7 +3439,7 @@ static inline int
 fix_small_capacity_bt(struct sched_domain *sd, struct sched_group *group)
 {
 	/*
-	 * Only siblings can have significantly less than SCHED_POWER_SCALE
+	 * Only siblings can have significantly less than SCHED_CAPACITY_SCALE
 	 */
 	if (!(sd->flags & SD_SHARE_CPUCAPACITY))
 		return 0;
@@ -2562,7 +3538,7 @@ static inline void update_sg_lb_stats_bt(struct lb_env *env,
 	}
 
 	/* Adjust by relative CPU power of the group */
-	sgs->avg_load = (sgs->group_load*SCHED_POWER_SCALE) / group->sgc->capacity;
+	sgs->avg_load = (sgs->group_load*SCHED_CAPACITY_SCALE) / group->sgc->capacity;
 
 	/*
 	 * Consider the group unbalanced when the imbalance is larger
@@ -2581,7 +3557,7 @@ static inline void update_sg_lb_stats_bt(struct lb_env *env,
 		sgs->group_imb = 1;
 
 	sgs->group_capacity = DIV_ROUND_CLOSEST(group->sgc->capacity,
-						SCHED_POWER_SCALE);
+						SCHED_CAPACITY_SCALE);
 	if (!sgs->group_capacity)
 		sgs->group_capacity = fix_small_capacity_bt(env->sd, group);
 	sgs->group_weight = group->group_weight;
@@ -2716,9 +3692,9 @@ static int check_asym_packing_bt(struct lb_env *env, struct sd_lb_stats_bt *sds)
 	if (env->dst_cpu > busiest_cpu)
 		return 0;
 
-	power = max(sds->busiest->sgc->capacity_bt, (u32)SCHED_POWER_SCALE);
+	power = max(sds->busiest->sgc->capacity_bt, (u32)SCHED_CAPACITY_SCALE);
 	env->imbalance = DIV_ROUND_CLOSEST(
-		(sds->max_load + sds->max_bt_load) * power >> 1, SCHED_POWER_SCALE);
+		(sds->max_load + sds->max_bt_load) * power >> 1, SCHED_CAPACITY_SCALE);
 
 	return 1;
 }
@@ -2772,7 +3748,7 @@ find_busiest_group_bt(struct lb_env *env, int *balance)
 	if (!sds.busiest || sds.busiest_nr_running == 0)
 		goto out_balanced;
 
-	sds.avg_load = (SCHED_POWER_SCALE * sds.total_load) / sds.total_pwr;
+	sds.avg_load = (SCHED_CAPACITY_SCALE * sds.total_load) / sds.total_pwr;
 
 	/*
 	 * If the busiest group is imbalanced the below checks don't
@@ -2844,7 +3820,7 @@ static struct rq *find_busiest_queue_bt(struct lb_env *env,
 	for_each_cpu(i, sched_group_cpus(group)) {
 		unsigned long power = capacity_of_bt(i);
 		unsigned long capacity = DIV_ROUND_CLOSEST(power,
-							   SCHED_POWER_SCALE);
+							   SCHED_CAPACITY_SCALE);
 		unsigned long wl;
 
 		if (!capacity)
@@ -2870,7 +3846,7 @@ static struct rq *find_busiest_queue_bt(struct lb_env *env,
 		 * the load can be moved away from the cpu that is potentially
 		 * running at a lower capacity.
 		 */
-		wl = (wl * SCHED_POWER_SCALE) / power;
+		wl = (wl * SCHED_CAPACITY_SCALE) / power;
 
 		if (wl > max_load) {
 			max_load = wl;
@@ -3041,7 +4017,7 @@ redo:
 		env.src_rq    = busiest;
 		env.loop_max  = min(sysctl_sched_nr_migrate, busiest->nr_running);
 
-		//update_h_load(env.src_cpu);
+		update_h_bt_load(env.src_cpu);
 more_balance:
 		local_irq_save(flags);
 		double_rq_lock(env.dst_rq, busiest);
@@ -3224,6 +4200,7 @@ int idle_balance_bt(int this_cpu, struct rq *this_rq)
 	 * Drop the rq->lock, but keep IRQ/preempt disabled.
 	 */
 	raw_spin_unlock(&this_rq->lock);
+	update_blocked_averages_bt(this_cpu);
 
 	rcu_read_lock();
 	for_each_domain(this_cpu, sd) {
@@ -3280,6 +4257,8 @@ static void rebalance_domains_bt(int cpu, enum cpu_idle_type idle)
 	unsigned long next_balance = jiffies + 60*HZ;
 	int update_next_balance = 0;
 	int need_serialize;
+
+	update_blocked_averages_bt(cpu);
 
 	rcu_read_lock();
 	for_each_domain(cpu, sd) {
@@ -3532,6 +4511,16 @@ static void switched_from_bt(struct rq *rq, struct task_struct *p)
 		place_bt_entity(bt_rq, se, 0);
 		se->vruntime -= bt_rq->min_vruntime;
 	}
+#if defined(CONFIG_BT_GROUP_SCHED) && defined(CONFIG_SMP)
+	/* Catch up with the cfs_rq and remove our load when we leave */
+	__update_bt_load_avg(bt_rq->avg.last_update_time, &se->bt_avg,
+		se->on_rq * scale_load_down(se->load.weight), bt_rq->curr == se, NULL);
+
+	sub_positive(&bt_rq->avg.load_avg, se->bt_avg.load_avg);
+	sub_positive(&bt_rq->avg.load_sum, se->bt_avg.load_sum);
+	sub_positive(&bt_rq->avg.util_avg, se->bt_avg.util_avg);
+	sub_positive(&bt_rq->avg.util_sum, se->bt_avg.util_sum);
+#endif
 }
 
 /*
@@ -3583,11 +4572,267 @@ void init_bt_rq(struct bt_rq *bt_rq)
 #ifndef CONFIG_64BIT
 	bt_rq->min_vruntime_copy = bt_rq->min_vruntime;
 #endif
+#ifdef CONFIG_SMP
+	atomic_long_set(&bt_rq->removed_load_avg, 0);
+	atomic_long_set(&bt_rq->removed_util_avg, 0);
+#endif
+
 	bt_rq->bt_time = 0;
 	bt_rq->bt_throttled = 0;
-	bt_rq->bt_runtime = 0;
+	bt_rq->bt_runtime = RUNTIME_INF;
 	raw_spin_lock_init(&bt_rq->bt_runtime_lock);
 }
+
+#ifdef CONFIG_BT_GROUP_SCHED
+static void task_change_group_bt(struct task_struct *p, int on_rq)
+{
+	struct bt_rq *bt_rq;
+	/*
+	 * If the task was not on the rq at the time of this cgroup movement
+	 * it must have been asleep, sleeping tasks keep their ->vruntime
+	 * absolute on their old rq until wakeup (needed for the fair sleeper
+	 * bonus in place_entity()).
+	 *
+	 * If it was on the rq, we've just 'preempted' it, which does convert
+	 * ->vruntime to a relative base.
+	 *
+	 * Make sure both cases convert their relative position when migrating
+	 * to another cgroup's rq. This does somewhat interfere with the
+	 * fair sleeper stuff for the first placement, but who cares.
+	 */
+	/*
+	 * When !on_rq, vruntime of the task has usually NOT been normalized.
+	 * But there are some cases where it has already been normalized:
+	 *
+	 * - Moving a forked child which is waiting for being woken up by
+	 *   wake_up_new_task().
+	 * - Moving a task which has been woken up by try_to_wake_up() and
+	 *   waiting for actually being woken up by sched_ttwu_pending().
+	 *
+	 * To prevent boost or penalty in the new cfs_rq caused by delta
+	 * min_vruntime between the two cfs_rqs, we skip vruntime adjustment.
+	 */
+	if (!on_rq && (!p->bt.sum_exec_runtime || p->state == TASK_WAKING))
+		on_rq = 1;
+
+	if (!on_rq)
+		p->bt.vruntime -= bt_rq_of(&p->bt)->min_vruntime;
+	set_task_rq(p, task_cpu(p));
+	if (!on_rq) {
+		bt_rq = bt_rq_of(&p->bt);
+		p->bt.vruntime += bt_rq->min_vruntime;
+#ifdef CONFIG_SMP
+		/* Virtually synchronize task with its new cfs_rq */
+		p->bt.bt_avg.last_update_time = bt_rq->avg.last_update_time;
+		bt_rq->avg.load_avg += p->bt.bt_avg.load_avg;
+		bt_rq->avg.load_sum += p->bt.bt_avg.load_sum;
+		bt_rq->avg.util_avg += p->bt.bt_avg.util_avg;
+		bt_rq->avg.util_sum += p->bt.bt_avg.util_sum;
+#endif
+	}
+}
+
+void free_bt_sched_group(struct task_group *tg)
+{
+	int i;
+
+	for_each_possible_cpu(i) {
+		if (tg->bt_rq)
+			kfree(tg->bt_rq[i]);
+		if (tg->bt) {
+			if (likely(tg->bt[i])) {
+				remove_bt_entity_load_avg(tg->bt[i]);
+				kfree(tg->bt[i]->bt_statistics);
+			}
+			kfree(tg->bt[i]);
+		}
+	}
+
+	kfree(tg->bt_rq);
+	kfree(tg->bt);
+}
+
+int alloc_bt_sched_group(struct task_group *tg, struct task_group *parent)
+{
+	struct bt_rq *bt_rq;
+	struct sched_entity *se;
+	struct sched_statistics *stat;
+	int i;
+
+	tg->bt_rq = kzalloc(sizeof(bt_rq) * nr_cpu_ids, GFP_KERNEL);
+	if (!tg->bt_rq)
+		goto err;
+	tg->bt = kzalloc(sizeof(se) * nr_cpu_ids, GFP_KERNEL);
+	if (!tg->bt)
+		goto err;
+
+	tg->bt_shares = NICE_0_LOAD;
+
+	for_each_possible_cpu(i) {
+		bt_rq = kzalloc_node(sizeof(struct bt_rq),
+				      GFP_KERNEL, cpu_to_node(i));
+		if (!bt_rq)
+			goto err;
+
+		se = kzalloc_node(sizeof(struct sched_entity),
+				  GFP_KERNEL, cpu_to_node(i));
+		if (!se)
+			goto err_free_rq;
+
+		stat = kzalloc_node(sizeof(struct sched_statistics),
+				  GFP_KERNEL, cpu_to_node(i));
+		if (!stat)
+			goto err_free_se;
+
+		se->bt_statistics = stat;
+		init_bt_rq(bt_rq);
+		init_tg_bt_entry(tg, bt_rq, se, i, parent->bt[i]);
+		init_bt_entity_runnable_average(se);
+		post_init_bt_entity_util_avg(se);
+	}
+
+	return 1;
+
+err_free_se:
+	kfree(se);
+err_free_rq:
+	kfree(bt_rq);
+err:
+	return 0;
+}
+
+static void sync_throttle_bt(struct task_group *tg, int cpu)
+{
+	struct bt_rq *pbt_rq;
+
+	if (!bt_bandwidth_enabled())
+		return;
+
+	if (!tg->parent)
+		return;
+
+	pbt_rq = tg->parent->bt_rq[cpu];
+
+	pbt_rq->throttled_clock_task = cpu_rq(cpu)->clock_task;
+}
+
+
+void online_bt_sched_group(struct task_group *tg)
+{
+	struct sched_entity *se;
+	struct rq *rq;
+	int i;
+
+	for_each_possible_cpu(i) {
+		rq = cpu_rq(i);
+		se = tg->bt[i];
+
+		raw_spin_lock_irq(&rq->lock);
+		sync_throttle_bt(tg, i);
+		raw_spin_unlock_irq(&rq->lock);
+	}
+}
+
+void unregister_bt_sched_group(struct task_group *tg)
+{
+	unsigned long flags;
+	struct rq *rq;
+	int cpu;
+
+	for_each_possible_cpu(cpu) {
+		if (tg->bt[cpu])
+			remove_bt_entity_load_avg(tg->bt[cpu]);
+
+		/*
+		 * Only empty task groups can be destroyed; so we can speculatively
+		 * check on_list without danger of it being re-added.
+		 */
+		if (!tg->bt_rq[cpu]->on_list)
+			continue;
+
+		rq = cpu_rq(cpu);
+
+		raw_spin_lock_irqsave(&rq->lock, flags);
+		list_del_leaf_bt_rq(tg->bt_rq[cpu]);
+		raw_spin_unlock_irqrestore(&rq->lock, flags);
+	}
+}
+
+void init_tg_bt_entry(struct task_group *tg, struct bt_rq *bt_rq,
+			struct sched_entity *se, int cpu,
+			struct sched_entity *parent)
+{
+	struct rq *rq = cpu_rq(cpu);
+
+	bt_rq->tg = tg;
+	bt_rq->rq = rq;
+
+	tg->bt_rq[cpu] = bt_rq;
+	tg->bt[cpu] = se;
+
+	/* se could be NULL for root_task_group */
+	if (!se)
+		return;
+
+	if (!parent)
+		se->bt_rq = &rq->bt;
+	else
+		se->bt_rq = parent->bt_my_q;
+
+	se->bt_my_q = bt_rq;
+	/* guarantee group entities always have weight */
+	update_load_set(&se->load, NICE_0_LOAD);
+	se->parent = parent;
+}
+
+static DEFINE_MUTEX(bt_shares_mutex);
+
+int sched_group_set_bt_shares(struct task_group *tg, unsigned long shares)
+{
+	int i;
+	unsigned long flags;
+
+	/*
+	 * We can't change the weight of the root cgroup.
+	 */
+	if (!tg->bt[0])
+		return -EINVAL;
+
+	shares = clamp(shares, scale_load(MIN_BT_SHARES), scale_load(MAX_BT_SHARES));
+
+	mutex_lock(&bt_shares_mutex);
+	if (tg->bt_shares == shares)
+		goto done;
+
+	tg->bt_shares = shares;
+	for_each_possible_cpu(i) {
+		struct rq *rq = cpu_rq(i);
+		struct sched_entity *se;
+
+		se = tg->bt[i];
+		/* Propagate contribution to hierarchy */
+		raw_spin_lock_irqsave(&rq->lock, flags);
+		for_each_sched_bt_entity(se)
+			update_bt_shares(group_bt_rq(se));
+		raw_spin_unlock_irqrestore(&rq->lock, flags);
+	}
+
+done:
+	mutex_unlock(&bt_shares_mutex);
+	return 0;
+}
+#else /* CONFIG_BT_GROUP_SCHED */
+
+void free_bt_sched_group(struct task_group *tg) { }
+
+int alloc_bt_sched_group(struct task_group *tg, struct task_group *parent)
+{
+	return 1;
+}
+
+void unregister_bt_sched_group(struct task_group *tg) { }
+
+#endif /* CONFIG_BT_GROUP_SCHED */
 
 static unsigned int get_rr_interval_bt(struct rq *rq, struct task_struct *task)
 {
@@ -3621,8 +4866,14 @@ const struct sched_class bt_sched_class = {
 
 #ifdef CONFIG_SMP
 	.select_task_rq		= select_task_rq_bt,
+#ifdef CONFIG_BT_GROUP_SCHED
+	.migrate_task_rq	= migrate_task_rq_bt,
+#endif
 	.rq_online		= rq_online_bt,
 	.rq_offline		= rq_offline_bt,
+#ifdef CONFIG_SMP
+	.task_dead			= task_dead_bt,
+#endif
 	.set_cpus_allowed       = set_cpus_allowed_common,
 #endif
 
@@ -3637,6 +4888,9 @@ const struct sched_class bt_sched_class = {
 	.get_rr_interval	= get_rr_interval_bt,
 
 	.update_curr		= update_curr_cb_bt,
+#ifdef CONFIG_BT_GROUP_SCHED
+	.task_change_group	= task_change_group_bt,
+#endif
 };
 
 __init void init_sched_bt_class(void)
@@ -3659,7 +4913,7 @@ static int sched_bt_global_constraints(void)
 	 * -- migration, kstopmachine etc..
 	 */
 	if (sysctl_sched_bt_runtime == 0)
-		return -EBUSY;
+		return -EINVAL;
 
 	raw_spin_lock_irqsave(&def_bt_bandwidth.bt_runtime_lock, flags);
 	for_each_possible_cpu(i) {

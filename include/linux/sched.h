@@ -121,12 +121,6 @@ struct task_group;
 
 #endif
 
-/*
- * Increase resolution of cpu_power calculations
- */
-#define SCHED_POWER_SHIFT	10
-#define SCHED_POWER_SCALE	(1L << SCHED_POWER_SHIFT)
-
 #define SCHED_LOAD_SHIFT	10
 #define SCHED_LOAD_SCALE	(1L << SCHED_LOAD_SHIFT)
 
@@ -400,6 +394,15 @@ struct sched_avg {
 	unsigned long			util_avg;
 };
 
+struct sched_avg_bt {
+	u64 			last_update_time;
+	u64 			load_sum;
+	u32 			util_sum;
+	u32 			period_contrib;
+	unsigned long		load_avg;
+	unsigned long		util_avg;
+};
+
 struct sched_statistics {
 #ifdef CONFIG_SCHEDSTATS
 	u64				wait_start;
@@ -464,6 +467,11 @@ struct sched_entity {
 	struct cfs_rq			*my_q;
 #endif
 
+#ifdef CONFIG_BT_GROUP_SCHED
+	struct bt_rq			*bt_rq;
+	struct bt_rq			*bt_my_q;
+#endif
+
 #ifdef CONFIG_SMP
 	/*
 	 * Per entity load average tracking.
@@ -472,6 +480,9 @@ struct sched_entity {
 	 * collide with read-mostly values above.
 	 */
 	struct sched_avg		avg ____cacheline_aligned_in_smp;
+#ifdef CONFIG_BT_SCHED
+	struct sched_avg_bt		bt_avg;
+#endif
 #endif
 };
 

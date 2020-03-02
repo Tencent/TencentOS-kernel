@@ -55,7 +55,21 @@ struct bt_rq {
  * removed when useful for applications beyond shares distribution (e.g.
  * load-balance).
  */
+#ifdef CONFIG_BT_GROUP_SCHED
+	/*
+	 * BT Load tracking
+	 */
+	struct sched_avg_bt avg;
+	u64 runnable_load_sum;
+	unsigned long runnable_load_avg;
 
+
+	unsigned long tg_load_avg_contrib;
+#endif /* CONFIG_BT_GROUP_SCHED */
+	atomic_long_t removed_load_avg, removed_util_avg;
+#ifndef CONFIG_64BIT
+	u64 load_last_update_time_copy;
+#endif
 
 	/*
 	 *   h_load = weight * f(tg)
@@ -65,10 +79,28 @@ struct bt_rq {
 	 */
 	unsigned long h_load;
 #endif /* CONFIG_SMP */
+#ifdef CONFIG_BT_GROUP_SCHED
+	struct rq *rq;  /* cpu runqueue to which this cfs_rq is attached */
+
+	/*
+	 * leaf cfs_rqs are those that hold tasks (lowest schedulable entity in
+	 * a hierarchy). Non-leaf lrqs hold other higher schedulable entities
+	 * (like users, containers etc.)
+	 *
+	 * leaf_cfs_rq_list ties together list of leaf cfs_rq's in a cpu. This
+	 * list is used during load balance.
+	 */
+	int on_list;
+	struct list_head leaf_bt_rq_list;
+	struct task_group *tg;  /* group that "owns" this runqueue */
+#endif /* CONFIG_BT_GROUP_SCHED */
 
 	int bt_throttled;
 	u64 bt_time;
 	u64 bt_runtime;
+
+	u64 throttled_clock, throttled_clock_task;
+	u64 throttled_clock_task_time;
 
 	/* Nests inside the rq lock: */
 	raw_spinlock_t bt_runtime_lock;

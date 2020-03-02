@@ -345,6 +345,14 @@ struct task_group {
 #endif
 #endif
 
+#ifdef CONFIG_BT_GROUP_SCHED
+	struct sched_entity **bt;
+	struct bt_rq **bt_rq;
+	unsigned long bt_shares;
+
+	atomic64_t bt_load_avg;
+#endif
+
 #ifdef CONFIG_RT_GROUP_SCHED
 	struct sched_rt_entity **rt_se;
 	struct rt_rq **rt_rq;
@@ -380,6 +388,11 @@ struct task_group {
 #define MIN_SHARES	(1UL <<  1)
 #define MAX_SHARES	(1UL << 18)
 #endif
+#ifdef CONFIG_BT_GROUP_SCHED
+#define ROOT_TASK_GROUP_BT_LOAD        NICE_0_LOAD
+#define MIN_BT_SHARES  (1UL <<  1)
+#define MAX_BT_SHARES  (1UL << 18)
+#endif
 
 typedef int (*tg_visitor)(struct task_group *, void *);
 
@@ -412,6 +425,17 @@ extern void __refill_cfs_bandwidth_runtime(struct cfs_bandwidth *cfs_b);
 extern void start_cfs_bandwidth(struct cfs_bandwidth *cfs_b);
 extern void unthrottle_cfs_rq(struct cfs_rq *cfs_rq);
 
+#ifdef CONFIG_BT_SCHED
+extern void free_bt_sched_group(struct task_group *tg);
+extern int alloc_bt_sched_group(struct task_group *tg, struct task_group *parent);
+extern void online_bt_sched_group(struct task_group *tg);
+extern int sched_group_set_bt_shares(struct task_group *tg, unsigned long shares);
+extern void unregister_bt_sched_group(struct task_group *tg);
+extern void init_tg_bt_entry(struct task_group *tg, struct bt_rq *bt_rq,
+                       struct sched_entity *se, int cpu,
+                       struct sched_entity *parent);
+#endif
+
 extern void free_rt_sched_group(struct task_group *tg);
 extern int alloc_rt_sched_group(struct task_group *tg, struct task_group *parent);
 extern void init_tg_rt_entry(struct task_group *tg, struct rt_rq *rt_rq,
@@ -442,6 +466,10 @@ static inline void set_task_rq_fair(struct sched_entity *se,
 			     struct cfs_rq *prev, struct cfs_rq *next) { }
 #endif /* CONFIG_SMP */
 #endif /* CONFIG_FAIR_GROUP_SCHED */
+
+#ifdef CONFIG_BT_GROUP_SCHED
+extern int sched_group_set_bt_shares(struct task_group *tg, unsigned long shares);
+#endif
 
 #else /* CONFIG_CGROUP_SCHED */
 
@@ -775,6 +803,13 @@ struct rq {
 	struct list_head leaf_cfs_rq_list;
 	struct list_head *tmp_alone_branch;
 #endif /* CONFIG_FAIR_GROUP_SCHED */
+
+#ifdef CONFIG_BT_GROUP_SCHED
+	struct list_head leaf_bt_rq_list;
+#ifdef CONFIG_SMP
+	unsigned long h_bt_load_throttle;
+#endif /* CONFIG_SMP */
+#endif /* CONFIG_BT_GROUP_SCHED */
 
 	/*
 	 * This is part of a global counter where only the total sum
@@ -1262,8 +1297,14 @@ static inline struct task_group *task_group(struct task_struct *p)
 /* Change a task's cfs_rq and parent entity if it moves across CPUs/groups */
 static inline void set_task_rq(struct task_struct *p, unsigned int cpu)
 {
-#if defined(CONFIG_FAIR_GROUP_SCHED) || defined(CONFIG_RT_GROUP_SCHED)
+#if defined(CONFIG_FAIR_GROUP_SCHED) || defined(CONFIG_RT_GROUP_SCHED) || \
+	defined(CONFIG_BT_GROUP_SCHED)
 	struct task_group *tg = task_group(p);
+#endif
+
+#ifdef CONFIG_BT_GROUP_SCHED
+	p->bt.bt_rq = tg->bt_rq[cpu];
+	p->bt.parent = tg->bt[cpu];
 #endif
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
@@ -1572,7 +1613,7 @@ struct sched_class {
 #define TASK_SET_GROUP  0
 #define TASK_MOVE_GROUP	1
 
-#ifdef CONFIG_FAIR_GROUP_SCHED
+#if defined(CONFIG_FAIR_GROUP_SCHED) || defined(CONFIG_BT_GROUP_SCHED)
 	void (*task_change_group) (struct task_struct *p, int type);
 #endif
 };
@@ -1613,6 +1654,15 @@ extern void set_cpus_allowed_common(struct task_struct *p, const struct cpumask 
 extern int idle_balance_bt(int this_cpu, struct rq *this_rq);
 
 extern int idle_balance(struct rq *this_rq, struct rq_flags *rf);
+
+#if defined(CONFIG_BT_GROUP_SCHED)
+extern void idle_enter_bt(struct rq *this_rq);
+extern void idle_exit_bt(struct rq *this_rq);
+#else
+static inline void idle_enter_bt(struct rq *this_rq) {}
+static inline void idle_exit_bt(struct rq *this_rq) {}
+#endif
+
 #else
 int idle_balance_bt(int this_cpu, struct rq *this_rq)
 {
@@ -1661,6 +1711,8 @@ extern void init_sched_fair_class(void);
 #ifdef CONFIG_BT_SCHED
 extern void init_sched_bt_class(void);
 extern void update_idle_cpu_bt_load(struct rq *this_rq);
+extern void init_bt_entity_runnable_average(struct sched_entity *se);
+extern void post_init_bt_entity_util_avg(struct sched_entity *se);
 #endif
 
 extern void resched_curr(struct rq *rq);
