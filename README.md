@@ -1,12 +1,49 @@
  ![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/tencentos-logo.png) 
 
 # TencetOS Server kernel
-
-[TOC]
-
-
-
+[TencetOS Server kernel](#tencetos-server-kernel)
 - TencentOS Server( 又名Tencent Linux 简称Tlinux) 是腾讯针对云的场景研发的 Linux 操作系统，提供了专门的功能特性和性能优化，为云服务器实例中的应用程序提供高性能，且更加安全可靠的运行环境。Tencent Linux 使用免费，在 CentOS（及发行版）上开发的应用程序可直接在 Tencent Linux 上运行，用户还可持续获得腾讯云的更新维护和技术支持。
+
+* [支持平台](#支持平台)
+* [主要特性](#主要特性)
+* [通过源代码编译内核rpm包](#通过源代码编译内核rpm包)
+* [通过腾讯云获取 TencentOs Server(Tlinux)](#通过腾讯云获取-tencentos-servertlinux)
+* [通过腾讯软件源获取TencentOS Server软件安装包](#通过腾讯软件源获取tencentos-server软件安装包)
+* [容器隔离增强](#容器隔离增强)
+* [内核新增启动参数](#内核新增启动参数)
+* [sysctl/proc新增&amp;隔离](#sysctlproc新增隔离)
+  * [proc新增](#proc新增)
+  * [sysctl新增](#sysctl新增)
+  * [namespace隔离列表](#namespace隔离列表)
+  * [容器pid映射信息获取](#容器pid映射信息获取)
+* [page cache limit特性](#page-cache-limit特性)
+  * [需求分析](#需求分析)
+  * [page cache介绍](#page-cache介绍)
+  * [page cache limit实现分析](#page-cache-limit实现分析)
+  * [page cache limit功能介绍及使用](#page-cache-limit功能介绍及使用)
+  * [结论](#结论)
+* [热补丁](#热补丁)
+* [ARM64 热补丁](#arm64-热补丁)
+  * [热补丁简介](#热补丁简介)
+  * [工作原理](#工作原理)
+  * [内核态工作原理](#内核态工作原理)
+  * [用户态工作原理](#用户态工作原理)
+  * [内核态改造](#内核态改造)
+    * [使用patchable-function-entry实现类似于fmentry功能（使用了GCC 8.2.1版本）](#使用patchable-function-entry实现类似于fmentry功能使用了gcc-821版本)
+    * [ftrace regs 实现](#ftrace-regs-实现)
+    * [kpatch arm64支持](#kpatch-arm64支持)
+    * [用户态工具改造](#用户态工具改造)
+  * [验证](#验证)
+* [进程防gdb功能](#进程防gdb功能)
+* [离线调度算法(BT)](#离线调度算法bt)
+  * [特性简介](#特性简介)
+  * [研发背景](#研发背景)
+  * [业界现有方案对比](#业界现有方案对比)
+  * [设计原理](#设计原理)
+  * [业务场景效果](#业务场景效果)
+  * [使用方法](#使用方法)
+* [NVME IO隔离](#nvme-io隔离)
+* [联系我们](#联系我们)
 
 ## 支持平台
 
