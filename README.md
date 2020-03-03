@@ -701,8 +701,8 @@ int main()
 ![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/bt_sched_img08.png)
 
 设置成离线调度后：
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/bt_sched_img09.png)
 
+![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/bt_sched_img09.png)
 
 通过设置kernel.sched_bt_period_us和kernel.sched_bt_runtime_us这两个内核参数，我们可以控制离线进程占用的cpu比例。
 默认情况下kernel.sched_bt_period_us=1000000，kernel.sched_bt_runtime_us=-1，表示控制周期是1s，离线进程占用cpu不受限制，比如，我们设置kernel.sched_bt_runtime_us=100000，即离线占用10%的cpu：
