@@ -137,7 +137,8 @@ static struct pid_namespace *create_pid_namespace(struct user_namespace *user_ns
 	ns->user_ns = get_user_ns(user_ns);
 	ns->ucounts = ucounts;
 	ns->nr_hashed = PIDNS_HASH_ADDING;
-	ns->max_map_count = parent_pid_ns->max_map_count;
+	ns->max_map_count = max_map_count_isolated ?
+		parent_pid_ns->max_map_count : sysctl_max_map_count;
 	INIT_WORK(&ns->proc_work, proc_cleanup_work);
 
 	set_bit(0, ns->pidmap[0].page);

@@ -1385,7 +1385,9 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 
 	/* Too many mappings? */
 #ifdef CONFIG_PID_NS
-	if (mm->map_count > task_active_pid_ns(current)->max_map_count)
+	if (mm->map_count > (max_map_count_isolated ?
+		task_active_pid_ns(current)->max_map_count :
+		sysctl_max_map_count))
 #else
 	if (mm->map_count > sysctl_max_map_count)
 #endif
@@ -2642,7 +2644,9 @@ int split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
 	      unsigned long addr, int new_below)
 {
 #ifdef CONFIG_PID_NS
-	if (mm->map_count >= task_active_pid_ns(current)->max_map_count)
+	if (mm->map_count >= (max_map_count_isolated ?
+		task_active_pid_ns(current)->max_map_count :
+		sysctl_max_map_count))
 #else
 	if (mm->map_count >= sysctl_max_map_count)
 #endif
@@ -2697,7 +2701,10 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len,
 		 * its limit temporarily, to help free resources as expected.
 		 */
 #ifdef CONFIG_PID_NS
-		if (end < vma->vm_end && mm->map_count >= task_active_pid_ns(current)->max_map_count)
+		if (end < vma->vm_end && mm->map_count >=
+			(max_map_count_isolated ?
+			task_active_pid_ns(current)->max_map_count :
+			sysctl_max_map_count))
 #else
 		if (end < vma->vm_end && mm->map_count >= sysctl_max_map_count)
 #endif
@@ -2939,7 +2946,9 @@ static int do_brk_flags(unsigned long addr, unsigned long len, unsigned long fla
 		return -ENOMEM;
 
 #ifdef CONFIG_PID_NS
-	if (mm->map_count > task_active_pid_ns(current)->max_map_count)
+	if (mm->map_count > (max_map_count_isolated ?
+		task_active_pid_ns(current)->max_map_count :
+		sysctl_max_map_count))
 #else
 	if (mm->map_count > sysctl_max_map_count)
 #endif

@@ -1488,7 +1488,9 @@ int split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
 		return -ENOMEM;
 
 #ifdef CONFIG_PID_NS
-	if (mm->map_count >= task_active_pid_ns(current)->max_map_count)
+	if (mm->map_count >= (max_map_count_isolated ?
+		task_active_pid_ns(current)->max_map_count :
+		sysctl_max_map_count))
 #else
 	if (mm->map_count >= sysctl_max_map_count)
 #endif

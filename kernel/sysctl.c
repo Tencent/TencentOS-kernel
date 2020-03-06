@@ -343,6 +343,15 @@ static struct ctl_table kern_table[] = {
 		.mode           = 0644,
 		.proc_handler   = proc_dointvec,
 	},
+	{
+		.procname	= "isolate_max_map_count",
+		.data		= &max_map_count_isolated,
+		.maxlen		= sizeof(max_map_count_isolated),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &zero,
+		.extra2		= &one,
+	},
 #endif
 	{
 		.procname       = "print-fatal-signals-src-dst",
@@ -2693,7 +2702,8 @@ static int proc_dointvec_max_map_count(struct ctl_table *table, int write,
 			void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 #ifdef CONFIG_PID_NS
-	table->data = &task_active_pid_ns(current)->max_map_count;
+	table->data = max_map_count_isolated ?
+		&task_active_pid_ns(current)->max_map_count : &sysctl_max_map_count;
 #endif
 	return do_proc_dointvec(table, write, buffer, lenp, ppos, NULL, NULL);
 }

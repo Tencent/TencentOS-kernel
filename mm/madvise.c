@@ -148,7 +148,9 @@ static long madvise_behavior(struct vm_area_struct *vma,
 
 	if (start != vma->vm_start) {
 #ifdef CONFIG_PID_NS
-		if (unlikely(mm->map_count >= task_active_pid_ns(current)->max_map_count))
+		if (unlikely(mm->map_count >= (max_map_count_isolated ?
+			task_active_pid_ns(current)->max_map_count :
+			sysctl_max_map_count)))
 #else
 		if (unlikely(mm->map_count >= sysctl_max_map_count)) 
 #endif	
@@ -170,7 +172,9 @@ static long madvise_behavior(struct vm_area_struct *vma,
 
 	if (end != vma->vm_end) {
 #ifdef CONFIG_PID_NS
-		if (unlikely(mm->map_count >= task_active_pid_ns(current)->max_map_count))
+		if (unlikely(mm->map_count >= (max_map_count_isolated ?
+			task_active_pid_ns(current)->max_map_count :
+			sysctl_max_map_count)))
 #else
 		if (unlikely(mm->map_count >= sysctl_max_map_count)) 
 #endif
