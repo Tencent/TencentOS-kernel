@@ -24,22 +24,19 @@ strip_sign_token=0
 # to control wheter to build rpm for xen domU
 isXenU=""
 build_perf=""
+raw_kernel_tools=""
 kernel_default_types=(default)
 
 #funcitons
 usage()
 {
-	echo "generate-rpms [-t \$tag_name ]  [-k  \$kernel_type ] [-j \$jobs ][-h][-x \$arch]" 
+	echo "generate-rpms [-t \$tag_name ] [-p] [-r] [-j \$jobs ][-h]" 
 	echo "     -t tag_name"
 	echo "        Tagged name in the git tree."
-	echo "     -k kernel_type"
-	echo "        Kernel type is default, state, container or user-specified type."
-	echo "        If -k parameter is not set, we will compile standard three kernels of default, state and container."
-	echo "        For user-specified type kernel, only compile individually."
 	echo "     -j jobs"
 	echo "        Specifies the number of jobs (threads) to run make."
-	echo "     -x arch"
-	echo "        switch to build rpm for xen domU. arch is 32 or 64."
+	echo "     -r"
+	echo "        build kernel-tools only, no suitable prefix here, so choose -r"
 	echo "     -p"
 	echo "        build perf rpm only."
 
@@ -108,6 +105,8 @@ get_tlinux_name()
 	tlinux_branch=`echo $tagged_name|cut -d- -f3`
 	if [ "$build_perf" = "yes" ]; then
 		rpm_name="perf"
+	elif [ "$raw_kernel_tools" = "yes" ]; then
+		rpm_name="kernel-tools"
 	else
 		rpm_name="kernel"
 	fi
@@ -151,31 +150,31 @@ prepare_tlinux_spec()
 
 	if [ "$build_perf" = "yes" ]; then
 		cat $curdir/perf-tlinux.spec >> $spec_file_name
+	elif [ "$raw_kernel_tools" = "yes" ]; then
+		cat $curdir/kernel-tools.spec >> $spec_file_name
+		echo "generate kernel-tools spec"
 	else
 		cat $curdir/kernel-tlinux.spec >> $spec_file_name
+		echo "generate kernel spec"
+		git log --pretty=format:"- %cd [ %an  ]  %s"   --date=short >> $spec_file_name
 	fi
 
-	git log --pretty=format:"- %cd [ %an  ]  %s"   --date=short >> $spec_file_name
 }
 
 #main function
 
 #Parse Parameters
-while getopts ":t:k:j:hdpx:" option "$@"
+while getopts ":t:k:j:hpr" option "$@"
 do
 	case $option in 
 	"t" )
 		tag_name=$OPTARG
 		;;
-	"k" )  
-		kernel_type=$OPTARG
+	"r" )
+		raw_kernel_tools="yes"
 		;;
 	"j" )  
 		make_jobs=$OPTARG
-		;;
-	"x" )
-		isXenU=$OPTARG
-		echo $isXenU
 		;;
 	"h" )  
 		usage
