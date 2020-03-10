@@ -1,7 +1,9 @@
  ![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/tencentos-logo.png) 
 
-# TencetOS Server kernel
-[TencetOS Server kernel](#tencetos-server-kernel)
+
+# TencentOS Server kernel
+[TencentOS Server kernel](#tencentos-server-kernel)
+
 - TencentOS Server( 又名Tencent Linux 简称Tlinux) 是腾讯针对云的场景研发的 Linux 操作系统，提供了专门的功能特性和性能优化，为云服务器实例中的应用程序提供高性能，且更加安全可靠的运行环境。Tencent Linux 使用免费，在 CentOS（及发行版）上开发的应用程序可直接在 Tencent Linux 上运行，用户还可持续获得腾讯云的更新维护和技术支持。
 
 * [支持平台](#支持平台)
