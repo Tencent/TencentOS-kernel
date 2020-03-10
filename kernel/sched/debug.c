@@ -20,25 +20,14 @@
 #include <linux/debugfs.h>
 
 #include "sched.h"
+#include "bt_debug.h"
 
 static DEFINE_SPINLOCK(sched_debug_lock);
 
 /*
- * This allows printing both to /proc/sched_debug and
- * to the console
- */
-#define SEQ_printf(m, x...)			\
- do {						\
-	if (m)					\
-		seq_printf(m, x);		\
-	else					\
-		printk(x);			\
- } while (0)
-
-/*
  * Ease the printing of nsec fields:
  */
-static long long nsec_high(unsigned long long nsec)
+long long nsec_high(unsigned long long nsec)
 {
 	if ((long long)nsec < 0) {
 		nsec = -nsec;
@@ -50,15 +39,13 @@ static long long nsec_high(unsigned long long nsec)
 	return nsec;
 }
 
-static unsigned long nsec_low(unsigned long long nsec)
+unsigned long nsec_low(unsigned long long nsec)
 {
 	if ((long long)nsec < 0)
 		nsec = -nsec;
 
 	return do_div(nsec, 1000000);
 }
-
-#define SPLIT_NS(x) nsec_high(x), nsec_low(x)
 
 #define SCHED_FEAT(name, enabled)	\
 	#name ,
@@ -456,7 +443,7 @@ static void print_cfs_group_stats(struct seq_file *m, int cpu, struct task_group
 #ifdef CONFIG_CGROUP_SCHED
 static char group_path[PATH_MAX];
 
-static char *task_group_path(struct task_group *tg)
+char *task_group_path(struct task_group *tg)
 {
 	if (autogroup_path(tg, group_path, PATH_MAX))
 		return group_path;
@@ -705,6 +692,9 @@ do {									\
 	print_cfs_stats(m, cpu);
 	print_rt_stats(m, cpu);
 	print_dl_stats(m, cpu);
+#ifdef CONFIG_BT_SCHED
+	print_bt_stats(m, cpu);
+#endif
 
 	print_rq(m, rq, cpu);
 	spin_unlock_irqrestore(&sched_debug_lock, flags);
@@ -944,6 +934,12 @@ void proc_sched_show_task(struct task_struct *p, struct pid_namespace *ns,
 	PN(se.vruntime);
 	PN(se.sum_exec_runtime);
 
+#ifdef CONFIG_BT_SCHED
+	PN(bt.exec_start);
+	PN(bt.vruntime);
+	PN(bt.sum_exec_runtime);
+#endif
+
 	nr_switches = p->nvcsw + p->nivcsw;
 
 	P(se.nr_migrations);
@@ -1004,6 +1000,9 @@ void proc_sched_show_task(struct task_struct *p, struct pid_namespace *ns,
 		   "nr_involuntary_switches", (long long)p->nivcsw);
 
 	P(se.load.weight);
+#ifdef	CONFIG_BT_SCHED
+	SEQ_printf(m, "%-45s:%21Ld\n", "bt.load.weight", (long long)scale_load_down(p->bt.load.weight));
+#endif
 #ifdef CONFIG_SMP
 	P(se.avg.load_sum);
 	P(se.avg.util_sum);

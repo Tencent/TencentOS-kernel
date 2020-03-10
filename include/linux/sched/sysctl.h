@@ -57,6 +57,18 @@ int sched_proc_update_handler(struct ctl_table *table, int write,
 extern unsigned int sysctl_sched_rt_period;
 extern int sysctl_sched_rt_runtime;
 
+#ifdef CONFIG_BT_SCHED
+extern unsigned int sysctl_sched_bt_period;
+extern int sysctl_sched_bt_runtime;
+extern unsigned int sysctl_idle_balance_bt_cost;
+extern unsigned int sysctl_sched_bt_granularity_ns;
+extern unsigned int sysctl_sched_bt_load_fair;
+
+extern int sched_bt_handler(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp,
+		loff_t *ppos);
+#endif
+
 #ifdef CONFIG_CFS_BANDWIDTH
 extern unsigned int sysctl_sched_cfs_bandwidth_slice;
 #endif

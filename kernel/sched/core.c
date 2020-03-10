@@ -10,6 +10,7 @@
 #include <uapi/linux/sched/types.h>
 #include <linux/sched/loadavg.h>
 #include <linux/sched/hotplug.h>
+#include <linux/sched/batch.h>
 #include <linux/wait_bit.h>
 #include <linux/cpuset.h>
 #include <linux/delayacct.h>
@@ -34,6 +35,9 @@
 #endif
 
 #include "sched.h"
+#ifdef CONFIG_BT_SCHED
+#include "batch.h"
+#endif
 #include "../workqueue_internal.h"
 #include "../smpboot.h"
 
@@ -82,6 +86,11 @@ __read_mostly int scheduler_running;
  * default: 0.95s
  */
 int sysctl_sched_rt_runtime = 950000;
+
+#ifdef CONFIG_BT_SCHED
+unsigned int sysctl_sched_bt_period = 1000000;
+int sysctl_sched_bt_runtime = -1;
+#endif
 
 /* CPUs with isolated domains */
 cpumask_var_t cpu_isolated_map;
@@ -689,7 +698,8 @@ void sched_avg_update(struct rq *rq)
 #endif /* CONFIG_SMP */
 
 #if defined(CONFIG_RT_GROUP_SCHED) || (defined(CONFIG_FAIR_GROUP_SCHED) && \
-			(defined(CONFIG_SMP) || defined(CONFIG_CFS_BANDWIDTH)))
+			(defined(CONFIG_SMP) || defined(CONFIG_CFS_BANDWIDTH)))  || \
+			defined(CONFIG_BT_GROUP_SCHED)
 /*
  * Iterate task_group tree rooted at *from, calling @down when first entering a
  * node and @up when leaving it for the final time.
@@ -746,6 +756,10 @@ static void set_load_weight(struct task_struct *p)
 		load->inv_weight = WMULT_IDLEPRIO;
 		return;
 	}
+#ifdef CONFIG_BT_SCHED
+	if (bt_prio(p->static_prio))
+		prio -= 40;
+#endif
 
 	load->weight = scale_load(sched_prio_to_weight[prio]);
 	load->inv_weight = sched_prio_to_wmult[prio];
@@ -775,16 +789,38 @@ static inline void dequeue_task(struct rq *rq, struct task_struct *p, int flags)
 
 void activate_task(struct rq *rq, struct task_struct *p, int flags)
 {
+#ifdef	CONFIG_BT_SCHED
+	if (task_contributes_to_load(p)) {
+		rq->nr_uninterruptible--;
+
+		if (unlikely(p->flags & TNF_SCHED_BT)) {
+			p->flags &= ~TNF_SCHED_BT;
+			rq->bt.nr_uninterruptible--;
+		}
+	}
+#else
 	if (task_contributes_to_load(p))
 		rq->nr_uninterruptible--;
+#endif
 
 	enqueue_task(rq, p, flags);
 }
 
 void deactivate_task(struct rq *rq, struct task_struct *p, int flags)
 {
+#ifdef	CONFIG_BT_SCHED
+	if (task_contributes_to_load(p)) {
+		rq->nr_uninterruptible++;
+
+		if (unlikely(p->sched_class == &bt_sched_class)) {
+			p->flags |= TNF_SCHED_BT;
+			rq->bt.nr_uninterruptible++;
+		}
+	}
+#else
 	if (task_contributes_to_load(p))
 		rq->nr_uninterruptible++;
+#endif
 
 	dequeue_task(rq, p, flags);
 }
@@ -1694,6 +1730,18 @@ static void ttwu_do_wakeup(struct rq *rq, struct task_struct *p, int wake_flags,
 		p->sched_class->task_woken(rq, p);
 		rq_repin_lock(rq, rf);
 	}
+#ifdef CONFIG_BT_SCHED
+	if (p->sched_class != &bt_sched_class && rq->idle_bt_stamp) {
+		u64 delta = rq->clock - rq->idle_bt_stamp;
+		u64 max = 2*sysctl_sched_migration_cost;
+
+		if (delta > max)
+			rq->avg_idle_bt = max;
+		else
+			update_avg(&rq->avg_idle_bt, delta);
+		rq->idle_bt_stamp = 0;
+	}
+#endif
 
 	if (rq->idle_stamp) {
 		u64 delta = rq_clock(rq) - rq->idle_stamp;
@@ -1718,8 +1766,19 @@ ttwu_do_activate(struct rq *rq, struct task_struct *p, int wake_flags,
 	lockdep_assert_held(&rq->lock);
 
 #ifdef CONFIG_SMP
+#ifdef	CONFIG_BT_SCHED
+	if (p->sched_contributes_to_load) {
+		rq->nr_uninterruptible--;
+
+		if (unlikely(p->flags & TNF_SCHED_BT)) {
+			p->flags &= ~TNF_SCHED_BT;
+			rq->bt.nr_uninterruptible--;
+		}
+	}
+#else
 	if (p->sched_contributes_to_load)
 		rq->nr_uninterruptible--;
+#endif
 
 	if (wake_flags & WF_MIGRATED)
 		en_flags |= ENQUEUE_MIGRATED;
@@ -2183,6 +2242,16 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
 	p->se.vruntime			= 0;
 	INIT_LIST_HEAD(&p->se.group_node);
 
+#ifdef	CONFIG_BT_SCHED
+	p->bt.on_rq			= 0;
+	p->bt.exec_start		= 0;
+	p->bt.sum_exec_runtime		= 0;
+	p->bt.prev_sum_exec_runtime	= 0;
+	p->bt.nr_migrations		= 0;
+	p->bt.vruntime			= 0;
+	INIT_LIST_HEAD(&p->bt.group_node);
+#endif
+
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	p->se.cfs_rq			= NULL;
 #endif
@@ -2190,6 +2259,9 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
 #ifdef CONFIG_SCHEDSTATS
 	/* Even if schedstat is disabled, there should not be garbage */
 	memset(&p->se.statistics, 0, sizeof(p->se.statistics));
+#ifdef	CONFIG_BT_SCHED
+	p->bt.bt_statistics = &p->se.statistics;
+#endif
 #endif
 
 	RB_CLEAR_NODE(&p->dl.rb_node);
@@ -2389,6 +2461,10 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 		return -EAGAIN;
 	} else if (rt_prio(p->prio)) {
 		p->sched_class = &rt_sched_class;
+#ifdef	CONFIG_BT_SCHED
+	} else if(bt_prio(p->prio)){
+		p->sched_class = &bt_sched_class;
+#endif
 	} else {
 		p->sched_class = &fair_sched_class;
 	}
@@ -2470,6 +2546,14 @@ void wake_up_new_task(struct task_struct *p)
 	 */
 	__set_task_cpu(p, select_task_rq(p, task_cpu(p), SD_BALANCE_FORK, 0));
 #endif
+#ifdef CONFIG_BT_GROUP_SCHED
+	/* Post initialize new task's util average when its cfs_rq is set */
+	post_init_bt_entity_util_avg(&p->bt);
+
+	/* Initialize new task's runnable average */
+	init_bt_entity_runnable_average(&p->bt);
+#endif
+
 	rq = __task_rq_lock(p, &rf);
 	update_rq_clock(rq);
 	post_init_entity_util_avg(&p->se);
@@ -3003,7 +3087,7 @@ unsigned long long task_sched_runtime(struct task_struct *p)
 	 * been accounted, so we're correct here as well.
 	 */
 	if (!p->on_cpu || !task_on_rq_queued(p))
-		return p->se.sum_exec_runtime;
+		return TASK_SUM_EXEC_RUNTIME(p);
 #endif
 
 	rq = task_rq_lock(p, &rf);
@@ -3017,7 +3101,7 @@ unsigned long long task_sched_runtime(struct task_struct *p)
 		update_rq_clock(rq);
 		p->sched_class->update_curr(rq);
 	}
-	ns = p->se.sum_exec_runtime;
+	ns = TASK_SUM_EXEC_RUNTIME(p);
 	task_rq_unlock(rq, p, &rf);
 
 	return ns;
@@ -3041,6 +3125,9 @@ void scheduler_tick(void)
 	update_rq_clock(rq);
 	curr->sched_class->task_tick(rq, curr, 0);
 	cpu_load_update_active(rq);
+#ifdef CONFIG_BT_SCHED
+	update_cpu_bt_load_active(rq);
+#endif
 	calc_global_load_tick(rq);
 
 	rq_unlock(rq, &rf);
@@ -3048,7 +3135,11 @@ void scheduler_tick(void)
 	perf_event_task_tick();
 
 #ifdef CONFIG_SMP
+#ifdef CONFIG_BT_SCHED
+	rq->idle_balance = idle_bt_cpu(cpu);
+#else
 	rq->idle_balance = idle_cpu(cpu);
+#endif
 	trigger_load_balance(rq);
 #endif
 	rq_last_tick_reset(rq);
@@ -3362,6 +3453,15 @@ static void __sched notrace __schedule(bool preempt)
 		}
 		switch_count = &prev->nvcsw;
 	}
+
+#ifdef CONFIG_BT_SCHED
+	if (unlikely(!(rq->nr_running - rq->bt_nr_running))){
+		if(idle_balance(rq, &rf) <= 0){
+			if (unlikely(!rq->nr_running && rq->idle_bt_stamp))
+				idle_balance_bt(rq, &rf);
+		}
+	}
+#endif
 
 	next = pick_next_task(rq, prev, &rf);
 	clear_tsk_need_resched(prev);
@@ -3752,6 +3852,14 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 		if (oldprio < prio)
 			queue_flag |= ENQUEUE_HEAD;
 		p->sched_class = &rt_sched_class;
+#ifdef	CONFIG_BT_SCHED
+	} else if (bt_prio(prio)) {
+		if (dl_prio(oldprio))
+			p->dl.dl_boosted = 0;
+		if (rt_prio(oldprio))
+			p->rt.timeout = 0;
+		p->sched_class = &bt_sched_class;
+#endif
 	} else {
 		if (dl_prio(oldprio))
 			p->dl.dl_boosted = 0;
@@ -3816,8 +3924,17 @@ void set_user_nice(struct task_struct *p, long nice)
 	if (running)
 		put_prev_task(rq, p);
 
-	p->static_prio = NICE_TO_PRIO(nice);
-	set_load_weight(p);
+#ifdef	CONFIG_BT_SCHED
+	if (task_has_bt_policy(p)) {
+		p->static_prio = NICE_TO_BT_PRIO(nice);
+		set_bt_load_weight(p);
+	} else
+#endif
+	{
+		p->static_prio = NICE_TO_PRIO(nice);
+		set_load_weight(p);
+	}
+
 	old_prio = p->prio;
 	p->prio = effective_prio(p);
 	delta = p->prio - old_prio;
@@ -3901,6 +4018,53 @@ int task_prio(const struct task_struct *p)
 }
 
 /**
+ * task_nice - return the nice value of a given task.
+ * @p: the task in question.
+ *
+ * Return: The nice value [ -20 ... 0 ... 19 ].
+ */
+inline int task_nice(const struct task_struct *p)
+{
+#ifdef	CONFIG_BT_SCHED
+	int task_nice = 0;
+
+	if(bt_prio(p->static_prio))
+		task_nice = TASK_BT_NICE(p);
+	else
+		task_nice = PRIO_TO_NICE((p)->static_prio);
+
+	return task_nice;
+#else
+	return PRIO_TO_NICE((p)->static_prio);
+#endif
+}
+EXPORT_SYMBOL(task_nice);
+
+#ifdef CONFIG_BT_SCHED
+/**
+ * idle_bt_cpu - is a given cpu idle or bt task currently?
+ * @cpu: the processor in question.
+ */
+int idle_bt_cpu(int cpu)
+{
+	struct rq *rq = cpu_rq(cpu);
+
+	if (rq->curr != rq->idle && !bt_prio(rq->curr->prio))
+		return 0;
+
+	if (rq->nr_running - rq->bt_nr_running)
+		return 0;
+
+#ifdef CONFIG_SMP
+	if (!llist_empty(&rq->wake_list))
+		return 0;
+#endif
+
+	return 1;
+}
+#endif
+
+/**
  * idle_cpu - is a given CPU idle currently?
  * @cpu: the processor in question.
  *
@@ -3967,6 +4131,15 @@ static void __setscheduler_params(struct task_struct *p,
 	else if (fair_policy(policy))
 		p->static_prio = NICE_TO_PRIO(attr->sched_nice);
 
+#ifdef	CONFIG_BT_SCHED
+	if (unlikely(policy == SCHED_BT)) {
+		bt_prio_adjust_pos(&p->static_prio);
+		set_bt_load_weight(p);
+	} else if (policy == SCHED_NORMAL || policy == SCHED_BATCH ||
+		policy == SCHED_IDLE) {
+		bt_prio_adjust_neg(&p->static_prio);
+	}
+#endif
 	/*
 	 * __sched_setscheduler() ensures attr->sched_priority == 0 when
 	 * !rt_policy. Always setting this ensures that things like
@@ -3995,6 +4168,10 @@ static void __setscheduler(struct rq *rq, struct task_struct *p,
 		p->sched_class = &dl_sched_class;
 	else if (rt_prio(p->prio))
 		p->sched_class = &rt_sched_class;
+#ifdef CONFIG_BT_SCHED
+	else if (bt_prio(p->prio))
+		p->sched_class = &bt_sched_class;
+#endif
 	else
 		p->sched_class = &fair_sched_class;
 }
@@ -4031,6 +4208,12 @@ static int __sched_setscheduler(struct task_struct *p,
 
 	/* The pi code expects interrupts enabled */
 	BUG_ON(pi && in_interrupt());
+
+#ifdef CONFIG_BT_SCHED
+	if(!sched_bt_on && SCHED_BT == policy)
+		return -EINVAL;
+#endif
+
 recheck:
 	/* Double check policy once rq lock held: */
 	if (policy < 0) {
@@ -5257,6 +5440,12 @@ void init_idle(struct task_struct *idle, int cpu)
 	__sched_fork(0, idle);
 	idle->state = TASK_RUNNING;
 	idle->se.exec_start = sched_clock();
+#ifdef	CONFIG_BT_SCHED
+	idle->bt.exec_start = idle->se.exec_start;
+#if defined(CONFIG_SCHEDSTATS) || defined(CONFIG_LATENCYTOP)
+	idle->bt.bt_statistics = &idle->se.statistics;
+#endif
+#endif
 	idle->flags |= PF_IDLE;
 
 	kasan_unpoison_task_stack(idle);
@@ -5804,6 +5993,7 @@ static struct kmem_cache *task_group_cache __read_mostly;
 #endif
 
 DECLARE_PER_CPU(cpumask_var_t, load_balance_mask);
+DECLARE_PER_CPU(cpumask_var_t, bt_load_balance_mask);
 DECLARE_PER_CPU(cpumask_var_t, select_idle_mask);
 
 void __init sched_init(void)
@@ -5815,6 +6005,9 @@ void __init sched_init(void)
 	wait_bit_init();
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
+	alloc_size += 2 * nr_cpu_ids * sizeof(void **);
+#endif
+#ifdef CONFIG_BT_GROUP_SCHED
 	alloc_size += 2 * nr_cpu_ids * sizeof(void **);
 #endif
 #ifdef CONFIG_RT_GROUP_SCHED
@@ -5831,6 +6024,13 @@ void __init sched_init(void)
 		ptr += nr_cpu_ids * sizeof(void **);
 
 #endif /* CONFIG_FAIR_GROUP_SCHED */
+#ifdef CONFIG_BT_GROUP_SCHED
+		root_task_group.bt = (struct sched_entity **)ptr;
+		ptr += nr_cpu_ids * sizeof(void **);
+
+		root_task_group.bt_rq = (struct bt_rq **)ptr;
+		ptr += nr_cpu_ids * sizeof(void **);
+#endif /* CONFIG_BT_GROUP_SCHED */
 #ifdef CONFIG_RT_GROUP_SCHED
 		root_task_group.rt_se = (struct sched_rt_entity **)ptr;
 		ptr += nr_cpu_ids * sizeof(void **);
@@ -5844,6 +6044,12 @@ void __init sched_init(void)
 	for_each_possible_cpu(i) {
 		per_cpu(load_balance_mask, i) = (cpumask_var_t)kzalloc_node(
 			cpumask_size(), GFP_KERNEL, cpu_to_node(i));
+
+#ifdef CONFIG_BT_SCHED
+		per_cpu(bt_load_balance_mask, i) = (cpumask_var_t)kzalloc_node(
+			cpumask_size(), GFP_KERNEL, cpu_to_node(i));
+#endif
+
 		per_cpu(select_idle_mask, i) = (cpumask_var_t)kzalloc_node(
 			cpumask_size(), GFP_KERNEL, cpu_to_node(i));
 	}
@@ -5851,6 +6057,9 @@ void __init sched_init(void)
 
 	init_rt_bandwidth(&def_rt_bandwidth, global_rt_period(), global_rt_runtime());
 	init_dl_bandwidth(&def_dl_bandwidth, global_rt_period(), global_rt_runtime());
+#ifdef CONFIG_BT_SCHED
+	init_bt_bandwidth(&def_bt_bandwidth, global_bt_period(), global_bt_runtime());
+#endif
 
 #ifdef CONFIG_SMP
 	init_defrootdomain();
@@ -5881,6 +6090,12 @@ void __init sched_init(void)
 		init_cfs_rq(&rq->cfs);
 		init_rt_rq(&rq->rt);
 		init_dl_rq(&rq->dl);
+#ifdef  CONFIG_BT_SCHED
+		rq->bt_nr_running = 0;
+		rq->bt_blocked_clock = 0;
+		rq->do_lb = 0;
+		init_bt_rq(&rq->bt);
+#endif
 #ifdef CONFIG_FAIR_GROUP_SCHED
 		root_task_group.shares = ROOT_TASK_GROUP_LOAD;
 		INIT_LIST_HEAD(&rq->leaf_cfs_rq_list);
@@ -5907,14 +6122,26 @@ void __init sched_init(void)
 		init_cfs_bandwidth(&root_task_group.cfs_bandwidth);
 		init_tg_cfs_entry(&root_task_group, &rq->cfs, NULL, i, NULL);
 #endif /* CONFIG_FAIR_GROUP_SCHED */
+#ifdef CONFIG_BT_GROUP_SCHED
+		root_task_group.bt_shares = ROOT_TASK_GROUP_BT_LOAD;
+		INIT_LIST_HEAD(&rq->leaf_bt_rq_list);
+		init_tg_bt_entry(&root_task_group, &rq->bt, NULL, i, NULL);
+#endif /* CONFIG_BT_GROUP_SCHED */
 
+#ifdef CONFIG_BT_SCHED
+		rq->bt.bt_runtime = def_bt_bandwidth.bt_runtime;
+#endif
 		rq->rt.rt_runtime = def_rt_bandwidth.rt_runtime;
 #ifdef CONFIG_RT_GROUP_SCHED
 		init_tg_rt_entry(&root_task_group, &rq->rt, NULL, i, NULL);
 #endif
 
-		for (j = 0; j < CPU_LOAD_IDX_MAX; j++)
+		for (j = 0; j < CPU_LOAD_IDX_MAX; j++) {
 			rq->cpu_load[j] = 0;
+#ifdef CONFIG_BT_SCHED
+			rq->cpu_bt_load[j] = 0;
+#endif
+		}
 
 #ifdef CONFIG_SMP
 		rq->sd = NULL;
@@ -5929,11 +6156,22 @@ void __init sched_init(void)
 		rq->idle_stamp = 0;
 		rq->avg_idle = 2*sysctl_sched_migration_cost;
 		rq->max_idle_balance_cost = sysctl_sched_migration_cost;
+#ifdef CONFIG_BT_SCHED
+		rq->active_balance_bt = 0;
+		rq->next_balance_bt = jiffies + 1;
+		rq->push_cpu_bt = 0;
+		rq->idle_bt_stamp = 0;
+		rq->avg_idle_bt = 2*sysctl_sched_migration_cost;
+		INIT_LIST_HEAD(&rq->bt_tasks);
+#endif
 
 		INIT_LIST_HEAD(&rq->cfs_tasks);
 
 		rq_attach_root(rq, &def_root_domain);
 #ifdef CONFIG_NO_HZ_COMMON
+#ifdef CONFIG_BT_SCHED
+		rq->last_bt_load_update_tick = jiffies;
+#endif
 		rq->last_load_update_tick = jiffies;
 		rq->nohz_flags = 0;
 #endif
@@ -5971,6 +6209,9 @@ void __init sched_init(void)
 	set_cpu_rq_start_time(smp_processor_id());
 #endif
 	init_sched_fair_class();
+#ifdef CONFIG_BT_SCHED
+	init_sched_bt_class();
+#endif
 
 	init_schedstats();
 
@@ -6069,6 +6310,9 @@ void normalize_rt_tasks(void)
 			continue;
 
 		p->se.exec_start = 0;
+#ifdef	CONFIG_BT_SCHED
+		p->bt.exec_start = 0;
+#endif
 		schedstat_set(p->se.statistics.wait_start,  0);
 		schedstat_set(p->se.statistics.sleep_start, 0);
 		schedstat_set(p->se.statistics.block_start, 0);
@@ -6146,6 +6390,9 @@ static DEFINE_SPINLOCK(task_group_lock);
 static void sched_free_group(struct task_group *tg)
 {
 	free_fair_sched_group(tg);
+#ifdef CONFIG_BT_GROUP_SCHED
+	free_bt_sched_group(tg);
+#endif
 	free_rt_sched_group(tg);
 	autogroup_free(tg);
 	kmem_cache_free(task_group_cache, tg);
@@ -6162,6 +6409,10 @@ struct task_group *sched_create_group(struct task_group *parent)
 
 	if (!alloc_fair_sched_group(tg, parent))
 		goto err;
+#ifdef CONFIG_BT_GROUP_SCHED
+	if (!alloc_bt_sched_group(tg, parent))
+		goto err;
+#endif
 
 	if (!alloc_rt_sched_group(tg, parent))
 		goto err;
@@ -6189,6 +6440,9 @@ void sched_online_group(struct task_group *tg, struct task_group *parent)
 	spin_unlock_irqrestore(&task_group_lock, flags);
 
 	online_fair_sched_group(tg);
+#ifdef CONFIG_BT_SCHED
+	online_bt_sched_group(tg);
+#endif
 }
 
 /* rcu callback to free various structures associated with a task group */
@@ -6210,6 +6464,9 @@ void sched_offline_group(struct task_group *tg)
 
 	/* End participation in shares distribution: */
 	unregister_fair_sched_group(tg);
+#ifdef CONFIG_BT_SCHED
+	unregister_bt_sched_group(tg);
+#endif
 
 	spin_lock_irqsave(&task_group_lock, flags);
 	list_del_rcu(&tg->list);
@@ -6231,7 +6488,7 @@ static void sched_change_group(struct task_struct *tsk, int type)
 	tg = autogroup_task_group(tsk, tg);
 	tsk->sched_task_group = tg;
 
-#ifdef CONFIG_FAIR_GROUP_SCHED
+#if defined(CONFIG_FAIR_GROUP_SCHED) || defined (CONFIG_BT_GROUP_SCHED)
 	if (tsk->sched_class->task_change_group)
 		tsk->sched_class->task_change_group(tsk, type);
 	else
@@ -6354,8 +6611,13 @@ static int cpu_cgroup_can_attach(struct cgroup_taskset *tset)
 			return -EINVAL;
 #else
 		/* We don't support RT-tasks being in separate groups */
-		if (task->sched_class != &fair_sched_class)
+#ifdef CONFIG_BT_SCHED
+		if (task->sched_class != &fair_sched_class && task->sched_class != &bt_sched_class) {
+#else
+		if (task->sched_class != &fair_sched_class) {
+#endif
 			return -EINVAL;
+		}
 #endif
 		/*
 		 * Serialize against wake_up_new_task() such that if its
@@ -6647,6 +6909,22 @@ static int cpu_stats_show(struct seq_file *sf, void *v)
 #endif /* CONFIG_CFS_BANDWIDTH */
 #endif /* CONFIG_FAIR_GROUP_SCHED */
 
+#ifdef CONFIG_BT_GROUP_SCHED
+static int cpu_bt_shares_write_u64(struct cgroup_subsys_state *css,
+				struct cftype *cftype, u64 shareval)
+{
+	return sched_group_set_bt_shares(css_tg(css), scale_load(shareval));
+}
+
+static u64 cpu_bt_shares_read_u64(struct cgroup_subsys_state *css,
+				struct cftype *cft)
+{
+	struct task_group *tg = css_tg(css);
+
+	return (u64) scale_load_down(tg->bt_shares);
+}
+#endif
+
 #ifdef CONFIG_RT_GROUP_SCHED
 static int cpu_rt_runtime_write(struct cgroup_subsys_state *css,
 				struct cftype *cft, s64 val)
@@ -6679,6 +6957,13 @@ static struct cftype cpu_files[] = {
 		.name = "shares",
 		.read_u64 = cpu_shares_read_u64,
 		.write_u64 = cpu_shares_write_u64,
+	},
+#endif
+#ifdef CONFIG_BT_GROUP_SCHED
+	{
+		.name = "bt_shares",
+		.read_u64 = cpu_bt_shares_read_u64,
+		.write_u64 = cpu_bt_shares_write_u64,
 	},
 #endif
 #ifdef CONFIG_CFS_BANDWIDTH

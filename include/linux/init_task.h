@@ -219,6 +219,15 @@ extern struct cred init_cred;
 #define INIT_TASK_SECURITY
 #endif
 
+#ifdef	CONFIG_BT_SCHED
+#define	INIT_PRIO			MAX_PRIO - 20 - 40
+#define	INIT_STATIC_PRIO	MAX_PRIO - 20 - 40
+#define	INIT_NORMAL_PRIO	MAX_PRIO - 20 - 40
+#else
+#define	INIT_PRIO			MAX_PRIO - 20
+#define	INIT_STATIC_PRIO	MAX_PRIO - 20
+#define	INIT_NORMAL_PRIO	MAX_PRIO - 20
+#endif
 /*
  *  INIT_TASK is used to set up the first task table, touch at
  * your own risk!. Base=0, limit=0x1fffff (=2MB)
@@ -230,9 +239,9 @@ extern struct cred init_cred;
 	.stack		= init_stack,					\
 	.usage		= ATOMIC_INIT(2),				\
 	.flags		= PF_KTHREAD,					\
-	.prio		= MAX_PRIO-20,					\
-	.static_prio	= MAX_PRIO-20,					\
-	.normal_prio	= MAX_PRIO-20,					\
+	.prio		= INIT_PRIO,					\
+	.static_prio	= INIT_STATIC_PRIO,					\
+	.normal_prio	= INIT_NORMAL_PRIO,					\
 	.policy		= SCHED_NORMAL,					\
 	.cpus_allowed	= CPU_MASK_ALL,					\
 	.nr_cpus_allowed= NR_CPUS,					\

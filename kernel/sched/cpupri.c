@@ -30,6 +30,7 @@
 #include <linux/gfp.h>
 #include <linux/sched.h>
 #include <linux/sched/rt.h>
+#include <linux/sched/batch.h>
 #include <linux/slab.h>
 #include "cpupri.h"
 
@@ -40,7 +41,11 @@ static int convert_prio(int prio)
 
 	if (prio == CPUPRI_INVALID)
 		cpupri = CPUPRI_INVALID;
+#ifdef	CONFIG_BT_SCHED
+	else if (prio >= MAX_PRIO - BT_PRIO_WIDTH)
+#else
 	else if (prio == MAX_PRIO)
+#endif
 		cpupri = CPUPRI_IDLE;
 	else if (prio >= MAX_RT_PRIO)
 		cpupri = CPUPRI_NORMAL;

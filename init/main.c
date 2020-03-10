@@ -353,6 +353,15 @@ static int __init rdinit_setup(char *str)
 }
 __setup("rdinit=", rdinit_setup);
 
+unsigned int sched_bt_on;
+static int __init set_sched_bt_on(char *str)
+{
+    sched_bt_on = 1;
+
+    return 1;
+}
+early_param("offline_class", set_sched_bt_on);
+
 #ifndef CONFIG_SMP
 static const unsigned int setup_max_cpus = NR_CPUS;
 static inline void setup_nr_cpu_ids(void) { }

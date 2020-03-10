@@ -111,6 +111,19 @@ struct task_group;
 					 (task->flags & PF_FROZEN) == 0 && \
 					 (task->state & TASK_NOLOAD) == 0)
 
+#ifdef  CONFIG_BT_SCHED
+#define TASK_SUM_EXEC_RUNTIME(tsk)  \
+	(unsigned long long)((tsk)->se.sum_exec_runtime + (tsk)->bt.sum_exec_runtime)
+
+#else
+#define TASK_SUM_EXEC_RUNTIME(tsk)   \
+	(unsigned long long)((tsk)->se.sum_exec_runtime)
+
+#endif
+
+#define SCHED_LOAD_SHIFT	10
+#define SCHED_LOAD_SCALE	(1L << SCHED_LOAD_SHIFT)
+
 #ifdef CONFIG_DEBUG_ATOMIC_SLEEP
 
 /*
@@ -209,6 +222,9 @@ struct task_group;
 extern cpumask_var_t			cpu_isolated_map;
 
 extern void scheduler_tick(void);
+#ifdef CONFIG_BT_SCHED
+extern void update_cpu_bt_load_nohz(void);
+#endif
 
 #define	MAX_SCHEDULE_TIMEOUT		LONG_MAX
 
@@ -378,6 +394,15 @@ struct sched_avg {
 	unsigned long			util_avg;
 };
 
+struct sched_avg_bt {
+	u64 			last_update_time;
+	u64 			load_sum;
+	u32 			util_sum;
+	u32 			period_contrib;
+	unsigned long		load_avg;
+	unsigned long		util_avg;
+};
+
 struct sched_statistics {
 #ifdef CONFIG_SCHEDSTATS
 	u64				wait_start;
@@ -429,6 +454,9 @@ struct sched_entity {
 	u64				nr_migrations;
 
 	struct sched_statistics		statistics;
+#ifdef	CONFIG_BT_SCHED
+	struct sched_statistics		*bt_statistics;
+#endif
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	int				depth;
@@ -439,6 +467,11 @@ struct sched_entity {
 	struct cfs_rq			*my_q;
 #endif
 
+#ifdef CONFIG_BT_GROUP_SCHED
+	struct bt_rq			*bt_rq;
+	struct bt_rq			*bt_my_q;
+#endif
+
 #ifdef CONFIG_SMP
 	/*
 	 * Per entity load average tracking.
@@ -447,6 +480,9 @@ struct sched_entity {
 	 * collide with read-mostly values above.
 	 */
 	struct sched_avg		avg ____cacheline_aligned_in_smp;
+#ifdef CONFIG_BT_SCHED
+	struct sched_avg_bt		bt_avg;
+#endif
 #endif
 };
 
@@ -601,6 +637,9 @@ struct task_struct {
 
 	const struct sched_class	*sched_class;
 	struct sched_entity		se;
+#ifdef CONFIG_BT_SCHED
+	struct sched_entity		bt;
+#endif
 	struct sched_rt_entity		rt;
 #ifdef CONFIG_CGROUP_SCHED
 	struct task_group		*sched_task_group;
@@ -1477,20 +1516,13 @@ extern int yield_to(struct task_struct *p, bool preempt);
 extern void set_user_nice(struct task_struct *p, long nice);
 extern int task_prio(const struct task_struct *p);
 
-/**
- * task_nice - return the nice value of a given task.
- * @p: the task in question.
- *
- * Return: The nice value [ -20 ... 0 ... 19 ].
- */
-static inline int task_nice(const struct task_struct *p)
-{
-	return PRIO_TO_NICE((p)->static_prio);
-}
-
+extern int task_nice(const struct task_struct *p);
 extern int can_nice(const struct task_struct *p, const int nice);
 extern int task_curr(const struct task_struct *p);
 extern int idle_cpu(int cpu);
+#ifdef CONFIG_BT_SCHED
+extern int idle_bt_cpu(int cpu);
+#endif
 extern int sched_setscheduler(struct task_struct *, int, const struct sched_param *);
 extern int sched_setscheduler_nocheck(struct task_struct *, int, const struct sched_param *);
 extern int sched_setattr(struct task_struct *, const struct sched_attr *);
