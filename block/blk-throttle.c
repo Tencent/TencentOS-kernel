@@ -100,6 +100,12 @@ enum tg_state_flags {
 
 #define rb_entry_tg(node)	rb_entry((node), struct throtl_grp, rb_node)
 
+#define TG_WEIGHT_MIN 10
+#define TG_WEIGHT_MAX 1000
+/* disk throughput detection cycle */
+#define TG_CK_PERIOD msecs_to_jiffies(300)
+#define TG_SERVICE_SHIFT 12
+
 enum {
 	LIMIT_LOW,
 	LIMIT_MAX,
@@ -179,6 +185,20 @@ struct throtl_grp {
 	unsigned int bio_cnt; /* total bios */
 	unsigned int bad_bio_cnt; /* bios exceeding latency threshold */
 	unsigned long bio_cnt_reset_time;
+
+	/* strategy currently in use, iops/bps or weight */
+	unsigned int policy;
+	/* the number of children nodes */
+	unsigned int childs;
+	/* weight of this node */
+	unsigned int weight;
+	unsigned int leaf_weight;
+	unsigned int children_weight;
+	unsigned int vfraction;
+	unsigned int active:1;
+	unsigned int initial:1;
+	/* the timestamp of the last io of this node */
+	unsigned long active_stamp;
 };
 
 /* We measure latency for request size from <= 4k to >= 1M */
@@ -226,6 +246,9 @@ struct throtl_data
 };
 
 static void throtl_pending_timer_fn(unsigned long arg);
+static bool throtl_group_deactive(struct throtl_grp *tg);
+static void throtl_update_weight(struct throtl_grp *tg, bool f);
+
 
 static inline struct throtl_grp *pd_to_tg(struct blkg_policy_data *pd)
 {
@@ -256,6 +279,12 @@ static struct throtl_grp *sq_to_tg(struct throtl_service_queue *sq)
 	else
 		return NULL;
 }
+static inline struct throtl_grp *tg_parent(struct throtl_grp *tg)
+{
+	struct blkcg_gq *blkg = tg_to_blkg(tg);
+	return blkg ? blkg_to_tg(blkg->parent) : NULL;
+}
+
 
 /**
  * sq_to_td - return throtl_data the specified service queue belongs to
@@ -541,6 +570,21 @@ static void throtl_pd_init(struct blkg_policy_data *pd)
 	if (cgroup_subsys_on_dfl(io_cgrp_subsys) && blkg->parent)
 		sq->parent_sq = &blkg_to_tg(blkg->parent)->service_queue;
 	tg->td = td;
+
+	tg->weight = TG_WEIGHT_MAX;
+	tg->policy = 1;
+}
+
+
+
+static inline bool tg_weight_group(struct throtl_grp *tg)
+{
+	return tg->policy && tg->initial;
+}
+
+static inline bool tg_data_dir(struct throtl_grp *tg, struct bio *bio)
+{
+	return tg_weight_group(tg) ? READ : bio_data_dir(bio);
 }
 
 /*
@@ -558,7 +602,8 @@ static void tg_update_has_rules(struct throtl_grp *tg)
 		tg->has_rules[rw] = (parent_tg && parent_tg->has_rules[rw]) ||
 			(td->limit_valid[td->limit_index] &&
 			 (tg_bps_limit(tg, rw) != U64_MAX ||
-			  tg_iops_limit(tg, rw) != UINT_MAX));
+			  tg_iops_limit(tg, rw) != UINT_MAX)) ||
+			tg_weight_group(tg);
 }
 
 static void throtl_pd_online(struct blkg_policy_data *pd)
@@ -604,6 +649,8 @@ static void throtl_pd_offline(struct blkg_policy_data *pd)
 
 	if (!tg->td->limit_valid[tg->td->limit_index])
 		throtl_upgrade_state(tg->td);
+
+	throtl_group_deactive(tg);
 }
 
 static void throtl_pd_free(struct blkg_policy_data *pd)
@@ -938,7 +985,7 @@ static bool tg_with_in_iops_limit(struct throtl_grp *tg, struct bio *bio,
 static bool tg_with_in_bps_limit(struct throtl_grp *tg, struct bio *bio,
 				 unsigned long *wait)
 {
-	bool rw = bio_data_dir(bio);
+	bool rw = tg_data_dir(tg, bio);
 	u64 bytes_allowed, extra_bytes, tmp;
 	unsigned long jiffy_elapsed, jiffy_wait, jiffy_elapsed_rnd;
 	unsigned int bio_size = throtl_bio_data_size(bio);
@@ -985,8 +1032,10 @@ static bool tg_with_in_bps_limit(struct throtl_grp *tg, struct bio *bio,
 static bool tg_may_dispatch(struct throtl_grp *tg, struct bio *bio,
 			    unsigned long *wait)
 {
-	bool rw = bio_data_dir(bio);
-	unsigned long bps_wait = 0, iops_wait = 0, max_wait = 0;
+	bool rw = tg_data_dir(tg, bio);
+	unsigned long bps_wait = 0;
+	unsigned long iops_wait = 0;
+	unsigned long max_wait = 0;
 
 	/*
  	 * Currently whole state machine of group depends on first bio
@@ -994,8 +1043,8 @@ static bool tg_may_dispatch(struct throtl_grp *tg, struct bio *bio,
 	 * this function with a different bio if there are other bios
 	 * queued.
 	 */
-	BUG_ON(tg->service_queue.nr_queued[rw] &&
-	       bio != throtl_peek_queued(&tg->service_queue.queued[rw]));
+	BUG_ON(tg->service_queue.nr_queued[bio_data_dir(bio)] &&
+	       bio != throtl_peek_queued(&tg->service_queue.queued[bio_data_dir(bio)]));
 
 	/* If tg->bps = -1, then BW is unlimited */
 	if (tg_bps_limit(tg, rw) == U64_MAX &&
@@ -1041,7 +1090,7 @@ static bool tg_may_dispatch(struct throtl_grp *tg, struct bio *bio,
 
 static void throtl_charge_bio(struct throtl_grp *tg, struct bio *bio)
 {
-	bool rw = bio_data_dir(bio);
+	bool rw = tg_data_dir(tg, bio);
 	unsigned int bio_size = throtl_bio_data_size(bio);
 
 	/* Charge the bio to the group */
@@ -1464,6 +1513,19 @@ static ssize_t tg_set_conf(struct kernfs_open_file *of,
 
 	tg_conf_updated(tg, false);
 	ret = 0;
+	/*
+	 * The iops/bps limit is mutually exclusive with the weight
+	 * limit. We can only use one of the strategies at any one time.
+	 */
+	if (tg->policy && tg->initial &&
+	    (of_cft(of)->private == offsetof(struct throtl_grp, bps[READ][LIMIT_MAX])  ||
+	     of_cft(of)->private == offsetof(struct throtl_grp, bps[WRITE][LIMIT_MAX]) ||
+		 of_cft(of)->private == offsetof(struct throtl_grp, iops[READ][LIMIT_MAX]) ||
+		 of_cft(of)->private == offsetof(struct throtl_grp, iops[WRITE][LIMIT_MAX]))) {
+			ret = -EBUSY;
+			goto out_finish;
+	}
+
 out_finish:
 	blkg_conf_finish(&ctx);
 	return ret ?: nbytes;
@@ -1481,12 +1543,154 @@ static ssize_t tg_set_conf_uint(struct kernfs_open_file *of,
 	return tg_set_conf(of, buf, nbytes, off, false);
 }
 
+
+static u64 tg_prfill_leaf_weight(struct seq_file *sf,
+				 struct blkg_policy_data *pd, int off)
+{
+	struct throtl_grp *tg = pd_to_tg(pd);
+	return tg->initial ? __blkg_prfill_u64(sf, pd, tg->leaf_weight) : 0;
+}
+
+static int tg_read_leaf_weight_device(struct seq_file *sf, void *v)
+{
+	blkcg_print_blkgs(sf, css_to_blkcg(seq_css(sf)), tg_prfill_leaf_weight,
+			 &blkcg_policy_throtl, seq_cft(sf)->private, false);
+	return 0;
+}
+
+static u64 tg_prfill_weight(struct seq_file *sf,
+			    struct blkg_policy_data *pd, int off)
+{
+	struct throtl_grp *tg = pd_to_tg(pd);
+	return tg->initial ? __blkg_prfill_u64(sf, pd, tg->weight) : 0;
+}
+
+static int tg_read_weight_device(struct seq_file *sf, void *v)
+{
+	blkcg_print_blkgs(sf, css_to_blkcg(seq_css(sf)), tg_prfill_weight,
+			 &blkcg_policy_throtl, seq_cft(sf)->private, false);
+	return 0;
+}
+
+/*
+static inline void throtl_limit_changed(struct request_queue *q)
+{
+	xchg(&q->td->limits_changed, true);
+	throtl_schedule_delayed_work(q->td, 0);
+}
+*/
+
+static ssize_t tg_do_set_weight_device(struct kernfs_open_file *of,
+			   char *buf, size_t nbytes, loff_t off, bool is_leaf_weight)
+{
+	struct blkcg *blkcg = css_to_blkcg(of_css(of));
+	struct blkg_conf_ctx ctx;
+	struct throtl_grp *tg, *parent;
+	int ret, diff;
+	u64 v;
+
+	ret = blkg_conf_prep(blkcg, &blkcg_policy_throtl, buf, &ctx);
+	if (ret)
+		return ret;
+
+	if (sscanf(ctx.body, "%llu", &v) != 1)
+		goto out;
+
+	ret = -EBUSY;
+	tg = blkg_to_tg(ctx.blkg);
+	if (!tg->policy)
+		goto out;
+
+	ret = 0;
+	if (!v) {
+		if (tg->initial) {
+			throtl_group_deactive(tg);
+			tg->bps[READ][LIMIT_MAX] = -1;
+			tg->initial = 0;
+		}
+		goto out;
+	}
+
+	ret = -EINVAL;
+	parent = tg_parent(tg);
+	if (v >= TG_WEIGHT_MIN && v <= TG_WEIGHT_MAX) {
+		if (!parent) {
+			if (!is_leaf_weight) {
+				/* nothing sense here */
+				tg->weight = v;
+			} else {
+				if (tg->active) {
+					diff = v - tg->leaf_weight;
+					tg->children_weight += diff;
+				}
+				tg->leaf_weight = v;
+			}
+		} else {
+			if (!is_leaf_weight) {
+				if (tg->active) {
+					diff = v - tg->weight;
+					parent->children_weight += diff;
+				}
+				tg->leaf_weight = tg->leaf_weight?:v;
+				tg->weight = v;
+			} else {
+				if (tg->active) {
+					diff = v - tg->leaf_weight;
+					tg->children_weight += diff;
+				}
+				tg->leaf_weight = v;
+			}
+		}
+		ret = 0;
+		tg->initial = 1;
+	}
+	tg_conf_updated(tg, false);
+
+ out:
+	blkg_conf_finish(&ctx);
+	return ret ?: nbytes;
+}
+
+static ssize_t tg_set_leaf_weight_device(struct kernfs_open_file *of,
+			       char *buf, size_t nbytes, loff_t off)
+{
+	return tg_do_set_weight_device(of, buf, nbytes, off, true);
+}
+
+static ssize_t tg_set_weight_device(struct kernfs_open_file *of,
+			       char *buf, size_t nbytes, loff_t off)
+{
+	return tg_do_set_weight_device(of, buf, nbytes, off, false);
+}
+
 static struct cftype throtl_legacy_files[] = {
 	{
 		.name = "throttle.read_bps_device",
 		.private = offsetof(struct throtl_grp, bps[READ][LIMIT_MAX]),
 		.seq_show = tg_print_conf_u64,
 		.write = tg_set_conf_u64,
+	},
+	/* on root, weight is mapped to leaf_weight */
+	{
+		.name = "throttle.weight_device",
+		.flags = CFTYPE_ONLY_ON_ROOT,
+		.seq_show = tg_read_leaf_weight_device,
+		.write = tg_set_leaf_weight_device,
+		.max_write_len = 256,
+	},
+	/* no such mapping necessary for !roots */
+	{
+		.name = "throttle.weight_device",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = tg_read_weight_device,
+		.write = tg_set_weight_device,
+		.max_write_len = 256,
+	},
+	{
+		.name = "throttle.leaf_weight_device",
+		.seq_show = tg_read_leaf_weight_device,
+		.write = tg_set_leaf_weight_device,
+		.max_write_len = 256,
 	},
 	{
 		.name = "throttle.write_bps_device",
@@ -1742,6 +1946,231 @@ static struct blkcg_policy blkcg_policy_throtl = {
 	.pd_offline_fn		= throtl_pd_offline,
 	.pd_free_fn		= throtl_pd_free,
 };
+
+/* We evaluate the true throughput of the disk based on diskstats，
+ * the detection period defaults to 300ms. In order to ensure the
+ * reliability of the calculation results, the throughput is not
+ * updated every cycle. Return true if the throughput is updated,
+ * otherwise return false */
+static bool throtl_probe_perf(struct request_queue *q, struct bio *bio)
+{
+	unsigned long disk_bw, sectors;
+	unsigned long time_elapsed;
+	struct hd_struct *part;
+	u64 io_ticks_ns;
+	bool ret;
+
+	part = disk_get_part(bio->bi_disk, 0);
+
+	io_ticks_ns = part_stat_read(part, io_ticks_ns);
+	swap(io_ticks_ns, q->io_ticks_ns);
+
+	sectors = part_stat_read(part, sectors[READ]);
+	sectors += part_stat_read(part, sectors[WRITE]);
+	swap(sectors, q->last_sectors);
+
+	time_elapsed = jiffies - q->next_ck_time + TG_CK_PERIOD;
+	time_elapsed = time_elapsed * NSEC_PER_SEC;
+	do_div(time_elapsed, HZ);
+
+	io_ticks_ns = q->io_ticks_ns - io_ticks_ns;
+	if (io_ticks_ns < time_elapsed >> 2) {
+		ret = false;
+		goto out;
+	}
+	else if (io_ticks_ns > time_elapsed)
+		io_ticks_ns = time_elapsed;
+
+	sectors = q->last_sectors - sectors;
+	disk_bw = sectors * NSEC_PER_SEC;
+	do_div(disk_bw, io_ticks_ns);
+	if (disk_bw < q->disk_bw)
+		q->disk_bw -= (q->disk_bw - disk_bw) >> 3;
+	else {
+		/* Since io_ticks does not take into account
+		 * other time overheads, the calculations here
+		 * are too large, so there is no need to add
+		 * extra increments. */
+		if (q->disk_bw)
+			q->disk_bw += (disk_bw - q->disk_bw) >> 1;
+		else
+			q->disk_bw = disk_bw;
+	}
+	ret = true;
+out:
+	disk_put_part(part);
+	return true;
+}
+
+static void throtl_update_ratio(struct throtl_grp *tg)
+{
+	unsigned int vfr = 1 << TG_SERVICE_SHIFT;
+	struct throtl_grp *parent, *pos = tg;
+
+	parent = tg_parent(pos);
+	if (!parent) {
+		vfr = vfr * pos->leaf_weight / pos->children_weight;
+		goto out;
+	}
+
+	while ((parent = tg_parent(pos))) {
+		if (parent->children_weight) {
+			vfr = vfr * pos->weight / parent->children_weight;
+			pos = parent;
+		} else
+			WARN_ON(!parent->children_weight);
+	}
+	vfr = vfr * tg->leaf_weight / tg->children_weight;
+
+ out:
+	tg->vfraction = vfr ? vfr : 1;
+	return;
+}
+
+static inline void throtl_update_bps(struct request_queue *q, struct throtl_grp *tg)
+{
+	unsigned int vfr = 1 << TG_SERVICE_SHIFT;
+
+	tg->bps[READ][LIMIT_MAX] = (q->disk_bw << 9) * tg->vfraction / vfr;
+}
+
+/* recalculate the weight of the parent node when suspending or
+ * activating the node */
+static void throtl_update_weight(struct throtl_grp *tg, bool wakeup)
+{
+	struct throtl_grp *parent, *next, *pos = tg;
+
+	if (wakeup) {
+		if (tg->children_weight) {
+			tg->children_weight += tg->leaf_weight;
+			goto out;
+		} else
+			tg->children_weight += tg->leaf_weight;
+
+		do {
+			parent = tg_parent(pos);
+			if (parent) {
+				next = parent->children_weight ? NULL : parent;
+				parent->children_weight += pos->weight;
+				pos = next;
+			}
+		} while (pos && parent);
+	} else {
+		tg->children_weight -= tg->leaf_weight;
+		if (tg->children_weight)
+			goto out;
+
+		/* if no child, give back to parent */
+		do {
+			parent = tg_parent(pos);
+			if (parent) {
+				parent->children_weight -= pos->weight;
+				pos = parent->children_weight ? NULL : parent;
+			}
+		} while (pos && parent);
+	}
+out:
+	return;
+}
+
+static bool throtl_group_active(struct throtl_grp *tg)
+{
+	if (!tg_weight_group(tg))
+		return false;
+
+	if (tg->active) {
+		tg->active_stamp = jiffies;
+		return false;
+	}
+
+	tg->active = 1;
+	tg->active_stamp = jiffies;
+	throtl_update_weight(tg, true);
+	return true;
+}
+
+static bool throtl_group_deactive(struct throtl_grp *tg)
+{
+	unsigned long now = jiffies;
+
+	if (!tg_weight_group(tg) || !tg->active)
+		goto out;
+
+	if (time_after(now, tg->active_stamp + TG_CK_PERIOD) &&
+	    !(tg->service_queue.nr_queued[READ] || tg->service_queue.nr_queued[WRITE])) {
+		tg->active = 0;
+		throtl_update_weight(tg, false);
+		return true;
+	}
+ out:
+	return false;
+}
+
+/* If a node does not have an io operation last cycle, then
+ * we will reclaim its resources. */
+static int throtl_clean_idle_group(struct request_queue *q)
+{
+	struct cgroup_subsys_state *pos_css;
+	struct blkcg_gq *blkg;
+	int group = 0;
+
+	blkg_for_each_descendant_post(blkg, pos_css, q->root_blkg) {
+		if (throtl_group_deactive(blkg_to_tg(blkg)))
+			group++;
+	}
+	if (throtl_group_deactive(blkg_to_tg(q->root_blkg)))
+		group++;
+	return group;
+}
+
+static void throtl_update_io_thresh(struct request_queue *q,
+				    struct throtl_grp *tg,
+				    struct bio *bio)
+{
+	bool changed = false, recal = false;
+	struct blkcg_gq *blkg;
+
+	if (!tg_weight_group(tg))
+		return;
+
+	/* Check if you need to update disk throughput */
+	if (time_after(jiffies, q->next_ck_time)) {
+		recal = throtl_probe_perf(q, bio);
+		q->next_ck_time = jiffies + TG_CK_PERIOD;
+	}
+	/* If effective throughput has not been evaluated,
+	 * then there will be no restrictions for the time
+	 * being. */
+	if (!q->disk_bw)
+		return;
+	/* If the current node has not been activated,
+	 * activate it */
+	if (throtl_group_active(tg))
+		recal = true;
+	/* reclaim resources of idle nodes */
+	if (throtl_clean_idle_group(q))
+		recal = true;
+	if (!recal)
+		return;
+
+	/* reassign resources for all nodes */
+	list_for_each_entry(blkg, &q->blkg_list, q_node) {
+		tg = blkg_to_tg(blkg);
+		if (tg_weight_group(tg) && tg->active) {
+			throtl_update_ratio(tg);
+			throtl_update_bps(q, tg);
+			changed = true;
+		}
+	}
+}
+
+static inline bool tg_queue_pluged(struct throtl_grp *tg, bool rw)
+{
+	if (tg_weight_group(tg))
+		return tg->service_queue.nr_queued[READ] + tg->service_queue.nr_queued[WRITE];
+	else
+		return tg->service_queue.nr_queued[rw];
+}
 
 static unsigned long __tg_last_low_overflow_time(struct throtl_grp *tg)
 {
@@ -2126,6 +2555,7 @@ bool blk_throtl_bio(struct request_queue *q, struct blkcg_gq *blkg,
 	struct throtl_grp *tg = blkg_to_tg(blkg ?: q->root_blkg);
 	struct throtl_service_queue *sq;
 	bool rw = bio_data_dir(bio);
+	bool tg_rw = tg_data_dir(tg, bio);
 	bool throttled = false;
 	struct throtl_data *td = tg->td;
 
@@ -2144,9 +2574,9 @@ bool blk_throtl_bio(struct request_queue *q, struct blkcg_gq *blkg,
 
 	blk_throtl_assoc_bio(tg, bio);
 	blk_throtl_update_idletime(tg);
+	throtl_update_io_thresh(q, tg, bio);
 
 	sq = &tg->service_queue;
-
 again:
 	while (true) {
 		if (tg->last_low_overflow_time[rw] == 0)
@@ -2181,7 +2611,7 @@ again:
 		 *
 		 * So keep on trimming slice even if bio is not queued.
 		 */
-		throtl_trim_slice(tg, rw);
+		throtl_trim_slice(tg, tg_rw);
 
 		/*
 		 * @bio passed through this layer without being throttled.

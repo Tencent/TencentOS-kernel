@@ -1514,6 +1514,19 @@ static void part_round_stats_single(struct request_queue *q, int cpu,
 	part->stamp = now;
 }
 
+static void part_round_stats_single_ns(struct request_queue *q, int cpu,
+				struct hd_struct *part, u64 now, 
+				unsigned int inflight)
+{
+	if (now == part->stamp_ns)
+		return;
+
+	if (inflight)
+		__part_stat_add(cpu, part, io_ticks_ns, (now - part->stamp_ns));
+	part->stamp_ns = now;
+}
+
+
 /**
  * part_round_stats() - Round off the performance stats on a struct disk_stats.
  * @q: target block queue
@@ -1537,6 +1550,7 @@ void part_round_stats(struct request_queue *q, int cpu, struct hd_struct *part)
 	unsigned long now = jiffies;
 	unsigned int inflight[2];
 	int stats = 0;
+	u64 now_ns = ktime_to_ns(ktime_get());
 
 	if (part->stamp != now)
 		stats |= 1;
@@ -1552,10 +1566,17 @@ void part_round_stats(struct request_queue *q, int cpu, struct hd_struct *part)
 
 	part_in_flight(q, part, inflight);
 
-	if (stats & 2)
+	if (stats & 2) {
+		/*for sda1 sda2 sda3*/
 		part_round_stats_single(q, cpu, part2, now, inflight[1]);
-	if (stats & 1)
+		part_round_stats_single_ns(q, cpu, part2, now_ns, inflight[1]);
+	}
+
+	if (stats & 1) {
+		/*for sda*/
 		part_round_stats_single(q, cpu, part, now, inflight[0]);
+		part_round_stats_single_ns(q, cpu, part, now_ns, inflight[0]);
+	}
 }
 EXPORT_SYMBOL_GPL(part_round_stats);
 

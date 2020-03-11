@@ -89,6 +89,7 @@ struct disk_stats {
 	unsigned long ticks[2];
 	unsigned long io_ticks;
 	unsigned long time_in_queue;
+	u64 io_ticks_ns;
 };
 
 #define PARTITION_META_INFO_VOLNAMELTH	64
@@ -122,6 +123,7 @@ struct hd_struct {
 	int make_it_fail;
 #endif
 	unsigned long stamp;
+	u64 stamp_ns;
 	atomic_t in_flight[2];
 #ifdef	CONFIG_SMP
 	struct disk_stats __percpu *dkstats;

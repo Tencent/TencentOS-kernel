@@ -617,6 +617,14 @@ struct request_queue {
 
 #define BLK_MAX_WRITE_HINTS	5
 	u64			write_hints[BLK_MAX_WRITE_HINTS];
+
+	/* disk computed throughput */
+	unsigned long		disk_bw;
+	/* next time to calculate disk throughput */
+	unsigned long		next_ck_time;
+	unsigned long		last_sectors;
+	u64			io_ticks_ns;
+
 };
 
 #define QUEUE_FLAG_QUEUED	0	/* uses generic tag queueing */
