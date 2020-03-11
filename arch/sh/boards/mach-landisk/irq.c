@@ -29,8 +29,8 @@ enum {
 	PCI_INTD, /* PCI int D */
 	ATA,	  /* ATA */
 	FATA,	  /* CF */
-	POWER,	  /* Power swtich */
-	BUTTON,	  /* Button swtich */
+	POWER,	  /* Power switch */
+	BUTTON,	  /* Button switch */
 };
 
 /* Vectors for LANDISK */
