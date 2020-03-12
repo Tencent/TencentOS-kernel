@@ -19,6 +19,7 @@
 #include <linux/timer.h>
 #include <linux/bug.h>
 
+#include <linux/bpf.h>
 #include <net/checksum.h>
 #include <linux/netfilter.h>		/* for union nf_inet_addr */
 #include <linux/ip.h>
@@ -570,6 +571,7 @@ struct ip_vs_conn {
 	__u8			pe_data_len;
 
 	struct rcu_head		rcu_head;
+	unsigned int            skip_bpf; /* 0:nodeport default. 1:clusterip */
 };
 
 /* Extended internal versions of struct ip_vs_service_user and ip_vs_dest_user
@@ -627,6 +629,7 @@ struct ip_vs_service {
 	__u16			protocol; /* which protocol (TCP/UDP) */
 	union nf_inet_addr	addr;	  /* IP address for virtual service */
 	__be16			port;	  /* port number for the service */
+	unsigned int            skip_bpf; /* 0:nodeport default. 1:clusterip */
 	__u32                   fwmark;   /* firewall mark of the service */
 	unsigned int		flags;	  /* service status flags */
 	unsigned int		timeout;  /* persistent timeout in ticks */
@@ -831,6 +834,25 @@ struct ipvs_sync_daemon_cfg {
 	char			mcast_ifn[IP_VS_IFNAME_MAXLEN];
 };
 
+enum {
+	BPF_UNLINK_LOOKUP,
+	BPF_UNLINK_DEL,
+	BPF_UNLINK_DEL2,
+	BPF_UNLINK_MAP_NULL,
+	BPF_NEW_SPORT,
+	BPF_NEW_INSERT,
+	BPF_NEW_RACE,
+	BPF_NEW_RACE_RETRY,
+	BPF_XMIT_LOCAL_RS,
+	BPF_UT_TEST,
+	BPF_UT_TEST2,
+	BPF_ERR_MAX
+};
+
+struct bpf_mib {
+	unsigned long bpf_err_stat[BPF_ERR_MAX];
+};
+
 /* IPVS in network namespace */
 struct netns_ipvs {
 	int			gen;		/* Generation */
@@ -960,7 +982,13 @@ struct netns_ipvs {
 	 * are not supported when synchronization is enabled.
 	 */
 	unsigned int		mixed_address_family_dests;
+
+	/* Err stat for BPF mode */
+	struct bpf_mib __percpu *bpf_stat;
 };
+
+#define BPF_STAT_INC(netns, field) \
+	this_cpu_inc(netns->bpf_stat->bpf_err_stat[field])
 
 #define DEFAULT_SYNC_THRESHOLD	3
 #define DEFAULT_SYNC_PERIOD	50
@@ -1634,5 +1662,50 @@ ip_vs_dest_conn_overhead(struct ip_vs_dest *dest)
 	return (atomic_read(&dest->activeconns) << 8) +
 		atomic_read(&dest->inactconns);
 }
+
+/* sync with bpf snat code. support only AF_INET */
+struct bpf_lb_conn_key {
+	__be32 sip;
+	__be32 dip;
+	__be32 vip;
+	__be16 sport;
+	__be16 dport;
+	__be16 vport;
+	__u8 proto;
+	__u8 pad;
+};
+
+struct bpf_lb_conn_value {
+	__be32 sip;
+	__be32 dip;
+	__be16 sport;
+	__be16 dport;
+	__u8 proto;
+	__u8 pad[3];
+};
+
+typedef void (*bpf_map_put_t)(struct bpf_map *map);
+typedef int (*output_t)(struct net *net, struct sock *sk, struct sk_buff *skb);
+struct bpf_sym_addrs {
+	output_t  ip_finish_output;
+	bpf_map_put_t bpf_map_put;
+	const struct file_operations *bpf_map_fops;
+	const struct file_operations *bpf_prog_fops;
+};
+
+extern struct bpf_sym_addrs resolve_addrs;
+extern struct bpf_map *conntrack_map;
+extern bool bpf_mode_on;
+extern __be32 major_nic_ip;
+
+int ip_vs_bpf_put(void);
+int ip_vs_svc_proc_init(struct netns_ipvs *ipvs);
+int ip_vs_svc_proc_cleanup(struct netns_ipvs *ipvs);
+void ip_vs_get_local_port_range(int *low, int *high);
+
+/* FIXME This is hack, borrowed from ip_vs_ctl.c */
+#define IP_VS_SVC_TAB_BITS 8
+#define IP_VS_SVC_TAB_SIZE (1 << IP_VS_SVC_TAB_BITS)
+extern struct hlist_head ip_vs_svc_table[IP_VS_SVC_TAB_SIZE];
 
 #endif	/* _NET_IP_VS_H */

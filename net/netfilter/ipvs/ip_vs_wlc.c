@@ -52,12 +52,16 @@ ip_vs_wlc_schedule(struct ip_vs_service *svc, const struct sk_buff *skb,
 	 * new connections.
 	 */
 
+	/* in bpf mode, avoid loopback traffic */
 	list_for_each_entry_rcu(dest, &svc->destinations, n_list) {
 		if (!(dest->flags & IP_VS_DEST_F_OVERLOAD) &&
 		    atomic_read(&dest->weight) > 0) {
-			least = dest;
-			loh = ip_vs_dest_conn_overhead(least);
-			goto nextstage;
+			if (!bpf_mode_on ||
+			    (bpf_mode_on && dest->addr.ip != iph->saddr.ip)) {
+				least = dest;
+				loh = ip_vs_dest_conn_overhead(least);
+				goto nextstage;
+			}
 		}
 	}
 	ip_vs_scheduler_err(svc, "no destination available");
@@ -67,8 +71,10 @@ ip_vs_wlc_schedule(struct ip_vs_service *svc, const struct sk_buff *skb,
 	 *    Find the destination with the least load.
 	 */
   nextstage:
+	/* in bpf mode, avoid loopback traffic */
 	list_for_each_entry_continue_rcu(dest, &svc->destinations, n_list) {
-		if (dest->flags & IP_VS_DEST_F_OVERLOAD)
+		if ((dest->flags & IP_VS_DEST_F_OVERLOAD) ||
+		    (bpf_mode_on && dest->addr.ip == iph->saddr.ip))
 			continue;
 		doh = ip_vs_dest_conn_overhead(dest);
 		if ((__s64)loh * atomic_read(&dest->weight) >

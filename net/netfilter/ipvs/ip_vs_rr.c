@@ -69,13 +69,19 @@ ip_vs_rr_schedule(struct ip_vs_service *svc, const struct sk_buff *skb,
 	last = dest = list_entry(p, struct ip_vs_dest, n_list);
 
 	do {
+		/* in bpf mode, avoid loopback traffic */
 		list_for_each_entry_continue_rcu(dest,
 						 &svc->destinations,
 						 n_list) {
 			if (!(dest->flags & IP_VS_DEST_F_OVERLOAD) &&
-			    atomic_read(&dest->weight) > 0)
+			    atomic_read(&dest->weight) > 0) {
 				/* HIT */
-				goto out;
+				if (!bpf_mode_on)
+					goto out;
+				else if (dest->addr.ip != iph->saddr.ip)
+					goto out;
+			}
+
 			if (dest == last)
 				goto stop;
 		}

@@ -249,12 +249,10 @@ ip_vs_use_count_dec(void)
 /*
  *	Hash table: for virtual service lookups
  */
-#define IP_VS_SVC_TAB_BITS 8
-#define IP_VS_SVC_TAB_SIZE (1 << IP_VS_SVC_TAB_BITS)
 #define IP_VS_SVC_TAB_MASK (IP_VS_SVC_TAB_SIZE - 1)
 
 /* the service table hashed by <protocol, addr, port> */
-static struct hlist_head ip_vs_svc_table[IP_VS_SVC_TAB_SIZE];
+struct hlist_head ip_vs_svc_table[IP_VS_SVC_TAB_SIZE];
 /* the service table hashed by fwmark */
 static struct hlist_head ip_vs_svc_fwm_table[IP_VS_SVC_TAB_SIZE];
 
@@ -356,7 +354,7 @@ static int ip_vs_svc_unhash(struct ip_vs_service *svc)
 /*
  *	Get service by {netns, proto,addr,port} in the service table.
  */
-static inline struct ip_vs_service *
+struct ip_vs_service *
 __ip_vs_service_find(struct netns_ipvs *ipvs, int af, __u16 protocol,
 		     const union nf_inet_addr *vaddr, __be16 vport)
 {
@@ -1192,6 +1190,15 @@ ip_vs_add_service(struct netns_ipvs *ipvs, struct ip_vs_service_user_kern *u,
 	/* increase the module use count */
 	ip_vs_use_count_inc();
 
+	/* in bpf mode, avoid loopback traffic */
+	if (bpf_mode_on && strcmp(u->sched_name, "wrr") != 0 &&
+	    strcmp(u->sched_name, "rr") != 0 &&
+	    strcmp(u->sched_name, "lc") != 0 &&
+	    strcmp(u->sched_name, "wlc") != 0) {
+		ret = -EINVAL;
+		pr_err("Bpf mode invalid scheduler\n");
+		goto out_err;
+	}
 	/* Lookup the scheduler by 'u->sched_name' */
 	if (strcmp(u->sched_name, "none")) {
 		sched = ip_vs_scheduler_get(u->sched_name);

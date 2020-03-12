@@ -44,6 +44,7 @@
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv4.h>
 
+#include <net/arp.h>
 #include <net/ip_vs.h>
 
 enum {
@@ -360,7 +361,12 @@ __ip_vs_get_out_rt(struct netns_ipvs *ipvs, int skb_af, struct sk_buff *skb,
 	}
 
 	local = (rt->rt_flags & RTCF_LOCAL) ? 1 : 0;
-	if (unlikely(crosses_local_route_boundary(skb_af, skb, rt_mode,
+
+	/* In bpf mode, this check always return false.Don't call it to avoid
+	 * access of skb->dst
+	 */
+	if (!bpf_mode_on &&
+	    unlikely(crosses_local_route_boundary(skb_af, skb, rt_mode,
 						  local))) {
 		IP_VS_DBG_RL("We are crossing local and non-local addresses"
 			     " daddr=%pI4\n", &daddr);
@@ -400,6 +406,9 @@ __ip_vs_get_out_rt(struct netns_ipvs *ipvs, int skb_af, struct sk_buff *skb,
 	} else
 		skb_dst_set(skb, &rt->dst);
 
+	/* In bpf mode, like ip_output, set output dev */
+	if (bpf_mode_on)
+		skb->dev = skb_dst(skb)->dev;
 	return local;
 
 err_put:
@@ -751,13 +760,25 @@ ip_vs_nat_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 		IP_VS_DBG(10, "filled cport=%d\n", ntohs(*p));
 	}
 
-	was_input = rt_is_input_route(skb_rtable(skb));
+	/* In ipvs mode, ip_route_input_slow will set me to 1 for
+	 * local_in pkt from nic! For pkt local-out this is not set!
+	 * In bpf mode, this is not useful since local rs is not allowed
+	 */
+	if (!bpf_mode_on)
+		was_input = rt_is_input_route(skb_rtable(skb));
+	else
+		was_input = 1;
 	local = __ip_vs_get_out_rt(cp->ipvs, cp->af, skb, cp->dest, cp->daddr.ip,
 				   IP_VS_RT_MODE_LOCAL |
 				   IP_VS_RT_MODE_NON_LOCAL |
 				   IP_VS_RT_MODE_RDR, NULL, ipvsh);
 	if (local < 0)
 		goto tx_error;
+	if (bpf_mode_on && local == 1) {
+		pr_err("shall not route to local rs in bpf mode\n");
+		BPF_STAT_INC(cp->ipvs, BPF_XMIT_LOCAL_RS);
+		goto tx_error;
+	}
 	rt = skb_rtable(skb);
 	/*
 	 * Avoid duplicate tuple in reply direction for NAT traffic
@@ -778,6 +799,11 @@ ip_vs_nat_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 #endif
 
 	/* From world but DNAT to loopback address? */
+	/* Example:
+	 * 1) 192.168.1.2:1234 -> 192.168.1.1:80
+	 * 2) 192.168.1.2:1234 -> 127.0.0.1:80
+	 * 3) 127.0.0.1:80->182.168.1.2:1234. Wrong!!
+	 */
 	if (local && ipv4_is_loopback(cp->daddr.ip) && was_input) {
 		IP_VS_DBG_RL_PKT(1, AF_INET, pp, skb, ipvsh->off,
 				 "ip_vs_nat_xmit(): stopping DNAT to loopback "
@@ -807,8 +833,19 @@ ip_vs_nat_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 	/* Another hack: avoid icmp_send in ip_fragment */
 	skb->ignore_df = 1;
 
-	rc = ip_vs_nat_send_or_cont(NFPROTO_IPV4, skb, cp, local);
-
+	if (!bpf_mode_on) {
+		rc = ip_vs_nat_send_or_cont(NFPROTO_IPV4, skb, cp, local);
+	} else {
+		/* used by bpf egress to construct the key!
+		 * Do it after route so that it doesn't match
+		 * any policy route
+		 */
+		skb->mark = cp->vaddr.ip;
+		skb->vlan_proto = cp->vport;
+		(*(resolve_addrs.ip_finish_output))(cp->ipvs->net, skb->sk,
+						    skb);
+		rc = NF_STOLEN;
+	}
 	LeaveFunction(10);
 	return rc;
 
@@ -1288,7 +1325,10 @@ ip_vs_icmp_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 	/*
 	 * mangle and send the packet here (only for VS/NAT)
 	 */
-	was_input = rt_is_input_route(skb_rtable(skb));
+	if (!bpf_mode_on)
+		was_input = rt_is_input_route(skb_rtable(skb));
+	else
+		was_input = 1;
 
 	/* LOCALNODE from FORWARD hook is not supported */
 	rt_mode = (hooknum != NF_INET_FORWARD) ?
@@ -1338,7 +1378,19 @@ ip_vs_icmp_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 	/* Another hack: avoid icmp_send in ip_fragment */
 	skb->ignore_df = 1;
 
-	rc = ip_vs_nat_send_or_cont(NFPROTO_IPV4, skb, cp, local);
+	if (!bpf_mode_on) {
+		rc = ip_vs_nat_send_or_cont(NFPROTO_IPV4, skb, cp, local);
+	} else {
+		/* used by bpf egress to construct the key!
+		 * Do it after route so that it doesn't match
+		 * any policy route
+		 */
+		skb->mark = cp->vaddr.ip;
+		skb->vlan_proto = cp->vport;
+		(*(resolve_addrs.ip_finish_output))(cp->ipvs->net, skb->sk,
+						    skb);
+		rc = NF_STOLEN;
+	}
 	goto out;
 
   tx_error:

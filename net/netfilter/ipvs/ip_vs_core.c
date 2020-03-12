@@ -29,6 +29,7 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/kallsyms.h>
 #include <linux/ip.h>
 #include <linux/tcp.h>
 #include <linux/sctp.h>
@@ -700,10 +701,53 @@ static inline int ip_vs_gather_frags(struct netns_ipvs *ipvs,
 	return err;
 }
 
+/* ip_route_me_harder in netfilter.c assumes skb_dst is not null.
+ * so copy and modify it here!
+ */
+static int ip_route_me_harder2(struct net *net, struct sk_buff *skb,
+				      unsigned int addr_type)
+{
+	const struct iphdr *iph = ip_hdr(skb);
+	struct rtable *rt;
+	struct flowi4 fl4 = {};
+	__be32 saddr = iph->saddr;
+	__u8 flags = 0;
+
+	if (addr_type == RTN_LOCAL || addr_type == RTN_UNICAST)
+		flags |= FLOWI_FLAG_ANYSRC;
+	else
+		saddr = 0;
+
+	/* some non-standard hacks like ipt_REJECT.c:send_reset() can cause
+	 * packets with foreign saddr to appear on the NF_INET_LOCAL_OUT hook.
+	 */
+	fl4.daddr = iph->daddr;
+	fl4.saddr = saddr;
+	fl4.flowi4_tos = RT_TOS(iph->tos);
+	fl4.flowi4_oif = 0;
+	fl4.flowi4_mark = skb->mark;
+	fl4.flowi4_flags = flags;
+	rt = ip_route_output_key(net, &fl4);
+	if (IS_ERR(rt))
+		return PTR_ERR(rt);
+
+	/* Drop old route. */
+	skb_dst_drop(skb);
+	skb_dst_set(skb, &rt->dst);
+	skb->dev = skb_dst(skb)->dev;
+
+	if (skb_dst(skb)->error)
+		return skb_dst(skb)->error;
+	return 0;
+}
+
+/* In bpf mode, this may run from pre-route which bypass
+ * the route. so route is must here!
+ */
 static int ip_vs_route_me_harder(struct netns_ipvs *ipvs, int af,
 				 struct sk_buff *skb, unsigned int hooknum)
 {
-	if (!sysctl_snat_reroute(ipvs))
+	if (!bpf_mode_on && !sysctl_snat_reroute(ipvs))
 		return 0;
 	/* Reroute replies only to remote clients (FORWARD and LOCAL_OUT) */
 	if (NF_INET_LOCAL_IN == hooknum)
@@ -717,9 +761,14 @@ static int ip_vs_route_me_harder(struct netns_ipvs *ipvs, int af,
 			return 1;
 	} else
 #endif
-		if (!(skb_rtable(skb)->rt_flags & RTCF_LOCAL) &&
-		    ip_route_me_harder(ipvs->net, skb, RTN_LOCAL) != 0)
-			return 1;
+		if (!bpf_mode_on) {
+			if (!(skb_rtable(skb)->rt_flags & RTCF_LOCAL) &&
+			    ip_route_me_harder(ipvs->net, skb, RTN_LOCAL) != 0)
+				return 1;
+		} else {
+			if (ip_route_me_harder2(ipvs->net, skb, RTN_LOCAL) != 0)
+				return 1;
+		}
 
 	return 0;
 }
@@ -881,8 +930,15 @@ static int handle_response_icmp(int af, struct sk_buff *skb,
 	else
 		ip_vs_update_conntrack(skb, cp, 0);
 
+	if (bpf_mode_on)
+		(*(resolve_addrs.ip_finish_output))(cp->ipvs->net, skb->sk,
+						    skb);
+
 ignore_cp:
-	verdict = NF_ACCEPT;
+	if (bpf_mode_on)
+		verdict = NF_STOLEN;
+	else
+		verdict = NF_ACCEPT;
 
 out:
 	__ip_vs_conn_put(cp);
@@ -1237,6 +1293,8 @@ static struct ip_vs_conn *__ip_vs_rs_conn_out(unsigned int hooknum,
 }
 
 /* Handle response packets: rewrite addresses and send away...
+ *
+ * Note: in bpf ip_vs_out->handle_response is invoked from pre-route only
  */
 static unsigned int
 handle_response(int af, struct sk_buff *skb, struct ip_vs_proto_data *pd,
@@ -1279,6 +1337,10 @@ handle_response(int af, struct sk_buff *skb, struct ip_vs_proto_data *pd,
 	 * if it came from this machine itself.  So re-compute
 	 * the routing information.
 	 */
+
+	/* In bpf mode, If client is local, the pkt will goto loopback
+	 * after route
+	 */
 	if (ip_vs_route_me_harder(cp->ipvs, af, skb, hooknum))
 		goto drop;
 
@@ -1291,11 +1353,18 @@ handle_response(int af, struct sk_buff *skb, struct ip_vs_proto_data *pd,
 		ip_vs_notrack(skb);
 	else
 		ip_vs_update_conntrack(skb, cp, 0);
+
+	if (bpf_mode_on)
+		(*(resolve_addrs.ip_finish_output))(cp->ipvs->net, skb->sk,
+						    skb);
 	ip_vs_conn_put(cp);
 
 	LeaveFunction(11);
-	return NF_ACCEPT;
 
+	if (bpf_mode_on)
+		return NF_STOLEN;
+	else
+		return NF_ACCEPT;
 drop:
 	ip_vs_conn_put(cp);
 	kfree_skb(skb);
@@ -1305,6 +1374,8 @@ drop:
 
 /*
  *	Check if outgoing packet belongs to the established ip_vs_conn.
+ *	bpf: previously, local-in, forward, and local-out may call here!
+ *	now, only pre-route handles reply. so that it is not route yet.
  */
 static unsigned int
 ip_vs_out(struct netns_ipvs *ipvs, unsigned int hooknum, struct sk_buff *skb, int af)
@@ -1330,7 +1401,8 @@ ip_vs_out(struct netns_ipvs *ipvs, unsigned int hooknum, struct sk_buff *skb, in
 			return NF_ACCEPT;
 	}
 
-	if (unlikely(!skb_dst(skb)))
+	/* In bpf mode, this is null */
+	if (!bpf_mode_on && unlikely(!skb_dst(skb)))
 		return NF_ACCEPT;
 
 	if (!ipvs->enable)
@@ -1854,7 +1926,7 @@ ip_vs_in(struct netns_ipvs *ipvs, unsigned int hooknum, struct sk_buff *skb, int
 	 */
 	if (unlikely((skb->pkt_type != PACKET_HOST &&
 		      hooknum != NF_INET_LOCAL_OUT) ||
-		     !skb_dst(skb))) {
+		      (!bpf_mode_on && !skb_dst(skb)))) {
 		ip_vs_fill_iph_skb(af, skb, false, &iph);
 		IP_VS_DBG_BUF(12, "packet type=%d proto=%d daddr=%s"
 			      " ignored in hook %u\n",
@@ -2019,6 +2091,19 @@ static unsigned int
 ip_vs_remote_request4(void *priv, struct sk_buff *skb,
 		      const struct nf_hook_state *state)
 {
+	/* Have a peak of every frag so as to decide whether it is for ipvs
+	 * if isn't, ip_vs_in will return NF_ACCEPT or else return NF_STOLEN.
+	 * If the device acts as router which forwards a lot of frag then
+	 * the defrag may impact performance greatly! Lukily, this is not the
+	 * case for us!
+	 */
+	if (bpf_mode_on && unlikely(ip_is_fragment(ip_hdr(skb)))) {
+		if (ip_vs_gather_frags(net_ipvs(state->net), skb,
+				       IP_DEFRAG_VS_IN))
+			/* return 0 will call skb_free in nf_hook */
+			return NF_STOLEN;
+	}
+
 	return ip_vs_in(net_ipvs(state->net), state->hook, skb, AF_INET);
 }
 
@@ -2202,6 +2287,52 @@ static const struct nf_hook_ops ip_vs_ops[] = {
 	},
 #endif
 };
+
+static const struct nf_hook_ops ip_vs_bpf_ops[] = {
+	/* After packet filtering, change source only for VS/NAT */
+	{
+		.hook		= ip_vs_reply4,
+		.pf		= NFPROTO_IPV4,
+		.hooknum	= NF_INET_PRE_ROUTING,
+		.priority	= NF_IP_PRI_FIRST + 1
+	},
+	/* After packet filtering, forward packet through VS/DR, VS/TUN,
+	 * or VS/NAT(change destination), so that filtering rules can be
+	 * applied to IPVS.
+	 */
+	{
+		.hook		= ip_vs_remote_request4,
+		.pf		= NFPROTO_IPV4,
+		.hooknum	= NF_INET_PRE_ROUTING,
+		.priority	= NF_IP_PRI_FIRST + 2
+	},
+
+	/* Note, ip_vs_local_reply4 in local-out is deleted here!
+	 * In ipvs mode, when rs is local, the reply packet will enter here!
+	 * In bpf, we only add rs in isolated namespace. so it can't run here!
+	 */
+
+	/* After mangle, schedule and forward local requests */
+	{
+		.hook		= ip_vs_local_request4,
+		.pf		= NFPROTO_IPV4,
+		.hooknum	= NF_INET_LOCAL_OUT,
+		.priority	= NF_IP_PRI_NAT_DST + 2,
+	},
+
+	/* Note, ip_vs_forward_imcp and ip_vs_reply4 in nf forward is
+	 * deleted here. Reasons are:
+	 * 1) In ipvs mode, for fw-mark based service, the vip may be not
+	 * configured as local, but marked during iptables pre-route.
+	 * so incoming icmp may enter forward hook without being marked
+	 * as it has no port in outter header! In bpf mode, this is captured
+	 * in bpf pre-route hook,and fw-mark is not supported.
+	 * 2) In ipvs mode,nic will get reply from rs like (rsip -> cip)
+	 * Then the host will do route, and call nf forward.
+	 * In bpf mode, it shall never runs
+	 */
+};
+
 /*
  *	Initialize IP Virtual Server netns mem.
  */
@@ -2240,9 +2371,32 @@ static int __net_init __ip_vs_init(struct net *net)
 	if (ip_vs_sync_net_init(ipvs) < 0)
 		goto sync_fail;
 
-	ret = nf_register_net_hooks(net, ip_vs_ops, ARRAY_SIZE(ip_vs_ops));
-	if (ret < 0)
-		goto hook_fail;
+	if (!bpf_mode_on) {
+		ret = nf_register_net_hooks(net, ip_vs_ops,
+					    ARRAY_SIZE(ip_vs_ops));
+		if (ret < 0)
+			goto hook_fail;
+	} else {
+		ret = nf_register_net_hooks(net, ip_vs_bpf_ops,
+					    ARRAY_SIZE(ip_vs_bpf_ops));
+		if (ret < 0)
+			goto hook_fail;
+
+		if (ip_vs_svc_proc_init(ipvs) < 0) {
+			nf_unregister_net_hooks(net, ip_vs_bpf_ops,
+						ARRAY_SIZE(ip_vs_bpf_ops));
+
+			goto hook_fail;
+		}
+
+		ipvs->bpf_stat = alloc_percpu(struct bpf_mib);
+		if (!ipvs->bpf_stat) {
+			nf_unregister_net_hooks(net, ip_vs_bpf_ops,
+						ARRAY_SIZE(ip_vs_bpf_ops));
+			ip_vs_svc_proc_cleanup(ipvs);
+			goto hook_fail;
+		}
+	}
 
 	return 0;
 /*
@@ -2270,7 +2424,16 @@ static void __net_exit __ip_vs_cleanup(struct net *net)
 {
 	struct netns_ipvs *ipvs = net_ipvs(net);
 
-	nf_unregister_net_hooks(net, ip_vs_ops, ARRAY_SIZE(ip_vs_ops));
+	if (!bpf_mode_on)
+		nf_unregister_net_hooks(net, ip_vs_ops,
+					ARRAY_SIZE(ip_vs_ops));
+	else {
+		nf_unregister_net_hooks(net, ip_vs_bpf_ops,
+					ARRAY_SIZE(ip_vs_bpf_ops));
+		free_percpu(ipvs->bpf_stat);
+		ip_vs_svc_proc_cleanup(ipvs);
+	}
+
 	ip_vs_service_net_cleanup(ipvs);	/* ip_vs_flush() with locks */
 	ip_vs_conn_net_cleanup(ipvs);
 	ip_vs_app_net_cleanup(ipvs);
@@ -2302,13 +2465,51 @@ static struct pernet_operations ipvs_core_dev_ops = {
 	.exit = __ip_vs_dev_cleanup,
 };
 
+struct bpf_sym_addrs resolve_addrs;
+
 /*
  *	Initialize IP Virtual Server
  */
 static int __init ip_vs_init(void)
 {
 	int ret;
+	if (bpf_mode_on) {
+		resolve_addrs.ip_finish_output =
+			(output_t)kallsyms_lookup_name("ip_finish_output");
+		if (!resolve_addrs.ip_finish_output) {
+			pr_err("ip_vs resolves ip_finish_output failed\n");
+			ret = -1;
+			goto exit;
+		}
 
+		resolve_addrs.bpf_map_fops =
+			(const struct file_operations *)
+			kallsyms_lookup_name("bpf_map_fops");
+		if (!resolve_addrs.bpf_map_fops) {
+			pr_err("ip_vs resolves bpf_map_fops failed\n");
+			ret = -1;
+			goto exit;
+		}
+
+		resolve_addrs.bpf_map_put =
+			(bpf_map_put_t)kallsyms_lookup_name("bpf_map_put");
+		if (!resolve_addrs.bpf_map_put) {
+			pr_err("ip_vs resolves bpf_map_put failed\n");
+			ret = -1;
+			goto exit;
+		}
+
+		resolve_addrs.bpf_prog_fops =
+			(const struct file_operations *)
+			kallsyms_lookup_name("bpf_prog_fops");
+		if (!resolve_addrs.bpf_prog_fops) {
+			pr_err("ip_vs resolves bpf_prog_fops failed\n");
+			ret = -1;
+			goto exit;
+		}
+	}
+
+	pr_info("bpf_mode_on is %d\n", bpf_mode_on);
 	ret = ip_vs_control_init();
 	if (ret < 0) {
 		pr_err("can't setup control.\n");
@@ -2362,9 +2563,12 @@ static void __exit ip_vs_cleanup(void)
 	ip_vs_conn_cleanup();
 	ip_vs_protocol_cleanup();
 	ip_vs_control_cleanup();
+	if (bpf_mode_on)
+		ip_vs_bpf_put();
 	pr_info("ipvs unloaded.\n");
 }
 
 module_init(ip_vs_init);
 module_exit(ip_vs_cleanup);
 MODULE_LICENSE("GPL");
+MODULE_VERSION("0.1");

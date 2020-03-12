@@ -179,12 +179,18 @@ ip_vs_wrr_schedule(struct ip_vs_service *svc, const struct sk_buff *skb,
 	last = dest;
 	/* Stop only after all dests were checked for weight >= 1 (last pass) */
 	while (1) {
+		/* in bpf mode, avoid loopback traffic */
 		list_for_each_entry_continue_rcu(dest,
 						 &svc->destinations,
 						 n_list) {
 			if (!(dest->flags & IP_VS_DEST_F_OVERLOAD) &&
-			    atomic_read(&dest->weight) >= mark->cw)
-				goto found;
+			    atomic_read(&dest->weight) >= mark->cw) {
+				if (!bpf_mode_on)
+					goto found;
+				else if (dest->addr.ip != iph->saddr.ip)
+					goto found;
+			}
+
 			if (dest == stop)
 				goto err_over;
 		}

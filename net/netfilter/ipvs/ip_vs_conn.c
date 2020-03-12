@@ -38,6 +38,7 @@
 #include <linux/jhash.h>
 #include <linux/random.h>
 
+#include <linux/bpf.h>
 #include <net/net_namespace.h>
 #include <net/ip_vs.h>
 
@@ -52,6 +53,11 @@
 static int ip_vs_conn_tab_bits = CONFIG_IP_VS_TAB_BITS;
 module_param_named(conn_tab_bits, ip_vs_conn_tab_bits, int, 0444);
 MODULE_PARM_DESC(conn_tab_bits, "Set connections' hash size");
+
+bool bpf_mode_on;
+module_param_named(mode, bpf_mode_on, bool, 0444);
+MODULE_PARM_DESC(mode, "set bpf mode in IPVS");
+EXPORT_SYMBOL_GPL(bpf_mode_on);
 
 /* size and mask values */
 int ip_vs_conn_tab_size __read_mostly;
@@ -226,6 +232,81 @@ static inline int ip_vs_conn_unhash(struct ip_vs_conn *cp)
 	return ret;
 }
 
+/* As bpf map doesn't support timer currently, delete it from ipvs. */
+static void ip_vs_unlink_bpf(struct ip_vs_conn *cp)
+{
+	struct bpf_lb_conn_key k;
+	struct bpf_lb_conn_key reply;
+	struct bpf_lb_conn_value *v = NULL;
+	struct bpf_map *map;
+	int err = 0;
+
+	if (!bpf_mode_on || cp->skip_bpf == 1)
+		return;
+
+	k.sip = cp->caddr.ip;
+	k.dip = cp->dest->addr.ip;
+	k.sport = cp->cport;
+	k.dport = cp->dest->port;
+	k.proto = cp->protocol;
+	k.vip = cp->vaddr.ip;
+	k.vport = cp->vport;
+	k.pad = 0;
+
+	map = conntrack_map;
+	if (likely(map)) {
+		v = map->ops->map_lookup_elem(map, &k);
+		if (!v) {
+			/* report error to user! */
+			pr_err("ipvs lookup fail key sip %x sport %u dip %x dport %u vip %x vport %u\n",
+			       ntohl(k.sip),
+			       ntohs(k.sport),
+			       ntohl(k.dip),
+			       ntohs(k.dport),
+			       ntohl(k.vip),
+			       ntohs(k.vport)
+			      );
+			BPF_STAT_INC(cp->ipvs, BPF_UNLINK_LOOKUP);
+			return;
+		}
+
+		reply.sip = cp->dest->addr.ip;
+		reply.sport = cp->dest->port;
+		/* v sip/sport shall be the lip/lport */
+		reply.dip = v->sip;
+		reply.dport = v->sport;
+		reply.proto = cp->protocol;
+		reply.vip = 0;
+		reply.vport = 0;
+		reply.pad = 0;
+
+		err = map->ops->map_delete_elem(map, &k);
+		if (err != 0) {
+			pr_err("ipvs del elem failed key sip %x sport %u dip %x dport %u vip %x vport %u\n",
+			       ntohl(k.sip),
+			       ntohs(k.sport),
+			       ntohl(k.dip),
+			       ntohs(k.dport),
+			       ntohl(k.vip),
+			       ntohs(k.vport));
+			BPF_STAT_INC(cp->ipvs, BPF_UNLINK_DEL);
+		}
+
+		err = map->ops->map_delete_elem(map, &reply);
+		if (err != 0) {
+			pr_err("ipvs del elem failed key sip %x sport %u dip %x dport %u\n",
+			       ntohl(reply.sip),
+			       ntohs(reply.sport),
+			       ntohl(reply.dip),
+			       ntohs(reply.dport));
+			BPF_STAT_INC(cp->ipvs, BPF_UNLINK_DEL2);
+		}
+	} else {
+		pr_err("%s bpf map is null\n", __func__);
+		BPF_STAT_INC(cp->ipvs, BPF_UNLINK_MAP_NULL);
+	}
+}
+
 /* Try to unlink ip_vs_conn from ip_vs_conn_tab.
  * returns bool success.
  */
@@ -246,6 +327,8 @@ static inline bool ip_vs_conn_unlink(struct ip_vs_conn *cp)
 			hlist_del_rcu(&cp->c_list);
 			cp->flags &= ~IP_VS_CONN_F_HASHED;
 			ret = true;
+			if (bpf_mode_on)
+				ip_vs_unlink_bpf(cp);
 		}
 	} else
 		ret = refcount_read(&cp->refcnt) ? false : true;
@@ -888,6 +971,210 @@ void ip_vs_conn_expire_now(struct ip_vs_conn *cp)
 		mod_timer_pending(&cp->timer, jiffies);
 }
 
+static __be32 alloc_localip(void)
+{
+	return major_nic_ip;
+}
+
+/* Borrow code from iptables,pick a unique port in reply direction.
+ * return true if found, false if fail.
+ * The port is saved in reply_key->dport if ok!
+ */
+static bool nf_nat_l4proto_unique_tuple(
+		struct bpf_map *map,
+		struct bpf_lb_conn_key *reply_key)
+{
+	__u16 port = 0;
+	int min = 0, range = 0;
+	int min_high = 0, range_high = 0;
+	int i, j;
+	int count = 0;
+	int low, high;
+
+	ip_vs_get_local_port_range(&low, &high);
+	/* step 1: check the origin sport */
+	if (!map->ops->map_lookup_elem(map, reply_key))
+		return true;
+	port = ntohs(reply_key->dport);
+	if (port < 1024) {
+		if (port < 512) {
+			min = 1;
+			range = 511;
+		} else {
+			min = 512;
+			range = 1023 - 600 + 1;
+		}
+	} else {
+		min = 1024;
+		range = low - 1024; /* [1024 , 32768-1]   */
+		min_high = high + 1;   /* [42768 + 1, 65535] */
+		range_high = 65535 - min_high + 1;
+	}
+
+	/* step 2: pick a random sport, and do it 240 times */
+	for (j = 0; j <= 3; j++) {
+		count = 128 >> j;
+		if (min < 1024) {
+			reply_key->dport = min + prandom_u32() % range;
+		} else {
+			/* Bypass ip_local_port_range */
+			if (prandom_u32() % 2 == 0)
+				reply_key->dport = min + prandom_u32() % range;
+			else
+				reply_key->dport = min_high +
+					prandom_u32() % range_high;
+		}
+		for (i = 0; i < count; i++) {
+			if (map->ops->map_lookup_elem(map,
+						      reply_key) == NULL) {
+				return true;
+			}
+			reply_key->dport = reply_key->dport + 1;
+		}
+	}
+	return false;
+}
+
+#define BPF_CONN_LOCKS 1024
+__cacheline_aligned_in_smp spinlock_t bpf_conntrack_locks[BPF_CONN_LOCKS];
+static void nf_conntrack_single_lock(struct bpf_lb_conn_key *key,
+					    int key_size)
+{
+	u32 hash = jhash(key, key_size, 0);
+
+	hash %= BPF_CONN_LOCKS;
+	spin_lock_bh(&bpf_conntrack_locks[hash]);
+}
+
+static void nf_conntrack_single_unlock(struct bpf_lb_conn_key *key,
+					      int key_size)
+{
+	u32 hash = jhash(key, key_size, 0);
+
+	hash %= BPF_CONN_LOCKS;
+	spin_unlock_bh(&bpf_conntrack_locks[hash]);
+}
+
+/* Only write bpf map for nodeport VIP. Do it before nf_conn allocation to
+ * avoid memory leak! return ture if bpf map inserted ok or unrelated packet!
+ * false if not.
+ */
+static bool ip_vs_conn_new_bpf(struct ip_vs_dest *dest,
+			       unsigned int flags,
+			       const struct ip_vs_conn_param *p,
+			       int *skip)
+{
+	int i;
+	struct ip_vs_service *svc;
+	struct bpf_lb_conn_key key = {};
+	struct bpf_lb_conn_key reply_key = {};
+	struct bpf_lb_conn_value value = {};
+	struct bpf_lb_conn_value reply_value = {};
+	int inserted = 0;
+	struct bpf_map *map;
+	__be32 lip;
+
+	if (!bpf_mode_on)
+		return true;
+
+	svc = rcu_dereference(dest->svc);
+	map = conntrack_map;
+	/* template not save to bpf map */
+	if ((flags & IP_VS_CONN_F_TEMPLATE) || !svc || !map)
+		return true;
+
+	*skip = svc->skip_bpf;
+	if (*skip == 1)
+		return true;
+
+	key.proto = p->protocol;
+	key.sip = p->caddr->ip;
+	key.sport = p->cport;
+	key.dip = dest->addr.ip;
+	key.dport = dest->port;
+	key.vip =  p->vaddr->ip;
+	key.vport = p->vport;
+	key.pad = 0;
+
+	lip = alloc_localip();
+	/* reply dir key:(rsip:rsport -> lip:lport)
+	 * value: (rsip:rsport -> cip:cport)
+	 */
+	reply_key.sip = key.dip;
+	reply_key.sport = key.dport;
+	reply_key.dip = lip;
+	reply_key.dport = key.sport;
+	reply_key.proto = p->protocol;
+	reply_key.vip = 0;
+	reply_key.vport = 0;
+	reply_key.pad = 0;
+
+	reply_value.sip = key.dip;
+	reply_value.sport = key.dport;
+	reply_value.dip = key.sip;
+	reply_value.dport = key.sport;
+	reply_value.proto = p->protocol;
+	/* when race between lport alloc and insert occurs
+	 * try more times!
+	 */
+	for (i = 0; i < 5; i++) {
+		/* This may take long time, don't lock! */
+		if (!nf_nat_l4proto_unique_tuple(map, &reply_key)) {
+			pr_err("sport allocate failed\n");
+			BPF_STAT_INC(p->ipvs, BPF_NEW_SPORT);
+			return false;
+		}
+
+		/* like nf_conntrack_double_lock, query
+		 * and insert shall be atomic
+		 */
+		nf_conntrack_single_lock(&reply_key, map->key_size);
+		if (likely(!map->ops->map_lookup_elem(map, &reply_key))) {
+			if (likely(map->ops->map_update_elem(map,
+							     &reply_key,
+							     &reply_value,
+							     BPF_ANY) == 0)) {
+				/* the common case! break the loop */
+				inserted = 1;
+				nf_conntrack_single_unlock(&reply_key,
+							   map->key_size);
+				break;
+			}
+			/* if lookup ok, shall insert ok since lock is held!*/
+			pr_err("map insert key failed\n");
+
+			BPF_STAT_INC(p->ipvs, BPF_NEW_INSERT);
+			nf_conntrack_single_unlock(&reply_key, map->key_size);
+			return false;
+		}
+
+		BPF_STAT_INC(p->ipvs, BPF_NEW_RACE_RETRY);
+		/* free lock before next loop */
+		nf_conntrack_single_unlock(&reply_key, map->key_size);
+	} /* 5 times loop end */
+
+	if (unlikely(inserted != 1)) {
+		pr_err("bpf snat lport race can't be resolved!");
+		BPF_STAT_INC(p->ipvs, BPF_NEW_RACE);
+		return false;
+	}
+	/* incoming dir: (cip -> rsip)-> (lip->rsip) */
+	value.sip = lip;
+	value.sport = reply_key.dport;
+	value.dip = key.dip;
+	value.dport = key.dport;
+	value.proto = p->protocol;
+	if (unlikely(map->ops->map_update_elem(map,
+					       &key,
+					       &value,
+					       BPF_ANY) != 0)) {
+		pr_err("map insert entry failed ret\n");
+		BPF_STAT_INC(p->ipvs, BPF_NEW_INSERT);
+		return false;
+	}
+
+	return true;
+}
 
 /*
  *	Create a new connection entry and hash it into the ip_vs_conn_tab
@@ -901,6 +1188,12 @@ ip_vs_conn_new(const struct ip_vs_conn_param *p, int dest_af,
 	struct netns_ipvs *ipvs = p->ipvs;
 	struct ip_vs_proto_data *pd = ip_vs_proto_data_get(p->ipvs,
 							   p->protocol);
+	int skip = 0;
+
+	if (bpf_mode_on) {
+		if (!ip_vs_conn_new_bpf(dest, flags, p, &skip))
+			return NULL;
+	}
 
 	cp = kmem_cache_alloc(ip_vs_conn_cachep, GFP_ATOMIC);
 	if (cp == NULL) {
@@ -916,6 +1209,8 @@ ip_vs_conn_new(const struct ip_vs_conn_param *p, int dest_af,
 	cp->protocol	   = p->protocol;
 	ip_vs_addr_set(p->af, &cp->caddr, p->caddr);
 	cp->cport	   = p->cport;
+	if (bpf_mode_on)
+		cp->skip_bpf = skip;
 	/* proto should only be IPPROTO_IP if p->vaddr is a fwmark */
 	ip_vs_addr_set(p->protocol == IPPROTO_IP ? AF_UNSPEC : p->af,
 		       &cp->vaddr, p->vaddr);
@@ -1439,6 +1734,10 @@ int __init ip_vs_conn_init(void)
 		spin_lock_init(&__ip_vs_conntbl_lock_array[idx].l);
 	}
 
+	if (bpf_mode_on) {
+		for (idx = 0; idx < BPF_CONN_LOCKS; idx++)
+			spin_lock_init(&bpf_conntrack_locks[idx]);
+	}
 	/* calculate the random value for connection hash */
 	get_random_bytes(&ip_vs_conn_rnd, sizeof(ip_vs_conn_rnd));
 
