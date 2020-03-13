@@ -272,8 +272,9 @@ static inline bool kvm_mwait_in_guest(void)
 		return false;
 
 	switch (boot_cpu_data.x86_vendor) {
+	case X86_VENDOR_HYGON:
 	case X86_VENDOR_AMD:
-		/* All AMD CPUs have a working MWAIT implementation */
+		/* All AMD or Hygon CPUs have a working MWAIT implementation */
 		return true;
 	case X86_VENDOR_INTEL:
 		/* Handle Intel below */
