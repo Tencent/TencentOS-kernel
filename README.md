@@ -733,7 +733,55 @@ cpuacct.bt_usage_percpu_user,cpuacct.bt_usage_sys,cpuacct.bt_usage_user同cfs的
 
 ## NVME IO隔离
 
-- 待push, 敬请期待
+### 研发背景
+内核通用块层通过io throttle，以cgruop的形式来限制iops 和bps。同时在IO调度层，内核通过各种调度器来实现按权重比例隔离。
+
+因为mq设备通常不经过调度层，所以无法按照权重隔离。该补丁的实现，就是基于io throttling动态调节bps limit，最终实现通用层的权重隔离。
+
+### 设计思路
+以前在io throttling中，我们可以通过cgroup限制处于同一个cgroup的进程针对某个设备的bps值。那如果我们能够及时获取当前块设备的实时带宽，那么通过动态按照权重调节该值即可实现该功能。
+为了避免浪费带宽，我们对于一段时间没有产生io的cgroup，够剥夺他们的权重，供其他cgroup使用，保证利用率最大化。
+
+对于每个cgroup，我们引入两个权重来表示他们的权重之和
+* leaf weight
+该cgroup**自身**与**一级子节点**之间的权重关系
+* weight
+决定了**本节点**占用**父节点**权重
+
+
+
+
+### 计算方式：
+```
+对于某cgroup，记作c
+c.sum = c.leaf_weight + Σc.child[i].weight 其中c.child[i].weight为该cgroup的所有直系子cgroup的weight值
+
+对于root节点，其可享受到的带宽比例为100%
+对于非root cgroup `c` 可以享受到的带宽比例为
+c.weight / c.parent.sum
+```
+### 使用方法
+在blkio cgroup目录下，有以下两个文件
+`blkio.throttle.leaf_weight_device`
+`blkio.throttle.weight_device`
+
+对该两个文件的配置方式为
+```
+echo major:min $weight > $file
+#其中：
+# major和 min对应块设备（不可以是partition）
+# weight 的范围为 10 ~ 1000
+# file 即上述的两个cgroup配置接口文件
+```
+### 使用场景举例
+```
+echo "259:2 800 > /sys/fs/cgroup/blkio/blkio.throttle.leaf_weight_device"
+echo "259:2 200 > /sys/fs/cgroup/blkio/offline_tasks/blkio.throttle.weight_device"
+```
+
+以上表示我们希望针对259:2 设备，root cgroup的权重是 offline_tasks的4倍。当root节点持续一段时间对该设备没有io后，其权重会全部被offline_tasks节点瓜分。
+
+
 
 
 
