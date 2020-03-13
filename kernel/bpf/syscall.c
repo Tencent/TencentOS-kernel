@@ -1931,6 +1931,19 @@ void bpf_link_init(struct bpf_link *link, const struct bpf_link_ops *ops,
 	link->prog = prog;
 }
 
+/* Clean up bpf_link and corresponding anon_inode file and FD. After
+ * anon_inode is created, bpf_link can't be just kfree()'d due to deferred
+ * anon_inode's release() call. This helper manages marking bpf_link as
+ * defunct, releases anon_inode file and puts reserved FD.
+ */
+static void bpf_link_cleanup(struct bpf_link *link, struct file *link_file,
+			     int link_fd)
+{
+	link->prog = NULL;
+	fput(link_file);
+	put_unused_fd(link_fd);
+}
+
 void bpf_link_inc(struct bpf_link *link)
 {
 	atomic64_inc(&link->refcnt);
@@ -2099,8 +2112,10 @@ static int bpf_tracing_prog_attach(struct bpf_prog *prog)
 	bpf_link_init(&link->link, &bpf_tracing_link_lops, prog);
 
 	err = bpf_trampoline_link_prog(prog);
-	if (err)
+	if (err) {
+		bpf_link_cleanup(&link->link, link_file, link_fd);
 		goto out_free_link;
+	}
 
 	link_fd = bpf_link_new_fd(&link->link);
 	if (link_fd < 0) {
@@ -2202,8 +2217,10 @@ static int bpf_raw_tracepoint_open(const union bpf_attr *attr)
 	raw_tp->btp = btp;
 
 	err = bpf_probe_register(raw_tp->btp, prog);
-	if (err)
+	if (err) {
+		bpf_link_cleanup(&link->link, link_file, link_fd);
 		goto out_free_tp;
+	}
 
 	link_fd = bpf_link_new_fd(&raw_tp->link);
 	if (link_fd < 0) {
