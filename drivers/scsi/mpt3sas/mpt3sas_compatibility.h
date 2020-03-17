@@ -2,9 +2,10 @@
  * Compatiblity Header for compilation working across multiple kernels
  *
  * This code is based on drivers/scsi/mpt3sas/mpt3sas_base.c
- * Copyright (C) 2013-2016  LSI Corporation
- * Copyright (C) 2013-2016  Avago Technologies
- *  (mailto:MPT-FusionLinux.pdl@avagotech.com)
+ * Copyright (C) 2013-2018  LSI Corporation
+ * Copyright (C) 2013-2018  Avago Technologies
+ * Copyright (C) 2013-2018  Broadcom Inc.
+ *  (mailto:MPT-FusionLinux.pdl@broadcom.com)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -47,7 +48,14 @@
 
 #include <linux/version.h>
 
-#if ((defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,59)))
+#if ((defined(RHEL_MAJOR) && (RHEL_MAJOR == 7) && (RHEL_MINOR >= 3)) || \
+    (defined(CONFIG_SUSE_KERNEL) && (LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,21))) || \
+    (LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)))
+#include <linux/irq_poll.h>
+#define MPT3SAS_ENABLE_IRQ_POLL
+#endif
+
+#if ((defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,59) && LINUX_VERSION_CODE < KERNEL_VERSION(4,12,14)))
 extern int scsi_internal_device_block(struct scsi_device *sdev, bool wait);
 #elif (LINUX_VERSION_CODE < KERNEL_VERSION(4,11,0))
 extern int scsi_internal_device_block(struct scsi_device *sdev);

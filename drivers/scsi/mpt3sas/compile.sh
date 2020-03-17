@@ -31,6 +31,14 @@ blacklist_enclosure()
 	fi;
 }
 
+fw_mpi2="$PWD/../../fwapi/mpi2"
+if [ ! -d mpi ] && [ ! -L mpi ] && [ -d $fw_mpi2 ]; then
+        ln -s ../../fwapi/mpi2 mpi
+elif [ ! -d mpi ] && [ ! -d $fw_mpi2 ]; then
+        echo "MPI header files from $fw_mpi2 are missing"
+        exit
+fi
+
 # Sparse - a semantic parser, provides a set of annotations designed to convey
 # semantic information about types, such as what address space pointers point
 # to, or what locks a function acquires or releases. You can obtain the latest

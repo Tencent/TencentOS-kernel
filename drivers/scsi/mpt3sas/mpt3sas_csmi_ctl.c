@@ -1,9 +1,10 @@
 /*
  * Scsi Host Layer for MPT (Message Passing Technology) based controllers
  *
- * Copyright (C) 2012-2016  LSI Corporation
- * Copyright (C) 2013-2016 Avago Technologies
- *  (mailto: MPT-FusionLinux.pdl@avagotech.com)
+ * Copyright (C) 2012-2018  LSI Corporation
+ * Copyright (C) 2013-2018 Avago Technologies
+ * Copyright (C) 2013-2018 Broadcom Inc.
+ *  (mailto: MPT-FusionLinux.pdl@broadcom.com)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -271,7 +272,6 @@ _ctl_do_fw_download(struct MPT3SAS_ADAPTER *ioc, char *fwbuf, size_t fwlen)
 	MPI2DefaultReply_t *mpi_reply;
 	Mpi2FWDownloadRequest *dlmsg;
 	Mpi2FWDownloadTCSGE_t *tcsge;
-	u32 ioc_state;
 	u16 ioc_status;
 	u16 smid;
 	unsigned long timeout, timeleft;
@@ -282,7 +282,6 @@ _ctl_do_fw_download(struct MPT3SAS_ADAPTER *ioc, char *fwbuf, size_t fwlen)
 	size_t data_out_sz = 0;
 	u32 sgl_flags;
 	long ret;
-	u16 wait_state_count;
 	u32 chunk_sz = 0;
 	u32 cur_offset = 0;
 	u32 remaining_bytes = (u32)fwlen;
@@ -295,25 +294,10 @@ _ctl_do_fw_download(struct MPT3SAS_ADAPTER *ioc, char *fwbuf, size_t fwlen)
 		ret = -EAGAIN;
 		goto out;
 	}
-	wait_state_count = 0;
-	ioc_state = mpt3sas_base_get_iocstate(ioc, 1);
-	while (ioc_state != MPI2_IOC_STATE_OPERATIONAL) {
-		if (wait_state_count++ == 10) {
-			printk(MPT3SAS_ERR_FMT
-			    "%s: failed due to ioc not operational\n",
-			    ioc->name, __func__);
-			ret = -EFAULT;
-			goto out;
-		}
-		ssleep(1);
-		ioc_state = mpt3sas_base_get_iocstate(ioc, 1);
-		printk(MPT3SAS_INFO_FMT "%s: waiting for "
-		    "operational state(count=%d)\n", ioc->name,
-		    __func__, wait_state_count);
-	}
-	if (wait_state_count)
-		printk(MPT3SAS_INFO_FMT "%s: ioc is operational\n",
-		    ioc->name, __func__);
+
+	ret = mpt3sas_wait_for_ioc_to_operational(ioc, 10);
+	if (ret)
+		goto out;
 
  again:
 	if (remaining_bytes > FW_DL_CHUNK_SIZE)

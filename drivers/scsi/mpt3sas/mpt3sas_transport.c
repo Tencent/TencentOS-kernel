@@ -2,9 +2,10 @@
  * SAS Transport Layer for MPT (Message Passing Technology) based controllers
  *
  * This code is based on drivers/scsi/mpt3sas/mpt3sas_transport.c
- * Copyright (C) 2013-2016  LSI Corporation
- * Copyright (C) 2013-2016  Avago Technologies
- *  (mailto:MPT-FusionLinux.pdl@avagotech.com)
+ * Copyright (C) 2013-2018  LSI Corporation
+ * Copyright (C) 2013-2018  Avago Technologies
+ * Copyright (C) 2013-2018  Broadcom Inc.
+ *  (mailto:MPT-FusionLinux.pdl@broadcom.com)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -384,7 +385,6 @@ _transport_expander_report_manufacture(struct MPT3SAS_ADAPTER *ioc,
 	struct rep_manu_request *manufacture_request;
 	int rc;
 	u16 smid;
-	u32 ioc_state;
 	void *psge;
 	u8 issue_reset = 0;
 	void *data_out = NULL;
@@ -392,7 +392,6 @@ _transport_expander_report_manufacture(struct MPT3SAS_ADAPTER *ioc,
 	dma_addr_t data_in_dma;
 	size_t data_in_sz;
 	size_t data_out_sz;
-	u16 wait_state_count;
 
 	if (ioc->shost_recovery || ioc->pci_error_recovery) {
 		printk(MPT3SAS_INFO_FMT "%s: host reset in progress!\n",
@@ -405,30 +404,14 @@ _transport_expander_report_manufacture(struct MPT3SAS_ADAPTER *ioc,
 	if (ioc->transport_cmds.status != MPT3_CMD_NOT_USED) {
 		printk(MPT3SAS_ERR_FMT "%s: transport_cmds in use\n",
 		    ioc->name, __func__);
-		rc = -EAGAIN;
-		goto out;
+		mutex_unlock(&ioc->transport_cmds.mutex);
+		return -EAGAIN;
 	}
 	ioc->transport_cmds.status = MPT3_CMD_PENDING;
 
-	wait_state_count = 0;
-	ioc_state = mpt3sas_base_get_iocstate(ioc, 1);
-	while (ioc_state != MPI2_IOC_STATE_OPERATIONAL) {
-		if (wait_state_count++ == 10) {
-			printk(MPT3SAS_ERR_FMT
-			    "%s: failed due to ioc not operational\n",
-			    ioc->name, __func__);
-			rc = -EFAULT;
-			goto out;
-		}
-		ssleep(1);
-		ioc_state = mpt3sas_base_get_iocstate(ioc, 1);
-		printk(MPT3SAS_INFO_FMT "%s: waiting for "
-		    "operational state(count=%d)\n", ioc->name,
-		    __func__, wait_state_count);
-	}
-	if (wait_state_count)
-		printk(MPT3SAS_INFO_FMT "%s: ioc is operational\n",
-		    ioc->name, __func__);
+	rc = mpt3sas_wait_for_ioc_to_operational(ioc, 10);
+	if (rc)
+		goto out;
 
 	smid = mpt3sas_base_get_smid(ioc, ioc->transport_cb_idx);
 	if (!smid) {
@@ -1312,13 +1295,11 @@ _transport_get_expander_phy_error_log(struct MPT3SAS_ADAPTER *ioc,
 	struct phy_error_log_reply *phy_error_log_reply;
 	int rc;
 	u16 smid;
-	u32 ioc_state;
 	void *psge;
 	u8 issue_reset = 0;
 	void *data_out = NULL;
 	dma_addr_t data_out_dma;
 	u32 sz;
-	u16 wait_state_count;
 
 	if (ioc->shost_recovery || ioc->pci_error_recovery) {
 		printk(MPT3SAS_INFO_FMT "%s: host reset in progress!\n",
@@ -1331,30 +1312,14 @@ _transport_get_expander_phy_error_log(struct MPT3SAS_ADAPTER *ioc,
 	if (ioc->transport_cmds.status != MPT3_CMD_NOT_USED) {
 		printk(MPT3SAS_ERR_FMT "%s: transport_cmds in use\n",
 		    ioc->name, __func__);
-		rc = -EAGAIN;
-		goto out;
+		mutex_unlock(&ioc->transport_cmds.mutex);
+		return -EAGAIN;
 	}
 	ioc->transport_cmds.status = MPT3_CMD_PENDING;
 
-	wait_state_count = 0;
-	ioc_state = mpt3sas_base_get_iocstate(ioc, 1);
-	while (ioc_state != MPI2_IOC_STATE_OPERATIONAL) {
-		if (wait_state_count++ == 10) {
-			printk(MPT3SAS_ERR_FMT
-			    "%s: failed due to ioc not operational\n",
-			    ioc->name, __func__);
-			rc = -EFAULT;
-			goto out;
-		}
-		ssleep(1);
-		ioc_state = mpt3sas_base_get_iocstate(ioc, 1);
-		printk(MPT3SAS_INFO_FMT "%s: waiting for "
-		    "operational state(count=%d)\n", ioc->name,
-		    __func__, wait_state_count);
-	}
-	if (wait_state_count)
-		printk(MPT3SAS_INFO_FMT "%s: ioc is operational\n",
-		    ioc->name, __func__);
+	rc = mpt3sas_wait_for_ioc_to_operational(ioc, 10);
+	if (rc)
+		goto out;
 
 	smid = mpt3sas_base_get_smid(ioc, ioc->transport_cb_idx);
 	if (!smid) {
@@ -1617,13 +1582,11 @@ _transport_expander_phy_control(struct MPT3SAS_ADAPTER *ioc,
 	struct phy_control_reply *phy_control_reply;
 	int rc;
 	u16 smid;
-	u32 ioc_state;
 	void *psge;
 	u8 issue_reset = 0;
 	void *data_out = NULL;
 	dma_addr_t data_out_dma;
 	u32 sz;
-	u16 wait_state_count;
 
 	if (ioc->shost_recovery || ioc->pci_error_recovery) {
 		printk(MPT3SAS_INFO_FMT "%s: host reset in progress!\n",
@@ -1636,30 +1599,14 @@ _transport_expander_phy_control(struct MPT3SAS_ADAPTER *ioc,
 	if (ioc->transport_cmds.status != MPT3_CMD_NOT_USED) {
 		printk(MPT3SAS_ERR_FMT "%s: transport_cmds in use\n",
 		    ioc->name, __func__);
-		rc = -EAGAIN;
-		goto out;
+		mutex_unlock(&ioc->transport_cmds.mutex);
+		return -EAGAIN;
 	}
 	ioc->transport_cmds.status = MPT3_CMD_PENDING;
 
-	wait_state_count = 0;
-	ioc_state = mpt3sas_base_get_iocstate(ioc, 1);
-	while (ioc_state != MPI2_IOC_STATE_OPERATIONAL) {
-		if (wait_state_count++ == 10) {
-			printk(MPT3SAS_ERR_FMT
-			    "%s: failed due to ioc not operational\n",
-			    ioc->name, __func__);
-			rc = -EFAULT;
-			goto out;
-		}
-		ssleep(1);
-		ioc_state = mpt3sas_base_get_iocstate(ioc, 1);
-		printk(MPT3SAS_INFO_FMT "%s: waiting for "
-		    "operational state(count=%d)\n", ioc->name,
-		    __func__, wait_state_count);
-	}
-	if (wait_state_count)
-		printk(MPT3SAS_INFO_FMT "%s: ioc is operational\n",
-		    ioc->name, __func__);
+	rc = mpt3sas_wait_for_ioc_to_operational(ioc, 10);
+	if (rc)
+		goto out;
 
 	smid = mpt3sas_base_get_smid(ioc, ioc->transport_cb_idx);
 	if (!smid) {
@@ -2061,7 +2008,9 @@ _transport_phy_speed(struct sas_phy *phy, struct sas_phy_linkrates *rates)
 }
 #endif
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,14,0) \
+	|| (defined(CONFIG_SUSE_KERNEL) && ((CONFIG_SUSE_VERSION == 15) && (CONFIG_SUSE_PATCHLEVEL >= 1))) \
+	|| (defined(CONFIG_SUSE_KERNEL) && ((CONFIG_SUSE_VERSION == 12) && (CONFIG_SUSE_PATCHLEVEL >= 5))))
 static int
 _transport_map_smp_buffer(struct device *dev, struct bsg_buffer *buf,
 		dma_addr_t *dma_addr, size_t *dma_len, void **p)
@@ -2127,18 +2076,19 @@ _transport_smp_handler(struct bsg_job *job, struct Scsi_Host *shost,
 		pr_info(MPT3SAS_FMT "%s: host reset in progress!\n",
 		    __func__, ioc->name);
 		rc = -EFAULT;
-		goto out;
+		goto job_done;
 	}
 
 	rc = mutex_lock_interruptible(&ioc->transport_cmds.mutex);
 	if (rc)
-		goto out;
+		goto job_done;
 
 	if (ioc->transport_cmds.status != MPT3_CMD_NOT_USED) {
 		pr_err(MPT3SAS_FMT "%s: transport_cmds in use\n", ioc->name,
 		    __func__);
+		mutex_unlock(&ioc->transport_cmds.mutex);
 		rc = -EAGAIN;
-		goto out;
+		goto job_done;
 	}
 	ioc->transport_cmds.status = MPT3_CMD_PENDING;
 
@@ -2257,11 +2207,11 @@ _transport_smp_handler(struct bsg_job *job, struct Scsi_Host *shost,
  out:
 	ioc->transport_cmds.status = MPT3_CMD_NOT_USED;
 	mutex_unlock(&ioc->transport_cmds.mutex);
+ job_done:
 	bsg_job_done(job, rc, reslen);
 }
-#endif
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,24) && LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0))
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,24) && LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0))
 /**
  * _transport_smp_handler - transport portal for smp passthru
  * @shost: shost object
@@ -2285,7 +2235,6 @@ _transport_smp_handler(struct Scsi_Host *shost, struct sas_rphy *rphy,
 	int rc, i;
 #endif	
 	u16 smid;
-	u32 ioc_state;
 	void *psge;
 	u8 issue_reset = 0;
 	dma_addr_t dma_addr_in = 0;
@@ -2294,7 +2243,6 @@ _transport_smp_handler(struct Scsi_Host *shost, struct sas_rphy *rphy,
 	dma_addr_t pci_dma_out = 0;
 	void *pci_addr_in = NULL;
 	void *pci_addr_out = NULL;
-	u16 wait_state_count;
 	struct request *rsp = req->next_rq;
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,14,0))	
 	struct bio_vec bvec;
@@ -2321,8 +2269,8 @@ _transport_smp_handler(struct Scsi_Host *shost, struct sas_rphy *rphy,
 	if (ioc->transport_cmds.status != MPT3_CMD_NOT_USED) {
 		printk(MPT3SAS_ERR_FMT "%s: transport_cmds in use\n", ioc->name,
 		    __func__);
-		rc = -EAGAIN;
-		goto out;
+		mutex_unlock(&ioc->transport_cmds.mutex);
+		return -EAGAIN;
 	}
 	ioc->transport_cmds.status = MPT3_CMD_PENDING;
 
@@ -2403,25 +2351,9 @@ _transport_smp_handler(struct Scsi_Host *shost, struct sas_rphy *rphy,
 		}
 	}
 
-	wait_state_count = 0;
-	ioc_state = mpt3sas_base_get_iocstate(ioc, 1);
-	while (ioc_state != MPI2_IOC_STATE_OPERATIONAL) {
-		if (wait_state_count++ == 10) {
-			printk(MPT3SAS_ERR_FMT
-			    "%s: failed due to ioc not operational\n",
-			    ioc->name, __func__);
-			rc = -EFAULT;
-			goto unmap;
-		}
-		ssleep(1);
-		ioc_state = mpt3sas_base_get_iocstate(ioc, 1);
-		printk(MPT3SAS_INFO_FMT "%s: waiting for "
-		    "operational state(count=%d)\n", ioc->name,
-		    __func__, wait_state_count);
-	}
-	if (wait_state_count)
-		printk(MPT3SAS_INFO_FMT "%s: ioc is operational\n",
-		    ioc->name, __func__);
+	rc = mpt3sas_wait_for_ioc_to_operational(ioc, 10);
+	if (rc)
+		goto unmap;
 
 	smid = mpt3sas_base_get_smid(ioc, ioc->transport_cb_idx);
 	if (!smid) {

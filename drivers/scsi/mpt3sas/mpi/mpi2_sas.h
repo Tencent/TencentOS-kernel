@@ -1,5 +1,5 @@
 /*
- *  Copyright 2000-2015 Avago Technologies.  All rights reserved.
+ *  Copyright 2000-2020 Broadcom Inc. All rights reserved.
  *
  *
  *           Name:  mpi2_sas.h

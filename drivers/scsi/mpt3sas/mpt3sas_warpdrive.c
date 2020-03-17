@@ -1,9 +1,10 @@
 /*
  * Scsi Host Layer for MPT (Message Passing Technology) based controllers
  *
- * Copyright (C) 2012-2016  LSI Corporation
- * Copyright (C) 2013-2016 Avago Technologies
- *  (mailto: MPT-FusionLinux.pdl@avagotech.com)
+ * Copyright (C) 2012-2018  LSI Corporation
+ * Copyright (C) 2013-2018 Avago Technologies
+ * Copyright (C) 2013-2018 Broadcom Inc.
+ *  (mailto: MPT-FusionLinux.pdl@broadcom.com)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License

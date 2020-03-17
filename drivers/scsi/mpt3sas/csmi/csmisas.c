@@ -3,9 +3,10 @@
  * for access to MPT (Message Passing Technology) firmware.
  *
  * This code is based on drivers/scsi/mpt2sas/mpt2_base.c
- * Copyright (c) 2007-2014  LSI Corporation
- * Copyright (c)  2013-2014 Avago Technologies 
- *  (mailto:MPT-FusionLinux.pdl@avagotech.com)
+ * Copyright (c) 2007-2018  LSI Corporation
+ * Copyright (c)  2013-2018 Avago Technologies 
+ * Copyright (c) 2013-2018  Broadcom Inc.
+ *  (mailto:MPT-FusionLinux.pdl@broadcom.com)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -1686,8 +1687,6 @@ _csmisas_smp_passthru(struct MPT3SAS_ADAPTER *ioc,
 	u32 data_out_sz = 0, data_in_sz = 0;
 	u16 response_sz;
 	u16 ioc_status;
-	u16 wait_state_count;
-	u32 ioc_state;
 	u8 issue_host_reset = 0;
 	u64 sas_address;
 
@@ -1734,24 +1733,9 @@ _csmisas_smp_passthru(struct MPT3SAS_ADAPTER *ioc,
 	}
 	ioc->transport_cmds.status = MPT3_CMD_PENDING;
 
-	wait_state_count = 0;
-	ioc_state = mpt3sas_base_get_iocstate(ioc, 1);
-	while (ioc_state != MPI2_IOC_STATE_OPERATIONAL) {
-		if (wait_state_count++ == 10) {
-			printk(MPT3SAS_ERR_FMT
-			    "%s: failed due to ioc not operational\n",
-			    ioc->name, __func__);
-			rc = -EFAULT;
-			goto out;
-		}
-		ssleep(1);
-		ioc_state = mpt3sas_base_get_iocstate(ioc, 1);
-		printk(MPT3SAS_INFO_FMT "%s: waiting for operational "
-		    "state(count=%d)\n", ioc->name, __func__, wait_state_count);
-	}
-	if (wait_state_count)
-		printk(MPT3SAS_INFO_FMT "%s: ioc is operational\n",
-		    ioc->name, __func__);
+	rc = mpt3sas_wait_for_ioc_to_operational(ioc, 10);
+	if (rc)
+		goto out;
 
 	smid = mpt3sas_base_get_smid(ioc, ioc->transport_cb_idx);
 	if (!smid) {
@@ -2210,7 +2194,7 @@ _csmisas_ssp_passthru(struct MPT3SAS_ADAPTER *ioc,
 		printk(MPT3SAS_INFO_FMT "issue target reset: handle"
 		    "(0x%04x)\n", ioc->name, sas_device.handle);
 		mpt3sas_scsih_issue_locked_tm(ioc, sas_device.handle, 0, 0, 0,
-		    MPI2_SCSITASKMGMT_TASKTYPE_TARGET_RESET, 0, 30, 0, 0);
+		    MPI2_SCSITASKMGMT_TASKTYPE_TARGET_RESET, 0, 30, 0);
 		if (ioc->scsih_cmds.status & MPT3_CMD_COMPLETE) {
 			printk(MPT3SAS_INFO_FMT "target reset completed: handle"
 			    "(0x%04x)\n", ioc->name, sas_device.handle);
@@ -2449,7 +2433,7 @@ _csmisas_stp_passthru(struct MPT3SAS_ADAPTER *ioc,
 		printk(MPT3SAS_INFO_FMT "issue target reset: handle"
 		    "(0x%04x)\n", ioc->name, sas_device.handle);
 		mpt3sas_scsih_issue_locked_tm(ioc, sas_device.handle, 0, 0, 0,
-		    MPI2_SCSITASKMGMT_TASKTYPE_TARGET_RESET, 0, 30, 0, 0);
+		    MPI2_SCSITASKMGMT_TASKTYPE_TARGET_RESET, 0, 30, 0);
 		if (ioc->scsih_cmds.status & MPT3_CMD_COMPLETE) {
 			printk(MPT3SAS_INFO_FMT "target reset completed: handle"
 			    "(0x%04x)\n", ioc->name, sas_device.handle);
@@ -2833,7 +2817,7 @@ _csmisas_task_managment(struct MPT3SAS_ADAPTER *ioc,
 	if (mpt3sas_scsih_issue_locked_tm(ioc, handle, karg->Parameters.bPathId,
 	    karg->Parameters.bTargetId, karg->Parameters.bLun, task_type,
 	    task_mid, karg->IoctlHeader.Timeout,
-	    (scmd ? scmd->serial_number : 0), 0)
+	    0)
 	    == SUCCESS) {
 		karg->IoctlHeader.ReturnCode = CSMI_SAS_STATUS_SUCCESS;
 		karg->Status.bSSPStatus = CSMI_SAS_SSP_STATUS_COMPLETED;

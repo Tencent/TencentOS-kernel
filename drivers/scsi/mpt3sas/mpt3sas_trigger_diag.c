@@ -3,9 +3,10 @@
  * (Message Passing Technology) based controllers
  *
  * This code is based on drivers/scsi/mpt3sas/mpt3sas_trigger_diag.c
- * Copyright (C) 2013-2016  LSI Corporation
- * Copyright (C) 2013-2016  Avago Technologies
- *  (mailto:MPT-FusionLinux.pdl@avagotech.com)
+ * Copyright (C) 2013-2018  LSI Corporation
+ * Copyright (C) 2013-2018  Avago Technologies
+ * Copyright (C) 2013-2018  Broadcom Inc.
+ *  (mailto:MPT-FusionLinux.pdl@broadcom.com)
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -113,6 +114,7 @@ mpt3sas_process_trigger_data(struct MPT3SAS_ADAPTER *ioc,
 	struct SL_WH_TRIGGERS_EVENT_DATA_T *event_data)
 {
 	u8 issue_reset = 0;
+	u32 *trig_data = (u32*)&event_data->u.master;
 
 	dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: enter\n",
 	    ioc->name, __func__));
@@ -122,6 +124,12 @@ mpt3sas_process_trigger_data(struct MPT3SAS_ADAPTER *ioc,
 	    MPT3_DIAG_BUFFER_IS_RELEASED) == 0) {
 		dTriggerDiagPrintk(ioc, printk(MPT3SAS_INFO_FMT "%s: release "
 		    "trace diag buffer\n", ioc->name, __func__));
+
+		/* add a log message so that user knows which event caused the release */
+		printk(MPT3SAS_INFO_FMT "%s: Releasing the trace buffer."
+		    "Trigger_Type 0x%08x, Data[0] 0x%08x, Data[1] 0x%08x\n", ioc->name,
+			__func__, event_data->trigger_type, trig_data[0], trig_data[1]);
+
 		mpt3sas_send_diag_release(ioc, MPI2_DIAG_BUF_TYPE_TRACE,
 		    &issue_reset);
 	}
