@@ -661,6 +661,14 @@ void cacheinfo_amd_init_llc_id(struct cpuinfo_x86 *c, int cpu, u8 node_id)
 		 * Core complex ID is ApicId[3] for these processors.
 		 */
 		per_cpu(cpu_llc_id, cpu) = c->apicid >> 3;
+	} else if (c->x86 == 0x18) {
+		/* Socket ID is ApicId[6] for these processors. */
+		c->phys_proc_id = c->apicid >> 6;
+		/*
+		 * LLC is at the core complex level.
+		 * Core complex ID is ApicId[3] for these processors.
+		 */
+		per_cpu(cpu_llc_id, cpu) = c->apicid >> 3;
 	} else {
 		/*
 		 * LLC ID is calculated from the number of threads sharing the
