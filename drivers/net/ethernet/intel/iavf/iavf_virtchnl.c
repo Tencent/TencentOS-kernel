@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright (c) 2013, Intel Corporation. */
 
 #include "iavf.h"
 #include "iavf_prototype.h"
@@ -84,7 +84,7 @@ int iavf_verify_api_ver(struct iavf_adapter *adapter)
 		/* When the AQ is empty, iavf_clean_arq_element will return
 		 * nonzero and this loop will terminate.
 		 */
-		if (err != IAVF_SUCCESS)
+		if (err)
 			goto out_alloc;
 		op =
 		    (enum virtchnl_ops)le32_to_cpu(event.desc.cookie_high);
@@ -134,7 +134,9 @@ int iavf_send_vf_config_msg(struct iavf_adapter *adapter)
 	       VIRTCHNL_VF_OFFLOAD_REQ_QUEUES |
 #ifdef __TC_MQPRIO_MODE_MAX
 	       VIRTCHNL_VF_OFFLOAD_ADQ |
+	       VIRTCHNL_VF_OFFLOAD_ADQ_V2 |
 #endif /* __TC_MQPRIO_MODE_MAX */
+	       VIRTCHNL_VF_OFFLOAD_USO |
 #ifdef VIRTCHNL_VF_CAP_ADV_LINK_SPEED
 	       VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM |
 	       VIRTCHNL_VF_CAP_ADV_LINK_SPEED;
@@ -163,9 +165,9 @@ int iavf_send_vf_config_msg(struct iavf_adapter *adapter)
  **/
 static void iavf_validate_num_queues(struct iavf_adapter *adapter)
 {
-	/* When ADq is enabled PF allocates 16 queues to VF but enables only
+	/* When ADQ is enabled PF allocates 16 queues to VF but enables only
 	 * the specified number of queues it's been requested for (as per TC
-	 * info). So this check should be skipped when ADq is enabled.
+	 * info). So this check should be skipped when ADQ is enabled.
 	 */
 	if ((adapter->vf_res->vf_cap_flags & VIRTCHNL_VF_OFFLOAD_ADQ) &&
 	    adapter->num_tc)
@@ -219,7 +221,7 @@ int iavf_get_vf_config(struct iavf_adapter *adapter)
 		 * nonzero and this loop will terminate.
 		 */
 		err = iavf_clean_arq_element(hw, &event, NULL);
-		if (err != IAVF_SUCCESS)
+		if (err)
 			goto out_alloc;
 		op =
 		    (enum virtchnl_ops)le32_to_cpu(event.desc.cookie_high);
@@ -576,6 +578,47 @@ void iavf_del_ether_addrs(struct iavf_adapter *adapter)
 }
 
 /**
+ * iavf_is_mac_add_ok
+ * @adapter: adapter structure
+ *
+ * Submit list of filters based on PF response.
+ **/
+static void iavf_mac_add_ok(struct iavf_adapter *adapter)
+{
+	struct iavf_mac_filter *f, *ftmp;
+
+	spin_lock_bh(&adapter->mac_vlan_list_lock);
+	list_for_each_entry_safe(f, ftmp, &adapter->mac_filter_list, list) {
+		f->is_new_mac = false;
+	}
+	spin_unlock_bh(&adapter->mac_vlan_list_lock);
+}
+
+/**
+ * iavf_is_mac_add_reject
+ * @adapter: adapter structure
+ *
+ * Remove filters from list based on PF response.
+ **/
+static void iavf_mac_add_reject(struct iavf_adapter *adapter)
+{
+	struct net_device *netdev = adapter->netdev;
+	struct iavf_mac_filter *f, *ftmp;
+
+	spin_lock_bh(&adapter->mac_vlan_list_lock);
+	list_for_each_entry_safe(f, ftmp, &adapter->mac_filter_list, list) {
+		if (f->remove && ether_addr_equal(f->macaddr, netdev->dev_addr))
+			f->remove = false;
+
+		if (f->is_new_mac) {
+			list_del(&f->list);
+			kfree(f);
+		}
+	}
+	spin_unlock_bh(&adapter->mac_vlan_list_lock);
+}
+
+/**
  * iavf_add_vlans
  * @adapter: adapter structure
  *
@@ -746,15 +789,25 @@ void iavf_set_promiscuous(struct iavf_adapter *adapter, int flags)
 	if (flags & FLAG_VF_MULTICAST_PROMISC) {
 		adapter->flags |= IAVF_FLAG_ALLMULTI_ON;
 		adapter->aq_required &= ~IAVF_FLAG_AQ_REQUEST_ALLMULTI;
-		dev_info(&adapter->pdev->dev, "Entering multicast promiscuous mode\n");
+		dev_info(&adapter->pdev->dev,
+			 "%s is entering multicast promiscuous mode\n",
+			 adapter->netdev->name);
 	}
 
 	if (!flags) {
-		adapter->flags &= ~(IAVF_FLAG_PROMISC_ON |
-				    IAVF_FLAG_ALLMULTI_ON);
-		adapter->aq_required &= ~(IAVF_FLAG_AQ_RELEASE_PROMISC |
-					  IAVF_FLAG_AQ_RELEASE_ALLMULTI);
-		dev_info(&adapter->pdev->dev, "Leaving promiscuous mode\n");
+		if (adapter->flags & IAVF_FLAG_PROMISC_ON) {
+			adapter->flags &= ~IAVF_FLAG_PROMISC_ON;
+			adapter->aq_required &= ~IAVF_FLAG_AQ_RELEASE_PROMISC;
+			dev_info(&adapter->pdev->dev, "Leaving promiscuous mode\n");
+		}
+
+		if (adapter->flags & IAVF_FLAG_ALLMULTI_ON) {
+			adapter->flags &= ~IAVF_FLAG_ALLMULTI_ON;
+			adapter->aq_required &= ~IAVF_FLAG_AQ_RELEASE_ALLMULTI;
+			dev_info(&adapter->pdev->dev,
+				 "%s is leaving multicast promiscuous mode\n",
+				 adapter->netdev->name);
+		}
 	}
 
 	adapter->current_op = VIRTCHNL_OP_CONFIG_PROMISCUOUS_MODE;
@@ -973,6 +1026,12 @@ static void iavf_print_link_message(struct iavf_adapter *adapter)
 	case VIRTCHNL_LINK_SPEED_10GB:
 		link_speed_mbps = SPEED_10000;
 		break;
+	case VIRTCHNL_LINK_SPEED_5GB:
+		link_speed_mbps = SPEED_5000;
+		break;
+	case VIRTCHNL_LINK_SPEED_2_5GB:
+		link_speed_mbps = SPEED_2500;
+		break;
 	case VIRTCHNL_LINK_SPEED_1GB:
 		link_speed_mbps = SPEED_1000;
 		break;
@@ -987,14 +1046,17 @@ static void iavf_print_link_message(struct iavf_adapter *adapter)
 #ifdef VIRTCHNL_VF_CAP_ADV_LINK_SPEED
 print_link_msg:
 #endif /* VIRTCHNL_VF_CAP_ADV_LINK_SPEED */
-	if (link_speed_mbps > SPEED_1000)
+	if (link_speed_mbps > SPEED_1000) {
+		if (link_speed_mbps == SPEED_2500)
+			snprintf(speed, IAVF_MAX_SPEED_STRLEN, "2.5 Gbps");
+		else
 		/* convert to Gbps inline */
-		snprintf(speed, IAVF_MAX_SPEED_STRLEN, "%u %s",
-			 link_speed_mbps / 1000, "Gbps");
-	else if (link_speed_mbps == SPEED_UNKNOWN)
+			snprintf(speed, IAVF_MAX_SPEED_STRLEN, "%d %s",
+				 link_speed_mbps / 1000, "Gbps");
+	} else if (link_speed_mbps == SPEED_UNKNOWN)
 		snprintf(speed, IAVF_MAX_SPEED_STRLEN, "%s", "Unknown Mbps");
 	else
-		snprintf(speed, IAVF_MAX_SPEED_STRLEN, "%u %s",
+		snprintf(speed, IAVF_MAX_SPEED_STRLEN, "%d %s",
 			 link_speed_mbps, "Mbps");
 
 	netdev_info(netdev, "NIC Link is Up Speed is %s Full Duplex\n", speed);
@@ -1118,7 +1180,7 @@ static void iavf_print_cloud_filter(struct iavf_adapter *adapter,
 {
 	switch (f->flow_type) {
 	case VIRTCHNL_TCP_V4_FLOW:
-		dev_info(&adapter->pdev->dev, "dst_mac: %pM src_mac: %pM vlan_id: %hu dst_ip: %pI4 src_ip %pI4 dst_port %hu src_port %hu\n",
+		dev_info(&adapter->pdev->dev, "dst_mac: %pM src_mac: %pM vlan_id: %hu dst_ip: %pI4 src_ip %pI4 TCP: dst_port %hu src_port %hu\n",
 			 &f->data.tcp_spec.dst_mac,
 			 &f->data.tcp_spec.src_mac,
 			 ntohs(f->data.tcp_spec.vlan_id),
@@ -1128,7 +1190,27 @@ static void iavf_print_cloud_filter(struct iavf_adapter *adapter,
 			 ntohs(f->data.tcp_spec.src_port));
 		break;
 	case VIRTCHNL_TCP_V6_FLOW:
-		dev_info(&adapter->pdev->dev, "dst_mac: %pM src_mac: %pM vlan_id: %hu dst_ip: %pI6 src_ip %pI6 dst_port %hu src_port %hu\n",
+		dev_info(&adapter->pdev->dev, "dst_mac: %pM src_mac: %pM vlan_id: %hu dst_ip: %pI6 src_ip %pI6 TCP: dst_port %hu tcp_src_port %hu\n",
+			 &f->data.tcp_spec.dst_mac,
+			 &f->data.tcp_spec.src_mac,
+			 ntohs(f->data.tcp_spec.vlan_id),
+			 &f->data.tcp_spec.dst_ip,
+			 &f->data.tcp_spec.src_ip,
+			 ntohs(f->data.tcp_spec.dst_port),
+			 ntohs(f->data.tcp_spec.src_port));
+		break;
+	case VIRTCHNL_UDP_V4_FLOW:
+		dev_info(&adapter->pdev->dev, "dst_mac: %pM src_mac: %pM vlan_id: %hu dst_ip: %pI4 src_ip %pI4 UDP: dst_port %hu udp_src_port %hu\n",
+			 &f->data.tcp_spec.dst_mac,
+			 &f->data.tcp_spec.src_mac,
+			 ntohs(f->data.tcp_spec.vlan_id),
+			 &f->data.tcp_spec.dst_ip[0],
+			 &f->data.tcp_spec.src_ip[0],
+			 ntohs(f->data.tcp_spec.dst_port),
+			 ntohs(f->data.tcp_spec.src_port));
+		break;
+	case VIRTCHNL_UDP_V6_FLOW:
+		dev_info(&adapter->pdev->dev, "dst_mac: %pM src_mac: %pM vlan_id: %hu dst_ip: %pI6 src_ip %pI6 UDP: dst_port %hu tcp_src_port %hu\n",
 			 &f->data.tcp_spec.dst_mac,
 			 &f->data.tcp_spec.src_mac,
 			 ntohs(f->data.tcp_spec.vlan_id),
@@ -1178,7 +1260,7 @@ void iavf_add_cloud_filter(struct iavf_adapter *adapter)
 
 	list_for_each_entry(cf, &adapter->cloud_filter_list, list) {
 		if (cf->add) {
-			memcpy(f, &cf->f, sizeof(struct virtchnl_filter));
+			*f = cf->f;
 			cf->add = false;
 			cf->state = __IAVF_CF_ADD_PENDING;
 			iavf_send_pf_msg(adapter, VIRTCHNL_OP_ADD_CLOUD_FILTER,
@@ -1226,7 +1308,7 @@ void iavf_del_cloud_filter(struct iavf_adapter *adapter)
 
 	list_for_each_entry_safe(cf, cftmp, &adapter->cloud_filter_list, list) {
 		if (cf->del) {
-			memcpy(f, &cf->f, sizeof(struct virtchnl_filter));
+			*f = cf->f;
 			cf->del = false;
 			cf->state = __IAVF_CF_DEL_PENDING;
 			iavf_send_pf_msg(adapter, VIRTCHNL_OP_DEL_CLOUD_FILTER,
@@ -1242,11 +1324,13 @@ void iavf_del_cloud_filter(struct iavf_adapter *adapter)
  *
  * Request that the PF reset this VF. No response is expected.
  **/
-void iavf_request_reset(struct iavf_adapter *adapter)
+int iavf_request_reset(struct iavf_adapter *adapter)
 {
+	enum iavf_status status;
 	/* Don't check CURRENT_OP - this is always higher priority */
-	iavf_send_pf_msg(adapter, VIRTCHNL_OP_RESET_VF, NULL, 0);
+	status = iavf_send_pf_msg(adapter, VIRTCHNL_OP_RESET_VF, NULL, 0);
 	adapter->current_op = VIRTCHNL_OP_UNKNOWN;
+	return status;
 }
 
 /**
@@ -1290,14 +1374,25 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 			if (adapter->link_up == link_up)
 				break;
 
-			/* If we get link up message and start queues before
-			 * our queues are configured it will trigger a TX hang.
-			 * In that case, just ignore the link status message,
-			 * we'll get another one after we enable queues and
-			 * actually prepared to send traffic.
-			 */
-			if (link_up && adapter->state != __IAVF_RUNNING)
-				break;
+			if (link_up) {
+				/* If we get link up message and start queues
+				 * before our queues are configured it will
+				 * trigger a TX hang. In that case, just ignore
+				 * the link status message,we'll get another one
+				 * after we enable queues and actually prepared
+				 * to send traffic.
+				 */
+				if (adapter->state != __IAVF_RUNNING)
+					break;
+
+				/* For ADQ enabled VF, we reconfigure VSIs and
+				 * re-allocate queues. Hence wait till all
+				 * queues are enabled.
+				 */
+				if (adapter->flags &
+				    IAVF_FLAG_QUEUES_DISABLED)
+					break;
+			}
 
 			adapter->link_up = link_up;
 			if (link_up) {
@@ -1314,12 +1409,9 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 			adapter->flags |= IAVF_FLAG_CLIENT_NEEDS_L2_PARAMS;
 			break;
 		case VIRTCHNL_EVENT_RESET_IMPENDING:
-			dev_info(&adapter->pdev->dev, "Reset warning received from the PF\n");
-			if (!(adapter->flags & IAVF_FLAG_RESET_PENDING)) {
-				adapter->flags |= IAVF_FLAG_RESET_PENDING;
-				dev_info(&adapter->pdev->dev, "Scheduling reset\n");
-				iavf_schedule_reset(adapter);
-			}
+			dev_info(&adapter->pdev->dev, "Reset indication received from the PF\n");
+			adapter->flags |= IAVF_FLAG_RESET_PENDING;
+			iavf_schedule_reset(adapter);
 			break;
 		default:
 			dev_err(&adapter->pdev->dev, "Unknown event %d from PF\n",
@@ -1327,6 +1419,23 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 			break;
 		}
 		return;
+	}
+
+	/* In earlier versions of ADQ implementation, VF reset was initiated by
+	 * PF in response to enable ADQ request from VF. However for performance
+	 * of ADQ we need the response back and based on that additional configs
+	 * will be done. So don't let the PF reset the VF instead let the VF
+	 * reset itself.
+	 */
+	if (ADQ_V2_ALLOWED(adapter) && !v_retval &&
+	    (v_opcode == VIRTCHNL_OP_ENABLE_CHANNELS ||
+	     v_opcode == VIRTCHNL_OP_DISABLE_CHANNELS)) {
+		struct virtchnl_tc_info *ch_info =
+						(struct virtchnl_tc_info *)msg;
+		if (ch_info->num_tc) {
+			dev_info(&adapter->pdev->dev, "Scheduling reset\n");
+			iavf_schedule_reset(adapter);
+		}
 	}
 
 	if (v_retval) {
@@ -1338,6 +1447,9 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 		case VIRTCHNL_OP_ADD_ETH_ADDR:
 			dev_err(&adapter->pdev->dev, "Failed to add MAC filter, error %s\n",
 				iavf_stat_str(&adapter->hw, v_retval));
+			iavf_mac_add_reject(adapter);
+			/* restore administratively set mac address */
+			ether_addr_copy(adapter->hw.mac.addr, netdev->dev_addr);
 			break;
 		case VIRTCHNL_OP_DEL_VLAN:
 			dev_err(&adapter->pdev->dev, "Failed to delete VLAN filter, error %s\n",
@@ -1375,6 +1487,9 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 							       v_retval));
 					iavf_print_cloud_filter(adapter,
 								&cf->f);
+					if (msglen)
+						dev_err(&adapter->pdev->dev,
+							"%s\n", msg);
 					list_del(&cf->list);
 					kfree(cf);
 					adapter->num_cloud_filters--;
@@ -1405,6 +1520,12 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 		}
 	}
 	switch (v_opcode) {
+	case VIRTCHNL_OP_ADD_ETH_ADDR:
+		if (!v_retval)
+			iavf_mac_add_ok(adapter);
+		if (!ether_addr_equal(netdev->dev_addr, adapter->hw.mac.addr))
+			ether_addr_copy(netdev->dev_addr, adapter->hw.mac.addr);
+		break;
 	case VIRTCHNL_OP_GET_STATS: {
 		struct iavf_eth_stats *stats =
 			(struct iavf_eth_stats *)msg;
@@ -1499,6 +1620,7 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 			}
 		}
 		adapter->flags |= IAVF_FLAG_QUEUES_ENABLED;
+		adapter->flags &= ~IAVF_FLAG_QUEUES_DISABLED;
 		break;
 	case VIRTCHNL_OP_DISABLE_QUEUES:
 		iavf_free_all_tx_resources(adapter);
@@ -1559,6 +1681,9 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 			if (cf->state == __IAVF_CF_ADD_PENDING)
 				cf->state = __IAVF_CF_ACTIVE;
 		}
+		if (!v_retval)
+			dev_info(&adapter->pdev->dev,
+				 "Cloud filters have been added\n");
 		}
 		break;
 	case VIRTCHNL_OP_DEL_CLOUD_FILTER: {
@@ -1573,12 +1698,15 @@ void iavf_virtchnl_completion(struct iavf_adapter *adapter,
 				adapter->num_cloud_filters--;
 			}
 		}
+		if (!v_retval)
+			dev_info(&adapter->pdev->dev,
+				 "Cloud filters have been deleted\n");
 		}
 		break;
 	default:
 		if (adapter->current_op && (v_opcode != adapter->current_op))
-			dev_warn(&adapter->pdev->dev, "Expected response %d from PF, received %d\n",
-				 adapter->current_op, v_opcode);
+			dev_dbg(&adapter->pdev->dev, "Expected response %d from PF, received %d\n",
+				adapter->current_op, v_opcode);
 		break;
 	} /* switch v_opcode */
 	adapter->current_op = VIRTCHNL_OP_UNKNOWN;

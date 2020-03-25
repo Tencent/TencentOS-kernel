@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright (c) 2013, Intel Corporation. */
 
 /* ethtool support for iavf */
 #include "iavf.h"
@@ -35,6 +35,7 @@ static const struct iavf_stats iavf_gstrings_stats[] = {
 	VF_STAT("tx_errors", current_stats.tx_errors),
 #ifdef IAVF_ADD_PROBES
 	VF_STAT("tx_tcp_segments", tcp_segs),
+	VF_STAT("tx_udp_segments", udp_segs),
 	VF_STAT("tx_tcp_cso", tx_tcp_cso),
 	VF_STAT("tx_udp_cso", tx_udp_cso),
 	VF_STAT("tx_sctp_cso", tx_sctp_cso),
@@ -674,12 +675,31 @@ static int iavf_get_per_queue_coalesce(struct net_device *netdev, u32 queue,
  *
  * Change the ITR settings for a specific queue.
  **/
-static void iavf_set_itr_per_queue(struct iavf_adapter *adapter,
-				   struct ethtool_coalesce *ec, int queue)
+static int iavf_set_itr_per_queue(struct iavf_adapter *adapter,
+				  struct ethtool_coalesce *ec, int queue)
 {
 	struct iavf_ring *rx_ring = &adapter->rx_rings[queue];
 	struct iavf_ring *tx_ring = &adapter->tx_rings[queue];
 	struct iavf_q_vector *q_vector;
+	u16 itr_setting;
+
+	itr_setting = rx_ring->itr_setting & ~IAVF_ITR_DYNAMIC;
+
+	if (ec->rx_coalesce_usecs != itr_setting &&
+	    ec->use_adaptive_rx_coalesce) {
+		netif_info(adapter, drv, adapter->netdev,
+			   "Rx interrupt throttling cannot be changed if adaptive-rx is enabled\n");
+		return -EINVAL;
+	}
+
+	itr_setting = tx_ring->itr_setting & ~IAVF_ITR_DYNAMIC;
+
+	if (ec->tx_coalesce_usecs != itr_setting &&
+	    ec->use_adaptive_tx_coalesce) {
+		netif_info(adapter, drv, adapter->netdev,
+			   "Tx interrupt throttling cannot be changed if adaptive-tx is enabled\n");
+		return -EINVAL;
+	}
 
 	rx_ring->itr_setting = ITR_REG_ALIGN(ec->rx_coalesce_usecs);
 	tx_ring->itr_setting = ITR_REG_ALIGN(ec->tx_coalesce_usecs);
@@ -702,6 +722,7 @@ static void iavf_set_itr_per_queue(struct iavf_adapter *adapter,
 	 * the Tx and Rx ITR values based on the values we have entered
 	 * into the q_vector, no need to write the values now.
 	 */
+	return 0;
 }
 
 /**
@@ -745,9 +766,11 @@ static int __iavf_set_coalesce(struct net_device *netdev,
 	 */
 	if (queue < 0) {
 		for (i = 0; i < adapter->num_active_queues; i++)
-			iavf_set_itr_per_queue(adapter, ec, i);
+			if (iavf_set_itr_per_queue(adapter, ec, i))
+				return -EINVAL;
 	} else if (queue < adapter->num_active_queues) {
-		iavf_set_itr_per_queue(adapter, ec, queue);
+		if (iavf_set_itr_per_queue(adapter, ec, queue))
+			return -EINVAL;
 	} else {
 		netif_info(adapter, drv, netdev, "Invalid queue value, queue range is 0 - %d\n",
 			   adapter->num_active_queues - 1);
@@ -837,7 +860,7 @@ static void iavf_get_channels(struct net_device *netdev,
 	struct iavf_adapter *adapter = netdev_priv(netdev);
 
 	/* Report maximum channels */
-	ch->max_combined = IAVF_MAX_REQ_QUEUES;
+	ch->max_combined = adapter->vsi_res->num_queue_pairs;
 
 	ch->max_other = NONQ_VECS;
 	ch->other_count = NONQ_VECS;
@@ -858,19 +881,12 @@ static int iavf_set_channels(struct net_device *netdev,
 			     struct ethtool_channels *ch)
 {
 	struct iavf_adapter *adapter = netdev_priv(netdev);
-	int num_req = ch->combined_count;
-
-	if (num_req != adapter->num_active_queues &&
-	    !(adapter->vf_res->vf_cap_flags &
-	      VIRTCHNL_VF_OFFLOAD_REQ_QUEUES)) {
-		dev_info(&adapter->pdev->dev, "PF is not capable of queue negotiation.\n");
-		return -EINVAL;
-	}
+	u32 num_req = ch->combined_count;
 
 #ifdef __TC_MQPRIO_MODE_MAX
 	if ((adapter->vf_res->vf_cap_flags & VIRTCHNL_VF_OFFLOAD_ADQ) &&
 	    adapter->num_tc) {
-		dev_info(&adapter->pdev->dev, "Cannot set channels since ADq is enabled.\n");
+		dev_info(&adapter->pdev->dev, "Cannot set channels since ADQ is enabled.\n");
 		return -EINVAL;
 	}
 #endif /* __TC_MQPRIO_MODE_MAX */
@@ -878,14 +894,19 @@ static int iavf_set_channels(struct net_device *netdev,
 	/* All of these should have already been checked by ethtool before this
 	 * even gets to us, but just to be sure.
 	 */
-	if (num_req <= 0 || num_req > IAVF_MAX_REQ_QUEUES)
+	if (num_req == 0 || num_req > adapter->vsi_res->num_queue_pairs)
 		return -EINVAL;
+
+	if (num_req == adapter->num_active_queues)
+		return 0;
 
 	if (ch->rx_count || ch->tx_count || ch->other_count != NONQ_VECS)
 		return -EINVAL;
 
 	adapter->num_req_queues = num_req;
-	return iavf_request_queues(adapter, num_req);
+	adapter->flags |= IAVF_FLAG_REINIT_ITR_NEEDED;
+	iavf_schedule_reset(adapter);
+	return 0;
 }
 
 #endif /* ETHTOOL_GCHANNELS */
@@ -941,14 +962,14 @@ static int iavf_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key)
 		*hfunc = ETH_RSS_HASH_TOP;
 
 #endif
-	if (!indir)
-		return 0;
 
-	memcpy(key, adapter->rss_key, adapter->rss_key_size);
+	if (key)
+		memcpy(key, adapter->rss_key, adapter->rss_key_size);
 
-	/* Each 32 bits pointed by 'indir' is stored with a lut entry */
-	for (i = 0; i < adapter->rss_lut_size; i++)
-		indir[i] = (u32)adapter->rss_lut[i];
+	if (indir)
+		/* Each 32 bits pointed by 'indir' is stored with a lut entry */
+		for (i = 0; i < adapter->rss_lut_size; i++)
+			indir[i] = (u32)adapter->rss_lut[i];
 
 	return 0;
 }

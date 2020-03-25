@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright (c) 2013, Intel Corporation. */
 
 #include "iavf_type.h"
 #include "iavf_adminq.h"
@@ -15,7 +15,7 @@
  **/
 enum iavf_status iavf_set_mac_type(struct iavf_hw *hw)
 {
-	enum iavf_status status = IAVF_SUCCESS;
+	enum iavf_status status = 0;
 
 	if (hw->vendor_id == PCI_VENDOR_ID_INTEL) {
 		switch (hw->device_id) {
@@ -268,23 +268,23 @@ void iavf_debug_aq(struct iavf_hw *hw, enum iavf_debug_mask mask, void *desc,
 	if ((!(mask & hw->debug_mask)) || (desc == NULL))
 		return;
 
-	len = LE16_TO_CPU(aq_desc->datalen);
+	len = le16_to_cpu(aq_desc->datalen);
 
 	iavf_debug(hw, mask,
 		   "AQ CMD: opcode 0x%04X, flags 0x%04X, datalen 0x%04X, retval 0x%04X\n",
-		   LE16_TO_CPU(aq_desc->opcode),
-		   LE16_TO_CPU(aq_desc->flags),
-		   LE16_TO_CPU(aq_desc->datalen),
-		   LE16_TO_CPU(aq_desc->retval));
+		   le16_to_cpu(aq_desc->opcode),
+		   le16_to_cpu(aq_desc->flags),
+		   le16_to_cpu(aq_desc->datalen),
+		   le16_to_cpu(aq_desc->retval));
 	iavf_debug(hw, mask, "\tcookie (h,l) 0x%08X 0x%08X\n",
-		   LE32_TO_CPU(aq_desc->cookie_high),
-		   LE32_TO_CPU(aq_desc->cookie_low));
+		   le32_to_cpu(aq_desc->cookie_high),
+		   le32_to_cpu(aq_desc->cookie_low));
 	iavf_debug(hw, mask, "\tparam (0,1)  0x%08X 0x%08X\n",
-		   LE32_TO_CPU(aq_desc->params.internal.param0),
-		   LE32_TO_CPU(aq_desc->params.internal.param1));
+		   le32_to_cpu(aq_desc->params.internal.param0),
+		   le32_to_cpu(aq_desc->params.internal.param1));
 	iavf_debug(hw, mask, "\taddr (h,l)   0x%08X 0x%08X\n",
-		   LE32_TO_CPU(aq_desc->params.external.addr_high),
-		   LE32_TO_CPU(aq_desc->params.external.addr_low));
+		   le32_to_cpu(aq_desc->params.external.addr_high),
+		   le32_to_cpu(aq_desc->params.external.addr_low));
 
 	if ((buffer != NULL) && (aq_desc->datalen != 0)) {
 		iavf_debug(hw, mask, "AQ CMD Buffer:\n");
@@ -341,7 +341,7 @@ enum iavf_status iavf_aq_queue_shutdown(struct iavf_hw *hw,
 					  iavf_aqc_opc_queue_shutdown);
 
 	if (unloading)
-		cmd->driver_unloading = CPU_TO_LE32(IAVF_AQ_DRIVER_UNLOADING);
+		cmd->driver_unloading = cpu_to_le32(IAVF_AQ_DRIVER_UNLOADING);
 	status = iavf_asq_send_command(hw, &desc, NULL, 0, NULL);
 
 	return status;
@@ -376,22 +376,22 @@ static enum iavf_status iavf_aq_get_set_rss_lut(struct iavf_hw *hw,
 						  iavf_aqc_opc_get_rss_lut);
 
 	/* Indirect command */
-	desc.flags |= CPU_TO_LE16((u16)IAVF_AQ_FLAG_BUF);
-	desc.flags |= CPU_TO_LE16((u16)IAVF_AQ_FLAG_RD);
+	desc.flags |= cpu_to_le16((u16)IAVF_AQ_FLAG_BUF);
+	desc.flags |= cpu_to_le16((u16)IAVF_AQ_FLAG_RD);
 
 	cmd_resp->vsi_id =
-			CPU_TO_LE16((u16)((vsi_id <<
+			cpu_to_le16((u16)((vsi_id <<
 					  IAVF_AQC_SET_RSS_LUT_VSI_ID_SHIFT) &
 					  IAVF_AQC_SET_RSS_LUT_VSI_ID_MASK));
-	cmd_resp->vsi_id |= CPU_TO_LE16((u16)IAVF_AQC_SET_RSS_LUT_VSI_VALID);
+	cmd_resp->vsi_id |= cpu_to_le16((u16)IAVF_AQC_SET_RSS_LUT_VSI_VALID);
 
 	if (pf_lut)
-		cmd_resp->flags |= CPU_TO_LE16((u16)
+		cmd_resp->flags |= cpu_to_le16((u16)
 					((IAVF_AQC_SET_RSS_LUT_TABLE_TYPE_PF <<
 					IAVF_AQC_SET_RSS_LUT_TABLE_TYPE_SHIFT) &
 					IAVF_AQC_SET_RSS_LUT_TABLE_TYPE_MASK));
 	else
-		cmd_resp->flags |= CPU_TO_LE16((u16)
+		cmd_resp->flags |= cpu_to_le16((u16)
 					((IAVF_AQC_SET_RSS_LUT_TABLE_TYPE_VSI <<
 					IAVF_AQC_SET_RSS_LUT_TABLE_TYPE_SHIFT) &
 					IAVF_AQC_SET_RSS_LUT_TABLE_TYPE_MASK));
@@ -462,14 +462,14 @@ static enum iavf_status iavf_aq_get_set_rss_key(struct iavf_hw *hw,
 						  iavf_aqc_opc_get_rss_key);
 
 	/* Indirect command */
-	desc.flags |= CPU_TO_LE16((u16)IAVF_AQ_FLAG_BUF);
-	desc.flags |= CPU_TO_LE16((u16)IAVF_AQ_FLAG_RD);
+	desc.flags |= cpu_to_le16((u16)IAVF_AQ_FLAG_BUF);
+	desc.flags |= cpu_to_le16((u16)IAVF_AQ_FLAG_RD);
 
 	cmd_resp->vsi_id =
-			CPU_TO_LE16((u16)((vsi_id <<
+			cpu_to_le16((u16)((vsi_id <<
 					  IAVF_AQC_SET_RSS_KEY_VSI_ID_SHIFT) &
 					  IAVF_AQC_SET_RSS_KEY_VSI_ID_MASK));
-	cmd_resp->vsi_id |= CPU_TO_LE16((u16)IAVF_AQC_SET_RSS_KEY_VSI_VALID);
+	cmd_resp->vsi_id |= cpu_to_le16((u16)IAVF_AQC_SET_RSS_KEY_VSI_VALID);
 
 	status = iavf_asq_send_command(hw, &desc, key, key_size, NULL);
 
@@ -894,18 +894,18 @@ enum iavf_status iavf_aq_send_msg_to_pf(struct iavf_hw *hw,
 	enum iavf_status status;
 
 	iavf_fill_default_direct_cmd_desc(&desc, iavf_aqc_opc_send_msg_to_pf);
-	desc.flags |= CPU_TO_LE16((u16)IAVF_AQ_FLAG_SI);
-	desc.cookie_high = CPU_TO_LE32(v_opcode);
-	desc.cookie_low = CPU_TO_LE32(v_retval);
+	desc.flags |= cpu_to_le16((u16)IAVF_AQ_FLAG_SI);
+	desc.cookie_high = cpu_to_le32(v_opcode);
+	desc.cookie_low = cpu_to_le32(v_retval);
 	if (msglen) {
-		desc.flags |= CPU_TO_LE16((u16)(IAVF_AQ_FLAG_BUF
+		desc.flags |= cpu_to_le16((u16)(IAVF_AQ_FLAG_BUF
 						| IAVF_AQ_FLAG_RD));
 		if (msglen > IAVF_AQ_LARGE_BUF)
-			desc.flags |= CPU_TO_LE16((u16)IAVF_AQ_FLAG_LB);
-		desc.datalen = CPU_TO_LE16(msglen);
+			desc.flags |= cpu_to_le16((u16)IAVF_AQ_FLAG_LB);
+		desc.datalen = cpu_to_le16(msglen);
 	}
 	if (!cmd_details) {
-		iavf_memset(&details, 0, sizeof(details), IAVF_NONDMA_MEM);
+		memset(&details, 0, sizeof(details));
 		details.async = true;
 		cmd_details = &details;
 	}

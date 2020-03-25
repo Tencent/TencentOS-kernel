@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright (c) 2013, Intel Corporation. */
 
 #ifndef _IAVF_ADMINQ_H_
 #define _IAVF_ADMINQ_H_
@@ -88,7 +88,7 @@ struct iavf_adminq_info {
  * aq_ret: AdminQ handler error code can override aq_rc
  * aq_rc: AdminQ firmware error code to convert
  **/
-static INLINE int iavf_aq_rc_to_posix(int aq_ret, int aq_rc)
+static inline int iavf_aq_rc_to_posix(int aq_ret, int aq_rc)
 {
 	int aq_to_posix[] = {
 		0,           /* IAVF_AQ_RC_OK */

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright (c) 2013, Intel Corporation. */
 
 #include <linux/list.h>
 #include <linux/errno.h>
@@ -91,7 +91,7 @@ void iavf_notify_client_l2_params(struct iavf_vsi *vsi)
 	}
 
 	iavf_client_get_params(vsi, &params);
-	memcpy(&cinst->lan_info.params, &params, sizeof(struct iavf_params));
+	cinst->lan_info.params = params;
 	cinst->client->ops->l2_param_change(&cinst->lan_info, cinst->client,
 					    &params);
 }
@@ -207,7 +207,7 @@ iavf_client_add_instance(struct iavf_adapter *adapter)
 	cinst->lan_info.version.minor = IAVF_CLIENT_VERSION_MINOR;
 	cinst->lan_info.version.build = IAVF_CLIENT_VERSION_BUILD;
 	iavf_client_get_params(vsi, &params);
-	memcpy(&cinst->lan_info.params, &params, sizeof(struct iavf_params));
+	cinst->lan_info.params = params;
 	set_bit(__IAVF_CLIENT_INSTANCE_NONE, &cinst->state);
 
 	cinst->lan_info.msix_count = adapter->num_iwarp_msix;

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright (c) 2013, Intel Corporation. */
 
 #ifndef _VIRTCHNL_H_
 #define _VIRTCHNL_H_
@@ -128,6 +128,7 @@ enum virtchnl_ops {
 	VIRTCHNL_OP_DISABLE_CHANNELS = 31,
 	VIRTCHNL_OP_ADD_CLOUD_FILTER = 32,
 	VIRTCHNL_OP_DEL_CLOUD_FILTER = 33,
+	/* opcodes 34, 35, 36, 37 and 38 are reserved */
 };
 
 /* These macros are used to generate compilation errors if a structure/union
@@ -240,6 +241,10 @@ VIRTCHNL_CHECK_STRUCT_LEN(16, virtchnl_vsi_resource);
 #define VIRTCHNL_VF_OFFLOAD_ENCAP_CSUM		0X00200000
 #define VIRTCHNL_VF_OFFLOAD_RX_ENCAP_CSUM	0X00400000
 #define VIRTCHNL_VF_OFFLOAD_ADQ			0X00800000
+#define VIRTCHNL_VF_OFFLOAD_ADQ_V2		0X01000000
+#define VIRTCHNL_VF_OFFLOAD_USO			0X02000000
+	/* 0X80000000 is reserved */
+
 /* Define below the capability flags that are not offloads */
 #define VIRTCHNL_VF_CAP_ADV_LINK_SPEED		0x00000080
 #define VF_BASE_MODE_OFFLOADS (VIRTCHNL_VF_OFFLOAD_L2 | \
@@ -526,6 +531,13 @@ struct virtchnl_rss_hena {
 
 VIRTCHNL_CHECK_STRUCT_LEN(8, virtchnl_rss_hena);
 
+/* This is used by PF driver to enforce how many channels can be supported.
+ * When ADQ_V2 capability is negotiated, it will allow 16 channels otherwise
+ * PF driver will allow only max 4 channels
+ */
+#define VIRTCHNL_MAX_ADQ_CHANNELS 4
+#define VIRTCHNL_MAX_ADQ_V2_CHANNELS 16
+
 /* VIRTCHNL_OP_ENABLE_CHANNELS
  * VIRTCHNL_OP_DISABLE_CHANNELS
  * VF sends these messages to enable or disable channels based on
@@ -561,6 +573,11 @@ VIRTCHNL_CHECK_STRUCT_LEN(24, virtchnl_tc_info);
 struct virtchnl_l4_spec {
 	u8	src_mac[ETH_ALEN];
 	u8	dst_mac[ETH_ALEN];
+	/* vlan_prio is part of this 16 bit field even from OS perspective
+	 * vlan_id:12 is actual vlan_id, then vlanid:bit14..12 is vlan_prio
+	 * in future, when decided to offload vlan_prio, pass that information
+	 * as part of the "vlan_id" field, Bit14..12
+	 */
 	__be16	vlan_id;
 	__be16	pad; /* reserved for future use */
 	__be32	src_ip[4];
@@ -588,6 +605,8 @@ enum virtchnl_flow_type {
 	/* flow types */
 	VIRTCHNL_TCP_V4_FLOW = 0,
 	VIRTCHNL_TCP_V6_FLOW,
+	VIRTCHNL_UDP_V4_FLOW,
+	VIRTCHNL_UDP_V6_FLOW,
 };
 
 struct virtchnl_filter {
@@ -859,6 +878,12 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 		if (msglen >= valid_len) {
 			struct virtchnl_rss_key *vrk =
 				(struct virtchnl_rss_key *)msg;
+
+			if (vrk->key_len == 0) {
+				/* zero length is allowed as input */
+				break;
+			}
+
 			valid_len += vrk->key_len - 1;
 		}
 		break;
@@ -867,6 +892,12 @@ virtchnl_vc_validate_vf_msg(struct virtchnl_version_info *ver, u32 v_opcode,
 		if (msglen >= valid_len) {
 			struct virtchnl_rss_lut *vrl =
 				(struct virtchnl_rss_lut *)msg;
+
+			if (vrl->lut_entries == 0) {
+				/* zero entries is allowed as input */
+				break;
+			}
+
 			valid_len += vrl->lut_entries - 1;
 		}
 		break;

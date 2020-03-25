@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright (c) 2013, Intel Corporation. */
 
 #ifndef _IAVF_H_
 #define _IAVF_H_
@@ -96,7 +96,7 @@ struct iavf_vsi {
 #define IAVF_TX_DESC(R, i) (&(((struct iavf_tx_desc *)((R)->desc))[i]))
 #define IAVF_TX_CTXTDESC(R, i) \
 	(&(((struct iavf_tx_context_desc *)((R)->desc))[i]))
-#define IAVF_MAX_REQ_QUEUES 4
+#define IAVF_MAX_REQ_QUEUES 16
 
 #define IAVF_HKEY_ARRAY_SIZE ((IAVF_VFQF_HKEY_MAX_INDEX + 1) * 4)
 #define IAVF_HLUT_ARRAY_SIZE ((IAVF_VFQF_HLUT_MAX_INDEX + 1) * 4)
@@ -147,6 +147,7 @@ struct iavf_q_vector {
 struct iavf_mac_filter {
 	struct list_head list;
 	u8 macaddr[ETH_ALEN];
+	bool is_new_mac;	/* filter is new, wait for PF decision */
 	bool remove;		/* filter needs to be removed */
 	bool add;		/* filter needs to be added */
 };
@@ -158,7 +159,6 @@ struct iavf_vlan_filter {
 	bool add;		/* filter needs to be added */
 };
 
-#define IAVF_MAX_TRAFFIC_CLASS		4
 /* State of traffic class creation */
 enum iavf_tc_state_t {
 	__IAVF_TC_INVALID, /* no traffic class, default state */
@@ -167,7 +167,7 @@ enum iavf_tc_state_t {
 
 /* channel info */
 struct iavf_channel_config {
-	struct virtchnl_channel_info ch_info[IAVF_MAX_TRAFFIC_CLASS];
+	struct virtchnl_channel_info ch_info[VIRTCHNL_MAX_ADQ_V2_CHANNELS];
 	enum iavf_tc_state_t state;
 	u8 total_qps;
 };
@@ -270,7 +270,6 @@ struct iavf_adapter {
 #define IAVF_FLAG_RESET_PENDING			BIT(4)
 #define IAVF_FLAG_RESET_NEEDED			BIT(5)
 #define IAVF_FLAG_WB_ON_ITR_CAPABLE		BIT(6)
-#define IAVF_FLAG_ADDR_SET_BY_PF		BIT(8)
 #define IAVF_FLAG_SERVICE_CLIENT_REQUESTED	BIT(9)
 #define IAVF_FLAG_CLIENT_NEEDS_OPEN		BIT(10)
 #define IAVF_FLAG_CLIENT_NEEDS_CLOSE		BIT(11)
@@ -280,6 +279,8 @@ struct iavf_adapter {
 #define IAVF_FLAG_LEGACY_RX			BIT(15)
 #define IAVF_FLAG_REINIT_ITR_NEEDED		BIT(16)
 #define IAVF_FLAG_QUEUES_ENABLED		BIT(17)
+#define IAVF_FLAG_QUEUES_DISABLED		BIT(18)
+#define IAVF_FLAG_REINIT_MSIX_NEEDED		BIT(20)
 /* duplicates for common code */
 #define IAVF_FLAG_DCB_ENABLED			0
 	/* flags for admin queue service task */
@@ -363,6 +364,8 @@ struct iavf_adapter {
 #endif
 #define SUPPORTED_SPEED(_s) ((_s) & ALL_SPEEDS)
 #endif /* VIRTCHNL_VF_CAP_ADV_LINK_SPEED */
+#define ADQ_V2_ALLOWED(_a) ((_a)->vf_res->vf_cap_flags & \
+			  VIRTCHNL_VF_OFFLOAD_ADQ_V2)
 	struct virtchnl_vf_resource *vf_res; /* incl. all VSIs */
 	struct virtchnl_vsi_resource *vsi_res; /* our LAN VSI */
 	struct virtchnl_version_info pf_version;
@@ -387,6 +390,7 @@ struct iavf_adapter {
 	u16 num_cloud_filters;
 #ifdef IAVF_ADD_PROBES
 	u64 tcp_segs;
+	u64 udp_segs;
 	u64 tx_tcp_cso;
 	u64 tx_udp_cso;
 	u64 tx_sctp_cso;
@@ -429,6 +433,18 @@ static inline void iavf_change_state(struct iavf_adapter *adapter,
 	}
 }
 
+/**
+ * iavf_is_reset - Check if reset has been triggered
+ * @hw: pointer to iavf_hw
+ *
+ * Return true if reset has been already triggered, false otherwise
+ *
+ **/
+static inline bool iavf_is_reset(struct iavf_hw *hw)
+{
+	return !(rd32(hw, IAVF_VF_ARQLEN1) & IAVF_VF_ARQLEN1_ARQENABLE_MASK);
+}
+
 int iavf_up(struct iavf_adapter *adapter);
 void iavf_down(struct iavf_adapter *adapter);
 int iavf_process_config(struct iavf_adapter *adapter);
@@ -462,7 +478,7 @@ void iavf_add_vlans(struct iavf_adapter *adapter);
 void iavf_del_vlans(struct iavf_adapter *adapter);
 void iavf_set_promiscuous(struct iavf_adapter *adapter, int flags);
 void iavf_request_stats(struct iavf_adapter *adapter);
-void iavf_request_reset(struct iavf_adapter *adapter);
+int iavf_request_reset(struct iavf_adapter *adapter);
 void iavf_get_hena(struct iavf_adapter *adapter);
 void iavf_set_hena(struct iavf_adapter *adapter);
 void iavf_set_rss_key(struct iavf_adapter *adapter);

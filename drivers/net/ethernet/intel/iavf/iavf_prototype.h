@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright (c) 2013, Intel Corporation. */
 
 #ifndef _IAVF_PROTOTYPE_H_
 #define _IAVF_PROTOTYPE_H_
@@ -54,7 +54,7 @@ enum iavf_status iavf_set_mac_type(struct iavf_hw *hw);
 
 extern struct iavf_rx_ptype_decoded iavf_ptype_lookup[];
 
-static INLINE struct iavf_rx_ptype_decoded decode_rx_desc_ptype(u8 ptype)
+static inline struct iavf_rx_ptype_decoded decode_rx_desc_ptype(u8 ptype)
 {
 	return iavf_ptype_lookup[ptype];
 }

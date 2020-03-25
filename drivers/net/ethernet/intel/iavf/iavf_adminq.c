@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright (c) 2013, Intel Corporation. */
 
 #include "iavf_status.h"
 #include "iavf_type.h"
@@ -132,21 +132,21 @@ static enum iavf_status iavf_alloc_arq_bufs(struct iavf_hw *hw)
 		/* now configure the descriptors for use */
 		desc = IAVF_ADMINQ_DESC(hw->aq.arq, i);
 
-		desc->flags = CPU_TO_LE16(IAVF_AQ_FLAG_BUF);
+		desc->flags = cpu_to_le16(IAVF_AQ_FLAG_BUF);
 		if (hw->aq.arq_buf_size > IAVF_AQ_LARGE_BUF)
-			desc->flags |= CPU_TO_LE16(IAVF_AQ_FLAG_LB);
+			desc->flags |= cpu_to_le16(IAVF_AQ_FLAG_LB);
 		desc->opcode = 0;
 		/* This is in accordance with Admin queue design, there is no
 		 * register for buffer size configuration
 		 */
-		desc->datalen = CPU_TO_LE16((u16)bi->size);
+		desc->datalen = cpu_to_le16((u16)bi->size);
 		desc->retval = 0;
 		desc->cookie_high = 0;
 		desc->cookie_low = 0;
 		desc->params.external.addr_high =
-			CPU_TO_LE32(upper_32_bits(bi->pa));
+			cpu_to_le32(upper_32_bits(bi->pa));
 		desc->params.external.addr_low =
-			CPU_TO_LE32(lower_32_bits(bi->pa));
+			cpu_to_le32(lower_32_bits(bi->pa));
 		desc->params.external.param0 = 0;
 		desc->params.external.param1 = 0;
 	}
@@ -254,7 +254,7 @@ static void iavf_free_asq_bufs(struct iavf_hw *hw)
  **/
 static enum iavf_status iavf_config_asq_regs(struct iavf_hw *hw)
 {
-	enum iavf_status ret_code = IAVF_SUCCESS;
+	enum iavf_status ret_code = 0;
 	u32 reg = 0;
 
 	/* Clear Head and Tail */
@@ -283,7 +283,7 @@ static enum iavf_status iavf_config_asq_regs(struct iavf_hw *hw)
  **/
 static enum iavf_status iavf_config_arq_regs(struct iavf_hw *hw)
 {
-	enum iavf_status ret_code = IAVF_SUCCESS;
+	enum iavf_status ret_code = 0;
 	u32 reg = 0;
 
 	/* Clear Head and Tail */
@@ -322,7 +322,7 @@ static enum iavf_status iavf_config_arq_regs(struct iavf_hw *hw)
  **/
 static enum iavf_status iavf_init_asq(struct iavf_hw *hw)
 {
-	enum iavf_status ret_code = IAVF_SUCCESS;
+	enum iavf_status ret_code = 0;
 
 	if (hw->aq.asq.count > 0) {
 		/* queue already initialized */
@@ -342,17 +342,17 @@ static enum iavf_status iavf_init_asq(struct iavf_hw *hw)
 
 	/* allocate the ring memory */
 	ret_code = iavf_alloc_adminq_asq_ring(hw);
-	if (ret_code != IAVF_SUCCESS)
+	if (ret_code)
 		goto init_adminq_exit;
 
 	/* allocate buffers in the rings */
 	ret_code = iavf_alloc_asq_bufs(hw);
-	if (ret_code != IAVF_SUCCESS)
+	if (ret_code)
 		goto init_adminq_free_rings;
 
 	/* initialize base registers */
 	ret_code = iavf_config_asq_regs(hw);
-	if (ret_code != IAVF_SUCCESS)
+	if (ret_code)
 		goto init_config_regs;
 
 	/* success! */
@@ -385,7 +385,7 @@ init_adminq_exit:
  **/
 static enum iavf_status iavf_init_arq(struct iavf_hw *hw)
 {
-	enum iavf_status ret_code = IAVF_SUCCESS;
+	enum iavf_status ret_code = 0;
 
 	if (hw->aq.arq.count > 0) {
 		/* queue already initialized */
@@ -405,17 +405,17 @@ static enum iavf_status iavf_init_arq(struct iavf_hw *hw)
 
 	/* allocate the ring memory */
 	ret_code = iavf_alloc_adminq_arq_ring(hw);
-	if (ret_code != IAVF_SUCCESS)
+	if (ret_code)
 		goto init_adminq_exit;
 
 	/* allocate buffers in the rings */
 	ret_code = iavf_alloc_arq_bufs(hw);
-	if (ret_code != IAVF_SUCCESS)
+	if (ret_code)
 		goto init_adminq_free_rings;
 
 	/* initialize base registers */
 	ret_code = iavf_config_arq_regs(hw);
-	if (ret_code != IAVF_SUCCESS)
+	if (ret_code)
 		goto init_adminq_free_rings;
 
 	/* success! */
@@ -437,7 +437,7 @@ init_adminq_exit:
  **/
 static enum iavf_status iavf_shutdown_asq(struct iavf_hw *hw)
 {
-	enum iavf_status ret_code = IAVF_SUCCESS;
+	enum iavf_status ret_code = 0;
 
 	iavf_acquire_spinlock(&hw->aq.asq_spinlock);
 
@@ -471,7 +471,7 @@ shutdown_asq_out:
  **/
 static enum iavf_status iavf_shutdown_arq(struct iavf_hw *hw)
 {
-	enum iavf_status ret_code = IAVF_SUCCESS;
+	enum iavf_status ret_code = 0;
 
 	iavf_acquire_spinlock(&hw->aq.arq_spinlock);
 
@@ -531,15 +531,13 @@ enum iavf_status iavf_init_adminq(struct iavf_hw *hw)
 
 	/* allocate the ASQ */
 	ret_code = iavf_init_asq(hw);
-	if (ret_code != IAVF_SUCCESS)
+	if (ret_code)
 		goto init_adminq_destroy_spinlocks;
 
 	/* allocate the ARQ */
 	ret_code = iavf_init_arq(hw);
-	if (ret_code != IAVF_SUCCESS)
+	if (ret_code)
 		goto init_adminq_free_asq;
-
-	ret_code = IAVF_SUCCESS;
 
 	/* success! */
 	goto init_adminq_exit;
@@ -560,7 +558,7 @@ init_adminq_exit:
  **/
 enum iavf_status iavf_shutdown_adminq(struct iavf_hw *hw)
 {
-	enum iavf_status ret_code = IAVF_SUCCESS;
+	enum iavf_status ret_code = 0;
 
 	if (iavf_check_asq_alive(hw))
 		iavf_aq_queue_shutdown(hw, true);
@@ -596,12 +594,11 @@ static u16 iavf_clean_asq(struct iavf_hw *hw)
 		if (details->callback) {
 			IAVF_ADMINQ_CALLBACK cb_func =
 					(IAVF_ADMINQ_CALLBACK)details->callback;
-			iavf_memcpy(&desc_cb, desc, sizeof(struct iavf_aq_desc),
-				    IAVF_DMA_TO_DMA);
+			memcpy(&desc_cb, desc, sizeof(struct iavf_aq_desc));
 			cb_func(hw, &desc_cb);
 		}
-		iavf_memset(desc, 0, sizeof(*desc), IAVF_DMA_MEM);
-		iavf_memset(details, 0, sizeof(*details), IAVF_NONDMA_MEM);
+		memset(desc, 0, sizeof(*desc));
+		memset(details, 0, sizeof(*details));
 		ntc++;
 		if (ntc == asq->count)
 			ntc = 0;
@@ -647,7 +644,7 @@ enum iavf_status iavf_asq_send_command(struct iavf_hw *hw,
 				u16  buff_size,
 				struct iavf_asq_cmd_details *cmd_details)
 {
-	enum iavf_status status = IAVF_SUCCESS;
+	enum iavf_status status = 0;
 	struct iavf_dma_mem *dma_buff = NULL;
 	struct iavf_asq_cmd_details *details;
 	struct iavf_aq_desc *desc_on_ring;
@@ -676,30 +673,26 @@ enum iavf_status iavf_asq_send_command(struct iavf_hw *hw,
 
 	details = IAVF_ADMINQ_DETAILS(hw->aq.asq, hw->aq.asq.next_to_use);
 	if (cmd_details) {
-		iavf_memcpy(details,
-			    cmd_details,
-			    sizeof(struct iavf_asq_cmd_details),
-			    IAVF_NONDMA_TO_NONDMA);
+		memcpy(details, cmd_details,
+		       sizeof(struct iavf_asq_cmd_details));
 
 		/* If the cmd_details are defined copy the cookie.  The
-		 * CPU_TO_LE32 is not needed here because the data is ignored
+		 * cpu_to_le32 is not needed here because the data is ignored
 		 * by the FW, only used by the driver
 		 */
 		if (details->cookie) {
 			desc->cookie_high =
-				CPU_TO_LE32(upper_32_bits(details->cookie));
+				cpu_to_le32(upper_32_bits(details->cookie));
 			desc->cookie_low =
-				CPU_TO_LE32(lower_32_bits(details->cookie));
+				cpu_to_le32(lower_32_bits(details->cookie));
 		}
 	} else {
-		iavf_memset(details, 0,
-			    sizeof(struct iavf_asq_cmd_details),
-			    IAVF_NONDMA_MEM);
+		memset(details, 0, sizeof(struct iavf_asq_cmd_details));
 	}
 
 	/* clear requested flags and then set additional flags if defined */
-	desc->flags &= ~CPU_TO_LE16(details->flags_dis);
-	desc->flags |= CPU_TO_LE16(details->flags_ena);
+	desc->flags &= ~cpu_to_le16(details->flags_dis);
+	desc->flags |= cpu_to_le16(details->flags_ena);
 
 	if (buff_size > hw->aq.asq_buf_size) {
 		iavf_debug(hw,
@@ -737,24 +730,22 @@ enum iavf_status iavf_asq_send_command(struct iavf_hw *hw,
 	desc_on_ring = IAVF_ADMINQ_DESC(hw->aq.asq, hw->aq.asq.next_to_use);
 
 	/* if the desc is available copy the temp desc to the right place */
-	iavf_memcpy(desc_on_ring, desc, sizeof(struct iavf_aq_desc),
-		    IAVF_NONDMA_TO_DMA);
+	memcpy(desc_on_ring, desc, sizeof(struct iavf_aq_desc));
 
 	/* if buff is not NULL assume indirect command */
 	if (buff != NULL) {
 		dma_buff = &(hw->aq.asq.r.asq_bi[hw->aq.asq.next_to_use]);
 		/* copy the user buff into the respective DMA buff */
-		iavf_memcpy(dma_buff->va, buff, buff_size,
-			    IAVF_NONDMA_TO_DMA);
-		desc_on_ring->datalen = CPU_TO_LE16(buff_size);
+		memcpy(dma_buff->va, buff, buff_size);
+		desc_on_ring->datalen = cpu_to_le16(buff_size);
 
 		/* Update the address values in the desc with the pa value
 		 * for respective buffer
 		 */
 		desc_on_ring->params.external.addr_high =
-				CPU_TO_LE32(upper_32_bits(dma_buff->pa));
+				cpu_to_le32(upper_32_bits(dma_buff->pa));
 		desc_on_ring->params.external.addr_low =
-				CPU_TO_LE32(lower_32_bits(dma_buff->pa));
+				cpu_to_le32(lower_32_bits(dma_buff->pa));
 	}
 
 	/* bump the tail */
@@ -786,12 +777,10 @@ enum iavf_status iavf_asq_send_command(struct iavf_hw *hw,
 
 	/* if ready, copy the desc back to temp */
 	if (iavf_asq_done(hw)) {
-		iavf_memcpy(desc, desc_on_ring, sizeof(struct iavf_aq_desc),
-			    IAVF_DMA_TO_NONDMA);
+		memcpy(desc, desc_on_ring, sizeof(struct iavf_aq_desc));
 		if (buff != NULL)
-			iavf_memcpy(buff, dma_buff->va, buff_size,
-				    IAVF_DMA_TO_NONDMA);
-		retval = LE16_TO_CPU(desc->retval);
+			memcpy(buff, dma_buff->va, buff_size);
+		retval = le16_to_cpu(desc->retval);
 		if (retval != 0) {
 			iavf_debug(hw,
 				   IAVF_DEBUG_AQ_MESSAGE,
@@ -803,7 +792,7 @@ enum iavf_status iavf_asq_send_command(struct iavf_hw *hw,
 		}
 		cmd_completed = true;
 		if ((enum iavf_admin_queue_err)retval == IAVF_AQ_RC_OK)
-			status = IAVF_SUCCESS;
+			status = 0;
 		else if ((enum iavf_admin_queue_err)retval == IAVF_AQ_RC_EBUSY)
 			status = IAVF_ERR_NOT_READY;
 		else
@@ -817,8 +806,8 @@ enum iavf_status iavf_asq_send_command(struct iavf_hw *hw,
 
 	/* save writeback aq if requested */
 	if (details->wb_desc)
-		iavf_memcpy(details->wb_desc, desc_on_ring,
-			    sizeof(struct iavf_aq_desc), IAVF_DMA_TO_NONDMA);
+		memcpy(details->wb_desc, desc_on_ring,
+		       sizeof(struct iavf_aq_desc));
 
 	/* update the error if time out occurred */
 	if ((!cmd_completed) &&
@@ -850,10 +839,9 @@ void iavf_fill_default_direct_cmd_desc(struct iavf_aq_desc *desc,
 				       u16 opcode)
 {
 	/* zero out the desc */
-	iavf_memset((void *)desc, 0, sizeof(struct iavf_aq_desc),
-		    IAVF_NONDMA_MEM);
-	desc->opcode = CPU_TO_LE16(opcode);
-	desc->flags = CPU_TO_LE16(IAVF_AQ_FLAG_SI);
+	memset((void *)desc, 0, sizeof(struct iavf_aq_desc));
+	desc->opcode = cpu_to_le16(opcode);
+	desc->flags = cpu_to_le16(IAVF_AQ_FLAG_SI);
 }
 
 /**
@@ -870,7 +858,7 @@ enum iavf_status iavf_clean_arq_element(struct iavf_hw *hw,
 					     struct iavf_arq_event_info *e,
 					     u16 *pending)
 {
-	enum iavf_status ret_code = IAVF_SUCCESS;
+	enum iavf_status ret_code = 0;
 	u16 ntc = hw->aq.arq.next_to_clean;
 	struct iavf_aq_desc *desc;
 	struct iavf_dma_mem *bi;
@@ -880,7 +868,7 @@ enum iavf_status iavf_clean_arq_element(struct iavf_hw *hw,
 	u16 ntu;
 
 	/* pre-clean the event info */
-	iavf_memset(&e->desc, 0, sizeof(e->desc), IAVF_NONDMA_MEM);
+	memset(&e->desc, 0, sizeof(e->desc));
 
 	/* take the lock before we start messing with the ring */
 	iavf_acquire_spinlock(&hw->aq.arq_spinlock);
@@ -905,8 +893,8 @@ enum iavf_status iavf_clean_arq_element(struct iavf_hw *hw,
 	desc_idx = ntc;
 
 	hw->aq.arq_last_status =
-		(enum iavf_admin_queue_err)LE16_TO_CPU(desc->retval);
-	flags = LE16_TO_CPU(desc->flags);
+		(enum iavf_admin_queue_err)le16_to_cpu(desc->retval);
+	flags = le16_to_cpu(desc->flags);
 	if (flags & IAVF_AQ_FLAG_ERR) {
 		ret_code = IAVF_ERR_ADMIN_QUEUE_ERROR;
 		iavf_debug(hw,
@@ -915,14 +903,12 @@ enum iavf_status iavf_clean_arq_element(struct iavf_hw *hw,
 			   hw->aq.arq_last_status);
 	}
 
-	iavf_memcpy(&e->desc, desc, sizeof(struct iavf_aq_desc),
-		    IAVF_DMA_TO_NONDMA);
-	datalen = LE16_TO_CPU(desc->datalen);
+	memcpy(&e->desc, desc, sizeof(struct iavf_aq_desc));
+	datalen = le16_to_cpu(desc->datalen);
 	e->msg_len = min(datalen, e->buf_len);
 	if (e->msg_buf != NULL && (e->msg_len != 0))
-		iavf_memcpy(e->msg_buf,
-			    hw->aq.arq.r.arq_bi[desc_idx].va,
-			    e->msg_len, IAVF_DMA_TO_NONDMA);
+		memcpy(e->msg_buf, hw->aq.arq.r.arq_bi[desc_idx].va,
+		       e->msg_len);
 
 	iavf_debug(hw, IAVF_DEBUG_AQ_MESSAGE, "AQRX: desc and buffer:\n");
 	iavf_debug_aq(hw, IAVF_DEBUG_AQ_COMMAND, (void *)desc, e->msg_buf,
@@ -933,14 +919,14 @@ enum iavf_status iavf_clean_arq_element(struct iavf_hw *hw,
 	 * size
 	 */
 	bi = &hw->aq.arq.r.arq_bi[ntc];
-	iavf_memset((void *)desc, 0, sizeof(struct iavf_aq_desc), IAVF_DMA_MEM);
+	memset((void *)desc, 0, sizeof(struct iavf_aq_desc));
 
-	desc->flags = CPU_TO_LE16(IAVF_AQ_FLAG_BUF);
+	desc->flags = cpu_to_le16(IAVF_AQ_FLAG_BUF);
 	if (hw->aq.arq_buf_size > IAVF_AQ_LARGE_BUF)
-		desc->flags |= CPU_TO_LE16(IAVF_AQ_FLAG_LB);
-	desc->datalen = CPU_TO_LE16((u16)bi->size);
-	desc->params.external.addr_high = CPU_TO_LE32(upper_32_bits(bi->pa));
-	desc->params.external.addr_low = CPU_TO_LE32(lower_32_bits(bi->pa));
+		desc->flags |= cpu_to_le16(IAVF_AQ_FLAG_LB);
+	desc->datalen = cpu_to_le16((u16)bi->size);
+	desc->params.external.addr_high = cpu_to_le32(upper_32_bits(bi->pa));
+	desc->params.external.addr_low = cpu_to_le32(lower_32_bits(bi->pa));
 
 	/* set tail = the last cleaned desc index. */
 	wr32(hw, hw->aq.arq.tail, ntc);

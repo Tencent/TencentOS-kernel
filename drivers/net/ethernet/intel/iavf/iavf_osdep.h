@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright (c) 2013, Intel Corporation. */
 
 #ifndef _IAVF_OSDEP_H_
 #define _IAVF_OSDEP_H_
@@ -80,17 +80,6 @@ do {								\
 			(h)->bus.bus_id, (h)->bus.device,	\
 			(h)->bus.func, ##__VA_ARGS__);		\
 } while (0)
-
-/* these things are all directly replaced with sed during the kernel build */
-#define INLINE inline
-
-
-#define CPU_TO_LE16(o) cpu_to_le16(o)
-#define CPU_TO_LE32(s) cpu_to_le32(s)
-#define CPU_TO_LE64(h) cpu_to_le64(h)
-#define LE16_TO_CPU(a) le16_to_cpu(a)
-#define LE32_TO_CPU(c) le32_to_cpu(c)
-#define LE64_TO_CPU(k) le64_to_cpu(k)
 
 /* SW spinlock */
 struct iavf_spinlock {
