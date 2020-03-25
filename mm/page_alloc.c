@@ -7699,6 +7699,7 @@ unsigned long pagecache_over_limit()
 	unsigned long should_reclaim_pages = 0;
 	unsigned long overlimit_pages = 0;
 	unsigned long delta_pages = 0;
+	unsigned long pgcache_lru_pages = 0;
 	/* We only want to limit unmapped and non-shmem page cache pages;
 	 * normally all shmem pages are mapped as well*/
 	unsigned long pgcache_pages = global_node_page_state(NR_FILE_PAGES)
@@ -7707,8 +7708,14 @@ unsigned long pagecache_over_limit()
 					    global_node_page_state(NR_SHMEM));
 	/* We certainly can't free more than what's on the LRU lists
 	 * minus the dirty ones*/
-	unsigned long pgcache_lru_pages = global_node_page_state(NR_ACTIVE_FILE)
-				        + global_node_page_state(NR_INACTIVE_FILE);
+	if (vm_pagecache_ignore_slab)
+		pgcache_lru_pages = global_node_page_state(NR_ACTIVE_FILE)
+					+ global_node_page_state(NR_INACTIVE_FILE);
+	else
+		pgcache_lru_pages = global_node_page_state(NR_ACTIVE_FILE)
+					+ global_node_page_state(NR_INACTIVE_FILE)
+					+ global_node_page_state(NR_SLAB_RECLAIMABLE)
+					+ global_node_page_state(NR_SLAB_UNRECLAIMABLE);
 
 	if (vm_pagecache_ignore_dirty != 0)
 		pgcache_lru_pages -= global_node_page_state(NR_FILE_DIRTY)
@@ -7719,7 +7726,10 @@ unsigned long pagecache_over_limit()
 
 	/* Limit it to 94% of LRU (not all there might be unmapped) */
 	pgcache_lru_pages -= pgcache_lru_pages/16;
-	pgcache_pages = min_t(unsigned long, pgcache_pages, pgcache_lru_pages);
+	if (vm_pagecache_ignore_slab)
+		pgcache_pages = min_t(unsigned long, pgcache_pages, pgcache_lru_pages);
+	else
+		pgcache_pages = pgcache_lru_pages;
 
 	/*
 	*delta_pages: we should reclaim at least 2% more pages than overlimit_page, values get from

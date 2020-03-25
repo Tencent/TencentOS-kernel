@@ -156,6 +156,7 @@ int vm_pagecache_limit_ratio __read_mostly = 0;
 int vm_pagecache_limit_reclaim_ratio __read_mostly = 0;
 unsigned int vm_pagecache_ignore_dirty __read_mostly = 1;
 unsigned int vm_pagecache_limit_async __read_mostly = 0;
+unsigned int vm_pagecache_ignore_slab __read_mostly = 1;
 static struct task_struct *kpclimitd = NULL;
 static bool kpclimitd_context = false;
 /*
