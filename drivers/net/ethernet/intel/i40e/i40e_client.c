@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright(c) 2013 - 2020 Intel Corporation. */
 
 #include <linux/list.h>
 #include <linux/errno.h>
@@ -30,11 +30,17 @@ static int i40e_client_update_vsi_ctxt(struct i40e_info *ldev,
 				       bool is_vf, u32 vf_id,
 				       u32 flag, u32 valid_flag);
 
+static int i40e_client_device_register(struct i40e_info *ldev);
+
+static void i40e_client_device_unregister(struct i40e_info *ldev);
+
 static struct i40e_ops i40e_lan_ops = {
 	.virtchnl_send = i40e_client_virtchnl_send,
 	.setup_qvlist = i40e_client_setup_qvlist,
 	.request_reset = i40e_client_request_reset,
 	.update_vsi_ctxt = i40e_client_update_vsi_ctxt,
+	.client_device_register = i40e_client_device_register,
+	.client_device_unregister = i40e_client_device_unregister,
 };
 
 /**
@@ -69,6 +75,10 @@ int i40e_client_get_params(struct i40e_vsi *vsi, struct i40e_params *params)
 
 	params->mtu = vsi->netdev->mtu;
 	return 0;
+}
+
+static void i40e_client_device_release(struct device *dev)
+{
 }
 
 /**
@@ -284,9 +294,7 @@ static void i40e_client_add_instance(struct i40e_pf *pf)
 	struct i40e_client_instance *cdev = NULL;
 	struct netdev_hw_addr *mac = NULL;
 	struct i40e_vsi *vsi = pf->vsi[pf->lan_vsi];
-
-	if (!registered_client || pf->cinst)
-		return;
+	struct platform_device *platform_dev;
 
 	cdev = kzalloc(sizeof(*cdev), GFP_KERNEL);
 	if (!cdev)
@@ -305,6 +313,12 @@ static void i40e_client_add_instance(struct i40e_pf *pf)
 	cdev->lan_info.fw_maj_ver = pf->hw.aq.fw_maj_ver;
 	cdev->lan_info.fw_min_ver = pf->hw.aq.fw_min_ver;
 	cdev->lan_info.fw_build = pf->hw.aq.fw_build;
+	platform_dev = &cdev->lan_info.platform_dev;
+	platform_dev->name = "i40e_rdma";
+	platform_dev->id = PLATFORM_DEVID_AUTO;
+	platform_dev->id_auto = true;
+	platform_dev->dev.release = i40e_client_device_release;
+	platform_dev->dev.parent = &pf->pdev->dev;
 	set_bit(__I40E_CLIENT_INSTANCE_NONE, &cdev->state);
 
 	if (i40e_client_get_params(vsi, &cdev->lan_info.params)) {
@@ -320,10 +334,12 @@ static void i40e_client_add_instance(struct i40e_pf *pf)
 	else
 		dev_err(&pf->pdev->dev, "MAC address list is empty!\n");
 
-	cdev->client = registered_client;
+	cdev->client = NULL;
 	pf->cinst = cdev;
 
-	i40e_client_update_msix_info(pf);
+	cdev->lan_info.msix_count = pf->num_iwarp_msix;
+	cdev->lan_info.msix_entries = &pf->msix_entries[pf->iwarp_base_vector];
+	platform_device_register(platform_dev);
 }
 
 /**
@@ -344,7 +360,7 @@ void i40e_client_del_instance(struct i40e_pf *pf)
  **/
 void i40e_client_subtask(struct i40e_pf *pf)
 {
-	struct i40e_client *client = registered_client;
+	struct i40e_client *client;
 	struct i40e_client_instance *cdev;
 	struct i40e_vsi *vsi = pf->vsi[pf->lan_vsi];
 	int ret = 0;
@@ -358,8 +374,10 @@ void i40e_client_subtask(struct i40e_pf *pf)
 	    test_bit(__I40E_CONFIG_BUSY, pf->state))
 		return;
 
-	if (!client || !cdev)
+	if (!cdev || !cdev->client)
 		return;
+
+	client = cdev->client;
 
 	/* Here we handle client opens. If the client is down, and
 	 * the netdev is registered, then open the client.
@@ -421,16 +439,7 @@ int i40e_lan_add_device(struct i40e_pf *pf)
 		 pf->hw.pf_id, pf->hw.bus.bus_id,
 		 pf->hw.bus.device, pf->hw.bus.func);
 
-	/* If a client has already been registered, we need to add an instance
-	 * of it to our new LAN device.
-	 */
-	if (registered_client)
-		i40e_client_add_instance(pf);
-
-	/* Since in some cases register may have happened before a device gets
-	 * added, we can schedule a subtask to go initiate the clients if
-	 * they can be launched at probe time.
-	 */
+	i40e_client_add_instance(pf);
 	set_bit(__I40E_CLIENT_SERVICE_REQUESTED, pf->state);
 	i40e_service_event_schedule(pf);
 
@@ -449,6 +458,8 @@ int i40e_lan_del_device(struct i40e_pf *pf)
 {
 	struct i40e_device *ldev, *tmp;
 	int ret = -ENODEV;
+
+	platform_device_unregister(&pf->cinst->lan_info.platform_dev);
 
 	/* First, remove any client instance. */
 	i40e_client_del_instance(pf);
@@ -503,10 +514,7 @@ static void i40e_client_release(struct i40e_client *client)
 				 "Client %s instance for PF id %d closed\n",
 				 client->name, pf->hw.pf_id);
 		}
-		/* delete the client instance */
-		i40e_client_del_instance(pf);
-		dev_info(&pf->pdev->dev, "Deleted client instance of Client %s\n",
-			 client->name);
+		cdev->client = NULL;
 		clear_bit(__I40E_SERVICE_SCHED, pf->state);
 	}
 	mutex_unlock(&i40e_device_mutex);
@@ -525,7 +533,7 @@ static void i40e_client_prepare(struct i40e_client *client)
 	mutex_lock(&i40e_device_mutex);
 	list_for_each_entry(ldev, &i40e_devices, list) {
 		pf = ldev->pf;
-		i40e_client_add_instance(pf);
+		pf->cinst->client = registered_client;
 		/* Start the client subtask */
 		set_bit(__I40E_CLIENT_SERVICE_REQUESTED, pf->state);
 		i40e_service_event_schedule(pf);
@@ -731,6 +739,66 @@ static int i40e_client_update_vsi_ctxt(struct i40e_info *ldev,
 		}
 	}
 	return err;
+}
+
+static int i40e_client_device_register(struct i40e_info *ldev)
+{
+	struct i40e_client *client;
+	struct i40e_pf *pf;
+
+	if (!ldev) {
+		pr_err("Failed to reg client dev: ldev ptr NULL\n");
+		return -EINVAL;
+	}
+
+	client = ldev->client;
+	pf = ldev->pf;
+	if (!client) {
+		pr_err("Failed to reg client dev: client ptr NULL\n");
+		return -EINVAL;
+	}
+
+	if (!ldev->ops || !client->ops) {
+		pr_err("Failed to reg client dev: client dev peer_ops/ops NULL\n");
+		return -EINVAL;
+	}
+
+	if (client->version.major != I40E_CLIENT_VERSION_MAJOR ||
+	    client->version.minor != I40E_CLIENT_VERSION_MINOR) {
+		pr_err("i40e: Failed to register client %s due to mismatched client interface version\n",
+		       client->name);
+		pr_err("Client is using version: %02d.%02d.%02d while LAN driver supports %s\n",
+		       client->version.major, client->version.minor,
+		       client->version.build,
+		       i40e_client_interface_version_str);
+		return -EINVAL;
+	}
+
+	pf->cinst->client = ldev->client;
+	set_bit(__I40E_CLIENT_SERVICE_REQUESTED, pf->state);
+	i40e_service_event_schedule(pf);
+
+	return 0;
+}
+
+static void i40e_client_device_unregister(struct i40e_info *ldev)
+{
+	struct i40e_pf *pf = ldev->pf;
+	struct i40e_client_instance *cdev = pf->cinst;
+
+	while (test_and_set_bit(__I40E_SERVICE_SCHED, pf->state))
+		usleep_range(500, 1000);
+
+	if (!cdev || !cdev->client || !cdev->client->ops ||
+	    !cdev->client->ops->close) {
+		dev_err(&pf->pdev->dev, "Cannot close client device\n");
+		return;
+	}
+	cdev->client->ops->close(&cdev->lan_info, cdev->client, false);
+	clear_bit(__I40E_CLIENT_INSTANCE_OPENED, &cdev->state);
+	i40e_client_release_qvlist(&cdev->lan_info);
+	pf->cinst->client = NULL;
+	clear_bit(__I40E_SERVICE_SCHED, pf->state);
 }
 
 /**

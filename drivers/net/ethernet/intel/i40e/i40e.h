@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright(c) 2013 - 2020 Intel Corporation. */
 
 #ifndef _I40E_H_
 #define _I40E_H_
@@ -63,6 +63,11 @@
 #define I40E_MAX_NUM_DESCRIPTORS	4096
 #define I40E_MAX_CSR_SPACE		(4 * 1024 * 1024 - 64 * 1024)
 #define I40E_DEFAULT_NUM_DESCRIPTORS	512
+#define L4_MODE_UDP 0
+#define L4_MODE_TCP 1
+#define L4_MODE_BOTH 2
+#define L4_MODE_DISABLED -1
+bool i40e_is_l4mode_enabled(void);
 #define I40E_REQ_DESCRIPTOR_MULTIPLE	32
 #define I40E_MIN_NUM_DESCRIPTORS	64
 #define I40E_MIN_MSIX			2
@@ -269,11 +274,11 @@ struct i40e_fdir_filter {
 	u32 fd_id;
 };
 
-#define I40E_CLOUD_FIELD_OMAC	0x01
-#define I40E_CLOUD_FIELD_IMAC	0x02
-#define I40E_CLOUD_FIELD_IVLAN	0x04
-#define I40E_CLOUD_FIELD_TEN_ID	0x08
-#define I40E_CLOUD_FIELD_IIP	0x10
+#define I40E_CLOUD_FIELD_OMAC		BIT(0)
+#define I40E_CLOUD_FIELD_IMAC		BIT(1)
+#define I40E_CLOUD_FIELD_IVLAN		BIT(2)
+#define I40E_CLOUD_FIELD_TEN_ID		BIT(3)
+#define I40E_CLOUD_FIELD_IIP		BIT(4)
 
 #define I40E_CLOUD_FILTER_FLAGS_OMAC I40E_CLOUD_FIELD_OMAC
 #define I40E_CLOUD_FILTER_FLAGS_IMAC I40E_CLOUD_FIELD_IMAC
@@ -361,7 +366,6 @@ struct i40e_udp_port_config {
 #define I40E_PROFILE_LIST_SIZE \
 	(I40E_PROFILE_INFO_SIZE * I40E_MAX_PROFILE_NUM + 4)
 #define I40E_DDP_PROFILE_PATH "intel/i40e/ddp/"
-#define I40E_DDP_PROFILE_NAME_MAX 64
 
 int i40e_ddp_load(struct net_device *netdev, const u8 *data, size_t size,
 		  bool is_add);
@@ -599,6 +603,7 @@ struct i40e_pf {
 #define I40E_FLAG_DISABLE_FW_LLDP		BIT(24)
 #define I40E_FLAG_RS_FEC			BIT(25)
 #define I40E_FLAG_BASE_R_FEC			BIT(26)
+#define I40E_FLAG_TOTAL_PORT_SHUTDOWN		BIT(27)
 	/* flag to enable/disable vf base mode support */
 	bool vf_base_mode_only;
 
@@ -706,6 +711,11 @@ struct i40e_pf {
 
 	u16 override_q_count;
 	struct vfd_objects *vfd_obj;
+	u16 ingress_rule_id;
+	int ingress_vlan;
+	u16 egress_rule_id;
+	int egress_vlan;
+	bool vf_bw_applied;
 	/* List to keep previous DDP profiles to be rolled back in the future */
 	struct list_head ddp_old_prof;
 };
@@ -855,7 +865,8 @@ struct i40e_vsi {
 	u16 alloc_queue_pairs;	/* Allocated Tx/Rx queues */
 	u16 req_queue_pairs;	/* User requested queue pairs */
 	u16 num_queue_pairs;	/* Used tx and rx pairs */
-	u16 num_desc;
+	u16 num_tx_desc;
+	u16 num_rx_desc;
 	enum i40e_vsi_type type;  /* VSI type, e.g., LAN, FCoE, etc */
 	s16 vf_id;		/* Virtual function ID for SRIOV VSIs */
 #ifdef __TC_MQPRIO_MODE_MAX
@@ -903,7 +914,6 @@ struct i40e_vsi {
 } ____cacheline_internodealigned_in_smp;
 
 struct i40e_netdev_priv {
-	struct idc_srv_provider prov_callbacks;
 	struct i40e_vsi *vsi;
 };
 
@@ -1079,6 +1089,7 @@ i40e_find_vsi_by_type(struct i40e_pf *pf, u16 type)
 	return NULL;
 }
 void i40e_update_stats(struct i40e_vsi *vsi);
+void i40e_update_veb_stats(struct i40e_veb *veb);
 void i40e_update_eth_stats(struct i40e_vsi *vsi);
 #ifdef HAVE_NDO_GET_STATS64
 struct rtnl_link_stats64 *i40e_get_vsi_stats_struct(struct i40e_vsi *vsi);
@@ -1226,6 +1237,9 @@ i40e_status i40e_get_partition_bw_setting(struct i40e_pf *pf);
 i40e_status i40e_set_partition_bw_setting(struct i40e_pf *pf);
 i40e_status i40e_commit_partition_bw_setting(struct i40e_pf *pf);
 int i40e_set_bw_limit(struct i40e_vsi *vsi, u16 seid, u64 max_tx_rate);
+int i40e_add_del_cloud_filter_ex(struct i40e_pf *pf,
+				 struct i40e_cloud_filter *filter,
+				 bool add);
 int i40e_add_del_cloud_filter(struct i40e_vsi *vsi,
 			      struct i40e_cloud_filter *filter,
 			      bool add);
@@ -1247,5 +1261,7 @@ static inline bool i40e_enabled_xdp_vsi(struct i40e_vsi *vsi)
 {
 	return !!vsi->xdp_prog;
 }
+int i40e_restore_ingress_egress_mirror(struct i40e_vsi *src_vsi, int mirror, u16 rule_type,
+				       u16 *rule_id);
 
 #endif /* _I40E_H_ */

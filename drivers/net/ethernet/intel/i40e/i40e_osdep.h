@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright(c) 2013 - 2020 Intel Corporation. */
 
 #ifndef _I40E_OSDEP_H_
 #define _I40E_OSDEP_H_
@@ -112,7 +112,6 @@ static inline void i40e_no_action(struct i40e_spinlock *sp)
 #define i40e_release_spinlock(_sp) i40e_release_spinlock_d(_sp)
 #define i40e_destroy_spinlock(_sp) i40e_no_action(_sp)
 
-#define I40E_HTONL(a)		htonl(a)
 
 #define i40e_memset(a, b, c, d)  memset((a), (b), (c))
 #define i40e_memcpy(a, b, c, d)  memcpy((a), (b), (c))

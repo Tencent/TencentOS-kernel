@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright(c) 2013 - 2020 Intel Corporation. */
 
 #include "i40e.h"
 
@@ -401,6 +401,9 @@ static int i40e_ddp_restore(struct i40e_pf *pf)
 	return status;
 }
 
+#define I40E_DDP_PROFILE_NAME_MAX \
+	(sizeof(I40E_DDP_PROFILE_PATH) + ETHTOOL_FLASH_MAX_FILENAME)
+
 /**
  * i40e_ddp_flash - callback function for ethtool flash feature
  * @netdev: net device structure
@@ -431,11 +434,11 @@ int i40e_ddp_flash(struct net_device *netdev, struct ethtool_flash *flash)
 	 */
 	if (strncmp(flash->data, "-", 2) != 0) {
 		struct i40e_ddp_old_profile_list *list_entry;
-		char profile_name[sizeof(I40E_DDP_PROFILE_PATH)+I40E_DDP_PROFILE_NAME_MAX];
+		char profile_name[I40E_DDP_PROFILE_NAME_MAX];
 
 		profile_name[sizeof(profile_name)-1]=0;
 		strncpy(profile_name, I40E_DDP_PROFILE_PATH, sizeof(profile_name)-1);
-		strncat(profile_name, flash->data, I40E_DDP_PROFILE_NAME_MAX);
+		strncat(profile_name, flash->data, ETHTOOL_FLASH_MAX_FILENAME);
 		/* Load DDP recipe. */
 		status = request_firmware(&ddp_config, profile_name,
 					  &netdev->dev);

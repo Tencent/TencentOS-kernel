@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright(c) 2013 - 2020 Intel Corporation. */
 
 #include "i40e_osdep.h"
 #include "i40e_register.h"
@@ -663,7 +663,7 @@ i40e_status i40e_shutdown_lan_hmc(struct i40e_hw *hw)
 
 #define I40E_HMC_STORE(_struct, _ele)		\
 	offsetof(struct _struct, _ele),		\
-	FIELD_SIZEOF(struct _struct, _ele)
+	sizeof_field(struct _struct, _ele)
 
 struct i40e_context_ele {
 	u16 offset;

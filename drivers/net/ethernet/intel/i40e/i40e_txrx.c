@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright(c) 2013 - 2020 Intel Corporation. */
 
 #include <linux/prefetch.h>
 #ifdef HAVE_XDP_SUPPORT
@@ -1773,6 +1773,20 @@ no_buffers:
 	return true;
 }
 
+#define I40E_XDP_PASS          0
+#define I40E_XDP_CONSUMED      BIT(0)
+#define I40E_XDP_TX            BIT(1)
+#define I40E_XDP_REDIR         BIT(2)
+
+static inline void i40e_xdp_ring_update_tail(struct i40e_ring *xdp_ring)
+{
+	/* Force memory writes to complete before letting h/w
+	 * know there are new descriptors to fetch.
+	 */
+	wmb();
+	writel_relaxed(xdp_ring->next_to_use, xdp_ring->tail);
+}
+
 #ifdef I40E_ADD_PROBES
 static void i40e_rx_extra_counters(struct i40e_vsi *vsi, u32 rx_error,
 				   const struct i40e_rx_ptype_decoded decoded)
@@ -2275,7 +2289,8 @@ static struct sk_buff *i40e_construct_skb(struct i40e_ring *rx_ring,
 	/* Determine available headroom for copy */
 	headlen = size;
 	if (headlen > I40E_RX_HDR_SIZE)
-		headlen = eth_get_headlen(xdp->data, I40E_RX_HDR_SIZE);
+		headlen = eth_get_headlen(skb->dev, xdp->data,
+					  I40E_RX_HDR_SIZE);
 
 	/* align pull length to size of long to optimize memcpy performance */
 	memcpy(__skb_put(skb, headlen), xdp->data,
@@ -2414,11 +2429,6 @@ static bool i40e_is_non_eop(struct i40e_ring *rx_ring,
 	return true;
 }
 
-#define I40E_XDP_PASS          0
-#define I40E_XDP_CONSUMED      BIT(0)
-#define I40E_XDP_TX            BIT(1)
-#define I40E_XDP_REDIR         BIT(2)
-
 #ifdef HAVE_XDP_SUPPORT
 #ifdef HAVE_XDP_FRAME_STRUCT
 static int i40e_xmit_xdp_ring(struct xdp_frame *xdp,
@@ -2522,15 +2532,6 @@ static void i40e_rx_buffer_flip(struct i40e_ring *rx_ring,
 
 	rx_buffer->page_offset += truesize;
 #endif
-}
-
-static inline void i40e_xdp_ring_update_tail(struct i40e_ring *xdp_ring)
-{
-	/* Force memory writes to complete before letting h/w
-	 * know there are new descriptors to fetch.
-	 */
-	wmb();
-	writel_relaxed(xdp_ring->next_to_use, xdp_ring->tail);
 }
 
 /**
@@ -3603,7 +3604,7 @@ int __i40e_maybe_stop_tx(struct i40e_ring *tx_ring, int size)
  **/
 bool __i40e_chk_linearize(struct sk_buff *skb)
 {
-	const struct skb_frag_struct *frag, *stale;
+	const skb_frag_t *frag, *stale;
 	int nr_frags, sum;
 
 	/* no need to check if number of frags is less than 7 */
@@ -3647,7 +3648,7 @@ bool __i40e_chk_linearize(struct sk_buff *skb)
 		 * descriptor associated with the fragment.
 		 */
 		if (stale_size > I40E_MAX_DATA_PER_TXD) {
-			int align_pad = -(stale->page_offset) &
+			int align_pad = -(skb_frag_off(stale)) &
 					(I40E_MAX_READ_REQ_SIZE - 1);
 
 			sum -= align_pad;
@@ -3690,7 +3691,7 @@ static inline int i40e_tx_map(struct i40e_ring *tx_ring, struct sk_buff *skb,
 {
 	unsigned int data_len = skb->data_len;
 	unsigned int size = skb_headlen(skb);
-	struct skb_frag_struct *frag;
+	skb_frag_t *frag;
 	struct i40e_tx_buffer *tx_bi;
 	struct i40e_tx_desc *tx_desc;
 	u16 i = tx_ring->next_to_use;
@@ -3820,21 +3821,35 @@ static inline int i40e_tx_map(struct i40e_ring *tx_ring, struct sk_buff *skb,
 
 	/* notify HW of packet */
 #ifdef HAVE_SKB_XMIT_MORE
-	if (netif_xmit_stopped(txring_txq(tx_ring)) || !skb->xmit_more) {
+	if (netif_xmit_stopped(txring_txq(tx_ring)) || !netdev_xmit_more()) {
 		writel(i, tx_ring->tail);
 
-		/* we need this if more than one processor can write to our tail
-		 * at a time, it synchronizes IO on IA64/Altix systems
+#ifndef SPIN_UNLOCK_IMPLIES_MMIOWB
+		/* We need this mmiowb on IA64/Altix systems where wmb() isn't
+		 * guaranteed to synchronize I/O.
+		 *
+		 * Note that mmiowb() only provides a guarantee about ordering
+		 * when in conjunction with a spin_unlock(). This barrier is
+		 * used to guarantee the I/O ordering with respect to a spin
+		 * lock in the networking core code.
 		 */
 		mmiowb();
+#endif
 	}
 #else
 	writel(i, tx_ring->tail);
 
-	/* we need this if more than one processor can write to our tail
-	 * at a time, it synchronizes IO on IA64/Altix systems
+#ifndef SPIN_UNLOCK_IMPLIES_MMIOWB
+	/* We need this mmiowb on IA64/Altix systems where wmb() isn't
+	 * guaranteed to synchronize I/O.
+	 *
+	 * Note that mmiowb() only provides a guarantee about ordering when in
+	 * conjunction with a spin_unlock(). This barrier is used to guarantee
+	 * the I/O ordering with respect to a spin lock in the networking core
+	 * code.
 	 */
 	mmiowb();
+#endif
 #endif /* HAVE_XMIT_MORE */
 
 	return 0;

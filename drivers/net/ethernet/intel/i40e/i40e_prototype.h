@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright(c) 2013 - 2020 Intel Corporation. */
 
 #ifndef _I40E_PROTOTYPE_H_
 #define _I40E_PROTOTYPE_H_
@@ -22,6 +22,13 @@ void i40e_adminq_init_ring_data(struct i40e_hw *hw);
 i40e_status i40e_clean_arq_element(struct i40e_hw *hw,
 					     struct i40e_arq_event_info *e,
 					     u16 *events_pending);
+enum i40e_status_code
+i40e_asq_send_command_atomic(struct i40e_hw *hw,
+			     struct i40e_aq_desc *desc,
+			     void *buff, /* can be NULL */
+			     u16  buff_size,
+			     struct i40e_asq_cmd_details *cmd_details,
+			     bool is_atomic_context);
 i40e_status i40e_asq_send_command(struct i40e_hw *hw,
 				struct i40e_aq_desc *desc,
 				void *buff, /* can be NULL */
@@ -57,9 +64,17 @@ i40e_status i40e_led_get_phy(struct i40e_hw *hw, u16 *led_addr,
 				       u16 *val);
 i40e_status i40e_blink_phy_link_led(struct i40e_hw *hw,
 					      u32 time, u32 interval);
-
 i40e_status i40e_get_phy_lpi_status(struct i40e_hw *hw,
 					      struct i40e_hw_port_stats *stats);
+i40e_status i40e_get_lpi_counters(struct i40e_hw *hw, u32 *tx_counter,
+					    u32 *rx_counter, bool *is_clear);
+i40e_status i40e_lpi_stat_update(struct i40e_hw *hw,
+					   bool offset_loaded, u64 *tx_offset,
+					   u64 *tx_stat, u64 *rx_offset,
+					   u64 *rx_stat);
+i40e_status i40e_get_lpi_duration(struct i40e_hw *hw,
+					    struct i40e_hw_port_stats *stat,
+					    u64 *tx_duration, u64 *rx_duration);
 /* admin send queue commands */
 
 i40e_status i40e_aq_get_firmware_version(struct i40e_hw *hw,
@@ -345,6 +360,11 @@ i40e_status i40e_acquire_nvm(struct i40e_hw *hw,
 void i40e_release_nvm(struct i40e_hw *hw);
 i40e_status i40e_read_nvm_word(struct i40e_hw *hw, u16 offset,
 					 u16 *data);
+enum i40e_status_code
+i40e_read_nvm_module_data(struct i40e_hw *hw, u8 module_ptr, u16 module_offset,
+			  u16 data_offset, u16 words_data_size, u16 *data_ptr);
+i40e_status i40e_read_nvm_buffer(struct i40e_hw *hw, u16 offset,
+					   u16 *words, u16 *data);
 i40e_status i40e_update_nvm_checksum(struct i40e_hw *hw);
 i40e_status i40e_validate_nvm_checksum(struct i40e_hw *hw,
 						 u16 *checksum);
@@ -355,7 +375,8 @@ void i40e_nvmupd_check_wait_event(struct i40e_hw *hw, u16 opcode,
 				  struct i40e_aq_desc *desc);
 void i40e_nvmupd_clear_wait_state(struct i40e_hw *hw);
 void i40e_set_pci_config_data(struct i40e_hw *hw, u16 link_status);
-i40e_status i40e_enable_eee(struct i40e_hw *hw, bool enable);
+
+i40e_status i40e_set_mac_type(struct i40e_hw *hw);
 
 extern struct i40e_rx_ptype_decoded i40e_ptype_lookup[];
 
@@ -435,14 +456,29 @@ i40e_status i40e_aq_rx_ctl_write_register(struct i40e_hw *hw,
 				u32 reg_addr, u32 reg_val,
 				struct i40e_asq_cmd_details *cmd_details);
 void i40e_write_rx_ctl(struct i40e_hw *hw, u32 reg_addr, u32 reg_val);
-i40e_status i40e_aq_set_phy_register(struct i40e_hw *hw,
-				u8 phy_select, u8 dev_addr, bool page_change,
-				u32 reg_addr, u32 reg_val,
-				struct i40e_asq_cmd_details *cmd_details);
-i40e_status i40e_aq_get_phy_register(struct i40e_hw *hw,
-				u8 phy_select, u8 dev_addr, bool page_change,
-				u32 reg_addr, u32 *reg_val,
-				struct i40e_asq_cmd_details *cmd_details);
+enum i40e_status_code
+i40e_aq_set_phy_register_ext(struct i40e_hw *hw,
+			     u8 phy_select, u8 dev_addr, bool page_change,
+			     bool set_mdio, u8 mdio_num,
+			     u32 reg_addr, u32 reg_val,
+			     struct i40e_asq_cmd_details *cmd_details);
+enum i40e_status_code
+i40e_aq_get_phy_register_ext(struct i40e_hw *hw,
+			     u8 phy_select, u8 dev_addr, bool page_change,
+			     bool set_mdio, u8 mdio_num,
+			     u32 reg_addr, u32 *reg_val,
+			     struct i40e_asq_cmd_details *cmd_details);
+
+/* Convenience wrappers for most common use case */
+#define i40e_aq_set_phy_register(hw, ps, da, pc, ra, rv, cd) \
+	i40e_aq_set_phy_register_ext(hw, ps, da, pc, false, 0, ra, rv, cd)
+#define i40e_aq_get_phy_register(hw, ps, da, pc, ra, rv, cd) \
+	i40e_aq_get_phy_register_ext(hw, ps, da, pc, false, 0, ra, rv, cd)
+
+enum i40e_status_code
+i40e_aq_run_phy_activity(struct i40e_hw *hw, u16 activity_id, u32 opcode,
+			 u32 *cmd_status, u32 *data0, u32 *data1,
+			 struct i40e_asq_cmd_details *cmd_details);
 
 i40e_status i40e_aq_set_arp_proxy_config(struct i40e_hw *hw,
 			struct i40e_aqc_arp_proxy_data *proxy_config,

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright(c) 2013 - 2020 Intel Corporation. */
 
 #ifndef _I40E_VIRTCHNL_PF_H_
 #define _I40E_VIRTCHNL_PF_H_
@@ -34,18 +34,17 @@ enum i40e_queue_ctrl {
 enum i40e_vf_states {
 	I40E_VF_STATE_INIT = 0,
 	I40E_VF_STATE_ACTIVE,
-	I40E_VF_STATE_IWARPENA,
 	I40E_VF_STATE_DISABLED,
 	I40E_VF_STATE_MC_PROMISC,
 	I40E_VF_STATE_UC_PROMISC,
 	I40E_VF_STATE_PRE_ENABLE,
+	I40E_VF_STATE_LOADED_VF_DRIVER,
 };
 
 /* VF capabilities */
 enum i40e_vf_capabilities {
 	I40E_VIRTCHNL_VF_CAP_PRIVILEGE = 0,
 	I40E_VIRTCHNL_VF_CAP_L2,
-	I40E_VIRTCHNL_VF_CAP_IWARP,
 };
 
 /* In ADq, max 4 VSI's can be allocated per VF including primary VF VSI.
@@ -101,22 +100,26 @@ struct i40e_vf {
 	bool link_forced;
 	bool link_up;		/* only valid if VF link is forced */
 #endif
+	bool queues_enabled;	/* true if the VF queues are enabled */
 	bool spoofchk;
 	u16 num_vlan;
 	DECLARE_BITMAP(mirror_vlans, VLAN_N_VID);
 	u16 vlan_rule_id;
 #define I40E_NO_VF_MIRROR	-1
+/* assuming vf ids' range is <0..max_supported> */
+#define I40E_IS_MIRROR_VLAN_ID_VALID(id) ((id) >= 0)
 	u16 ingress_rule_id;
 	int ingress_vlan;
 	u16 egress_rule_id;
 	int egress_vlan;
 	DECLARE_BITMAP(trunk_vlans, VLAN_N_VID);
-	bool mac_anti_spoof;
-	bool vlan_anti_spoof;
 	bool allow_untagged;
 	bool loopback;
 	bool vlan_stripping;
 	u8 promisc_mode;
+	u8 bw_share;
+	bool bw_share_applied; /* true if config is applied to the device */
+	bool pf_ctrl_disable; /* tracking bool for PF ctrl of VF enable/disable */
 
 	/* ADq related variables */
 	bool adq_enabled; /* flag to enable adq */
@@ -124,9 +127,6 @@ struct i40e_vf {
 	struct i40evf_channel ch[I40E_MAX_VF_VSI];
 	struct hlist_head cloud_filter_list;
 	u16 num_cloud_filters;
-
-	/* RDMA Client */
-	struct virtchnl_iwarp_qvlist_info *qvlist_info;
 };
 
 void i40e_free_vfs(struct i40e_pf *pf);
@@ -173,7 +173,10 @@ int i40e_ndo_set_vf_spoofchk(struct net_device *netdev, int vf_id, bool enable);
 
 void i40e_vc_notify_link_state(struct i40e_pf *pf);
 void i40e_vc_notify_reset(struct i40e_pf *pf);
-
+#ifdef HAVE_VF_STATS
+int i40e_get_vf_stats(struct net_device *netdev, int vf_id,
+		      struct ifla_vf_stats *vf_stats);
+#endif
 extern const struct vfd_ops i40e_vfd_ops;
 
 #endif /* _I40E_VIRTCHNL_PF_H_ */

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright(c) 2013 - 2019 Intel Corporation. */
+/* Copyright(c) 2013 - 2020 Intel Corporation. */
 
 #ifndef _I40E_DCB_H_
 #define _I40E_DCB_H_
@@ -30,6 +30,11 @@
 #define I40E_CEE_SUBTYPE_APP_PRI	4
 
 #define I40E_CEE_MAX_FEAT_TYPE		3
+#define I40E_LLDP_CURRENT_STATUS_XL710_OFFSET	0x2B
+#define I40E_LLDP_CURRENT_STATUS_X722_OFFSET	0x31
+#define I40E_LLDP_CURRENT_STATUS_OFFSET		1
+#define I40E_LLDP_CURRENT_STATUS_SIZE		1
+
 /* Defines for LLDP TLV header */
 #define I40E_LLDP_TLV_LEN_SHIFT		0
 #define I40E_LLDP_TLV_LEN_MASK		(0x01FF << I40E_LLDP_TLV_LEN_SHIFT)
@@ -148,5 +153,7 @@ i40e_status i40e_init_dcb(struct i40e_hw *hw,
 enum i40e_status_code
 i40e_get_fw_lldp_status(struct i40e_hw *hw,
 			enum i40e_get_fw_lldp_status_resp *lldp_status);
-
+i40e_status i40e_set_dcb_config(struct i40e_hw *hw);
+i40e_status i40e_dcb_config_to_lldp(u8 *lldpmib, u16 *miblen,
+					      struct i40e_dcbx_config *dcbcfg);
 #endif /* _I40E_DCB_H_ */
