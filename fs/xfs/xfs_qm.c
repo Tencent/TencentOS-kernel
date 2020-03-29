@@ -789,7 +789,7 @@ xfs_qm_qino_alloc(
 		return error;
 
 	if (need_alloc) {
-		error = xfs_dir_ialloc(&tp, NULL, S_IFREG, 1, 0, 0, 1, ip,
+		error = xfs_dir_ialloc(&tp, NULL, S_IFREG, 1, 0, 0, ip,
 								&committed);
 		if (error) {
 			xfs_trans_cancel(tp);
