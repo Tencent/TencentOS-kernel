@@ -107,6 +107,11 @@ enum bpf_cmd {
 	BPF_MAP_LOOKUP_AND_DELETE_ELEM,
 	BPF_MAP_FREEZE,
 	BPF_BTF_GET_NEXT_ID,
+	BPF_MAP_LOOKUP_BATCH,
+	BPF_MAP_LOOKUP_AND_DELETE_BATCH,
+	BPF_MAP_UPDATE_BATCH,
+	BPF_MAP_DELETE_BATCH,
+	BPF_LINK_CREATE,
 };
 
 enum bpf_map_type {
@@ -509,7 +514,7 @@ union bpf_attr {
 		__u32		prog_cnt;
 	} query;
 
-	struct {
+	struct { /* anonymous struct used by BPF_RAW_TRACEPOINT_OPEN command */
 		__u64 name;
 		__u32 prog_fd;
 	} raw_tracepoint;
@@ -537,6 +542,13 @@ union bpf_attr {
 		__u64		probe_offset;	/* output: probe_offset */
 		__u64		probe_addr;	/* output: probe_addr */
 	} task_fd_query;
+
+	struct { /* struct used by BPF_LINK_CREATE command */
+		__u32		prog_fd;	/* eBPF program to attach */
+		__u32		target_fd;	/* object to attach to */
+		__u32		attach_type;	/* attach type */
+		__u32		flags;		/* extra flags */
+	} link_create;
 } __attribute__((aligned(8)));
 
 /* The description below is an attempt at providing documentation to eBPF
