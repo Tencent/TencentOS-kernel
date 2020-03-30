@@ -1916,13 +1916,6 @@ static int bpf_obj_get(const union bpf_attr *attr)
 				attr->file_flags);
 }
 
-struct bpf_link {
-	atomic64_t refcnt;
-	const struct bpf_link_ops *ops;
-	struct bpf_prog *prog;
-	struct work_struct work;
-};
-
 void bpf_link_init(struct bpf_link *link, const struct bpf_link_ops *ops,
 		   struct bpf_prog *prog)
 {
@@ -1936,8 +1929,8 @@ void bpf_link_init(struct bpf_link *link, const struct bpf_link_ops *ops,
  * anon_inode's release() call. This helper manages marking bpf_link as
  * defunct, releases anon_inode file and puts reserved FD.
  */
-static void bpf_link_cleanup(struct bpf_link *link, struct file *link_file,
-			     int link_fd)
+void bpf_link_cleanup(struct bpf_link *link, struct file *link_file,
+		      int link_fd)
 {
 	link->prog = NULL;
 	fput(link_file);
@@ -2009,6 +2002,10 @@ static void bpf_link_show_fdinfo(struct seq_file *m, struct file *filp)
 		link_type = "raw_tracepoint";
 	else if (link->ops == &bpf_tracing_link_lops)
 		link_type = "tracing";
+#ifdef CONFIG_CGROUP_BPF
+	else if (link->ops == &bpf_cgroup_link_lops)
+		link_type = "cgroup";
+#endif
 	else
 		link_type = "unknown";
 
@@ -3235,6 +3232,52 @@ out:
 	return err;
 }
 
+#define BPF_LINK_CREATE_LAST_FIELD link_create.flags
+static int link_create(union bpf_attr *attr)
+{
+	enum bpf_prog_type ptype;
+	struct bpf_prog *prog;
+	int ret;
+
+	if (!capable(CAP_NET_ADMIN))
+		return -EPERM;
+
+	if (CHECK_ATTR(BPF_LINK_CREATE))
+		return -EINVAL;
+
+	ptype = attach_type_to_prog_type(attr->link_create.attach_type);
+	if (ptype == BPF_PROG_TYPE_UNSPEC)
+		return -EINVAL;
+
+	prog = bpf_prog_get_type(attr->link_create.prog_fd, ptype);
+	if (IS_ERR(prog))
+		return PTR_ERR(prog);
+
+	ret = bpf_prog_attach_check_attach_type(prog,
+						attr->link_create.attach_type);
+	if (ret)
+		goto err_out;
+
+	switch (ptype) {
+	case BPF_PROG_TYPE_CGROUP_SKB:
+	case BPF_PROG_TYPE_CGROUP_SOCK:
+	case BPF_PROG_TYPE_CGROUP_SOCK_ADDR:
+	case BPF_PROG_TYPE_SOCK_OPS:
+	case BPF_PROG_TYPE_CGROUP_DEVICE:
+	case BPF_PROG_TYPE_CGROUP_SYSCTL:
+	case BPF_PROG_TYPE_CGROUP_SOCKOPT:
+		ret = cgroup_bpf_link_attach(attr, prog);
+		break;
+	default:
+		ret = -EINVAL;
+	}
+
+err_out:
+	if (ret < 0)
+		bpf_prog_put(prog);
+	return ret;
+}
+
 SYSCALL_DEFINE3(bpf, int, cmd, union bpf_attr __user *, uattr, unsigned int, size)
 {
 	union bpf_attr attr;
@@ -3320,6 +3363,9 @@ SYSCALL_DEFINE3(bpf, int, cmd, union bpf_attr __user *, uattr, unsigned int, siz
 		break;
 	case BPF_RAW_TRACEPOINT_OPEN:
 		err = bpf_raw_tracepoint_open(&attr);
+		break;
+	case BPF_LINK_CREATE:
+		err = link_create(&attr);
 		break;
 	case BPF_BTF_LOAD:
 		err = bpf_btf_load(&attr);
