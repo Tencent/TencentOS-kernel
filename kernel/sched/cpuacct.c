@@ -415,7 +415,7 @@ static int cpuacct_all_seq_show(struct seq_file *m, void *V)
 static int bt_cpuacct_stats_show(struct seq_file *sf, void *v)
 {
 	struct cpuacct *ca = css_ca(seq_css(sf));
-	s64 val[CPUACCT_STAT_NSTATS];
+	s64 val[CPUACCT_STAT_NSTATS - 2];
 	int cpu;
 	int stat;
 
@@ -423,16 +423,16 @@ static int bt_cpuacct_stats_show(struct seq_file *sf, void *v)
 	for_each_possible_cpu(cpu) {
 		u64 *cpustat = per_cpu_ptr(ca->cpustat, cpu)->cpustat;
 
-		val[CPUACCT_STAT_BT_USER]   += cpustat[CPUTIME_USER];
-		val[CPUACCT_STAT_BT_USER]   += cpustat[CPUTIME_NICE];
-		val[CPUACCT_STAT_BT_SYSTEM] += cpustat[CPUTIME_SYSTEM];
-		val[CPUACCT_STAT_BT_SYSTEM] += cpustat[CPUTIME_IRQ];
-		val[CPUACCT_STAT_BT_SYSTEM] += cpustat[CPUTIME_SOFTIRQ];
+		val[CPUACCT_STAT_USER]   += cpustat[CPUTIME_BT_USER];
+		val[CPUACCT_STAT_USER]   += cpustat[CPUTIME_BT_NICE];
+		val[CPUACCT_STAT_SYSTEM] += cpustat[CPUTIME_BT_SYSTEM];
+		val[CPUACCT_STAT_SYSTEM] += cpustat[CPUTIME_BT_IRQ];
+		val[CPUACCT_STAT_SYSTEM] += cpustat[CPUTIME_BT_SOFTIRQ];
 	}
 
-	for (stat = 0; stat < CPUACCT_STAT_NSTATS; stat++) {
+	for (stat = 0; stat < CPUACCT_STAT_NSTATS - 2; stat++) {
 		seq_printf(sf, "%s %lld\n",
-			   cpuacct_stat_desc[stat],
+			   cpuacct_stat_desc[stat + 2],
 			   (long long)nsec_to_clock_t(val[stat]));
 	}
 
@@ -443,7 +443,7 @@ static int bt_cpuacct_stats_show(struct seq_file *sf, void *v)
 static int cpuacct_stats_show(struct seq_file *sf, void *v)
 {
 	struct cpuacct *ca = css_ca(seq_css(sf));
-	s64 val[CPUACCT_STAT_NSTATS];
+	s64 val[CPUACCT_STAT_NSTATS - 2];
 	int cpu;
 	int stat;
 
@@ -458,7 +458,7 @@ static int cpuacct_stats_show(struct seq_file *sf, void *v)
 		val[CPUACCT_STAT_SYSTEM] += cpustat[CPUTIME_SOFTIRQ];
 	}
 
-	for (stat = 0; stat < CPUACCT_STAT_NSTATS; stat++) {
+	for (stat = 0; stat < CPUACCT_STAT_NSTATS - 2; stat++) {
 		seq_printf(sf, "%s %lld\n",
 			   cpuacct_stat_desc[stat],
 			   (long long)nsec_to_clock_t(val[stat]));
@@ -585,7 +585,7 @@ void bt_cpuacct_charge(struct task_struct *tsk, u64 cputime)
 	rcu_read_lock();
 
 	for (ca = task_ca(tsk); ca; ca = parent_ca(ca))
-		this_cpu_ptr(ca->cpuusage)->usages[index] += cputime;
+		this_cpu_ptr(ca->bt_cpuusage)->usages[index] += cputime;
 
 	rcu_read_unlock();
 }
