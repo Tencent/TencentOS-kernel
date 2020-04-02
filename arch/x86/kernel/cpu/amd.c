@@ -352,25 +352,6 @@ static void amd_get_topology(struct cpuinfo_x86 *c)
 				c->x86_max_cores /= smp_num_siblings;
 		}
 
-		if (c->x86_vendor == X86_VENDOR_HYGON && cpuid_edx(0x80000006)) {
-			/*
-			 * We may have multiple LLCs if L3 caches exist, so check if we
-			 * have an L3 cache by looking at the L3 cache CPUID leaf.
-			 */
-			if (c->x86 == 0x17) {
-				/* Socket ID is ApicId[6] for these processors. */
-				c->phys_proc_id = c->initial_apicid >> 6;
-				/*
-				 * LLC is at the core complex level.
-				 * Core complex id is ApicId[3].
-				 */
-				per_cpu(cpu_llc_id, cpu) = c->apicid >> 3;
-			} else {
-				/* LLC is at the node level. */
-				per_cpu(cpu_llc_id, cpu) = node_id;
-			}
-		} else {
-
 		/*
 		 * In case leaf B is available, use it to derive
 		 * topology information.
@@ -380,7 +361,6 @@ static void amd_get_topology(struct cpuinfo_x86 *c)
 			c->x86_coreid_bits = get_count_order(c->x86_max_cores);
 
 		cacheinfo_amd_init_llc_id(c, cpu, node_id);
-		}
 	} else if (cpu_has(c, X86_FEATURE_NODEID_MSR)) {
 		u64 value;
 
