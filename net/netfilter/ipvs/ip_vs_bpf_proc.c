@@ -51,9 +51,8 @@ static unsigned int bpf_prog_fd2;
 static struct bpf_prog *g_prog1;
 static struct bpf_prog *g_prog2;
 __be32 major_nic_ip;
-/* ip_local_port_range shall be beyond 1024 */
-static int ip_local_port_begin = 32768;
-static int ip_local_port_end = 42767;
+static int ip_local_port_begin;
+static int ip_local_port_end;
 struct bpf_map  *conntrack_map;
 
 struct ip_vs_iter_state {

@@ -1001,14 +1001,21 @@ static bool nf_nat_l4proto_unique_tuple(
 			min = 1;
 			range = 511;
 		} else {
-			min = 512;
+			min = 600;
 			range = 1023 - 600 + 1;
 		}
 	} else {
 		min = 1024;
-		range = low - 1024; /* [1024 , 32768-1]   */
-		min_high = high + 1;   /* [42768 + 1, 65535] */
-		range_high = 65535 - min_high + 1;
+		if (low == 0 && high == 0) {
+			range = 65535 - 1024 + 1; /* [1024, 65535] */
+		} else {
+			/* Bypass ip_local_port_range in [32768, 42767] */
+			/* low range in [1024, low) */
+			range = low - 1024;
+			/* high range in (high, 65535] */
+			min_high = high + 1;
+			range_high = 65535 - high;
+		}
 	}
 
 	/* step 2: pick a random sport, and do it 240 times */
@@ -1017,12 +1024,17 @@ static bool nf_nat_l4proto_unique_tuple(
 		if (min < 1024) {
 			reply_key->dport = min + prandom_u32() % range;
 		} else {
-			/* Bypass ip_local_port_range */
-			if (prandom_u32() % 2 == 0)
+			if (low == 0 && high == 0) {
 				reply_key->dport = min + prandom_u32() % range;
-			else
-				reply_key->dport = min_high +
-					prandom_u32() % range_high;
+			} else {
+				/* Bypass ip_local_port_range */
+				if (prandom_u32() % 2 == 0)
+					reply_key->dport = min +
+						prandom_u32() % range;
+				else
+					reply_key->dport = min_high +
+						prandom_u32() % range_high;
+			}
 		}
 		for (i = 0; i < count; i++) {
 			if (map->ops->map_lookup_elem(map,
