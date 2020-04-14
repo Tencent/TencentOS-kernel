@@ -970,30 +970,23 @@ static void bdi_split_work_to_wbs(struct backing_dev_info *bdi,
 void wb_start_writeback(struct bdi_writeback *wb, long nr_pages,
 			bool range_cyclic, enum wb_reason reason)
 {
-	struct wb_writeback_work *work;
-
 	if (!wb_has_dirty_io(wb))
 		return;
 
 	/*
-	 * This is WB_SYNC_NONE writeback, so if allocation fails just
-	 * wakeup the thread for old dirty data writeback
+	 * All callers of this function want to start writeback of all
+	 * dirty pages. Places like vmscan can call this at a very
+	 * high frequency, causing pointless allocations of tons of
+	 * work items and keeping the flusher threads busy retrieving
+	 * that work. Ensure that we only allow one of them pending and
+	 * inflight at the time.
 	 */
-	work = kzalloc(sizeof(*work),
-		       GFP_NOWAIT | __GFP_NOMEMALLOC | __GFP_NOWARN);
-	if (!work) {
-		trace_writeback_nowork(wb);
-		wb_wakeup(wb);
+	if (test_bit(WB_start_all, &wb->state) ||
+	    test_and_set_bit(WB_start_all, &wb->state))
 		return;
-	}
 
-	work->sync_mode	= WB_SYNC_NONE;
-	work->nr_pages	= nr_pages;
-	work->range_cyclic = range_cyclic;
-	work->reason	= reason;
-	work->auto_free	= 1;
-
-	wb_queue_work(wb, work);
+	wb->start_all_reason = reason;
+	wb_wakeup(wb);
 }
 
 /**
@@ -1911,6 +1904,29 @@ static long wb_check_old_data_flush(struct bdi_writeback *wb)
 	return 0;
 }
 
+static long wb_check_start_all(struct bdi_writeback *wb)
+{
+	long nr_pages;
+
+	if (!test_bit(WB_start_all, &wb->state))
+		return 0;
+
+	nr_pages = get_nr_dirty_pages();
+	if (nr_pages) {
+		struct wb_writeback_work work = {
+			.nr_pages	= wb_split_bdi_pages(wb, nr_pages),
+			.sync_mode	= WB_SYNC_NONE,
+			.range_cyclic	= 1,
+			.reason		= wb->start_all_reason,
+		};
+
+		nr_pages = wb_writeback(wb, &work);
+	}
+
+	clear_bit(WB_start_all, &wb->state);
+	return nr_pages;
+}
+
 /*
  * Retrieve work items and do the writeback they describe
  */
@@ -1925,6 +1941,11 @@ static long wb_do_writeback(struct bdi_writeback *wb)
 		wrote += wb_writeback(wb, work);
 		finish_writeback_work(wb, work);
 	}
+
+	/*
+	 * Check for a flush-everything request
+	 */
+	wrote += wb_check_start_all(wb);
 
 	/*
 	 * Check for periodic writeback, kupdated() style
