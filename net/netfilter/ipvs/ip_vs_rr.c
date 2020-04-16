@@ -93,7 +93,8 @@ ip_vs_rr_schedule(struct ip_vs_service *svc, const struct sk_buff *skb,
 
 stop:
 	spin_unlock_bh(&svc->sched_lock);
-	ip_vs_scheduler_err(svc, "no destination available");
+	if (svc->ipvs && !sysctl_ignore_no_rs_error(svc->ipvs))
+		ip_vs_scheduler_err(svc, "no destination available");
 	return NULL;
 
   out:

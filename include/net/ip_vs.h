@@ -952,6 +952,7 @@ struct netns_ipvs {
 	int			sysctl_conn_reuse_mode;
 	int			sysctl_schedule_icmp;
 	int			sysctl_ignore_tunneled;
+	int			sysctl_ignore_no_rs_error;
 	int			sysctl_tunnel_df_force_zero;
 
 	/* ip_vs_lblc */
@@ -1085,6 +1086,11 @@ static inline int sysctl_schedule_icmp(struct netns_ipvs *ipvs)
 static inline int sysctl_ignore_tunneled(struct netns_ipvs *ipvs)
 {
 	return ipvs->sysctl_ignore_tunneled;
+}
+
+static inline int sysctl_ignore_no_rs_error(struct netns_ipvs *ipvs)
+{
+	return ipvs->sysctl_ignore_no_rs_error;
 }
 
 static inline int sysctl_cache_bypass(struct netns_ipvs *ipvs)
