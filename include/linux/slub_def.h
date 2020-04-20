@@ -136,6 +136,9 @@ struct kmem_cache {
 	struct kasan_cache kasan_info;
 #endif
 
+#ifdef CONFIG_SLUB_DEBUG
+	atomic_long_t total_objects_free;
+#endif
 	struct kmem_cache_node *node[MAX_NUMNODES];
 };
 

@@ -1635,6 +1635,10 @@ out:
 
 	inc_slabs_node(s, page_to_nid(page), page->objects);
 
+#ifdef CONFIG_SLUB_DEBUG
+	atomic_long_add(page->objects, &s->total_objects_free);
+#endif
+
 	return page;
 }
 
@@ -1718,6 +1722,9 @@ static void free_slab(struct kmem_cache *s, struct page *page)
 
 static void discard_slab(struct kmem_cache *s, struct page *page)
 {
+#ifdef CONFIG_SLUB_DEBUG
+	atomic_long_sub(page->objects, &s->total_objects_free);
+#endif
 	dec_slabs_node(s, page_to_nid(page), page->objects);
 	free_slab(s, page);
 }
@@ -2722,6 +2729,9 @@ redo:
 
 	slab_post_alloc_hook(s, gfpflags, 1, &object);
 
+#ifdef CONFIG_SLUB_DEBUG
+	atomic_long_dec(&s->total_objects_free);
+#endif
 	return object;
 }
 
@@ -2957,6 +2967,9 @@ redo:
 	} else
 		__slab_free(s, page, head, tail_obj, cnt, addr);
 
+#ifdef CONFIG_SLUB_DEBUG
+	atomic_long_add(cnt, &s->total_objects_free);
+#endif
 }
 
 static __always_inline void slab_free(struct kmem_cache *s, struct page *page,
@@ -3385,6 +3398,9 @@ static int init_kmem_cache_nodes(struct kmem_cache *s)
 {
 	int node;
 
+#ifdef CONFIG_SLUB_DEBUG
+	atomic_long_set(&s->total_objects_free, 0);
+#endif
 	for_each_node_state(node, N_NORMAL_MEMORY) {
 		struct kmem_cache_node *n;
 
@@ -5837,6 +5853,7 @@ __initcall(slab_sysfs_init);
  * The /proc/slabinfo ABI
  */
 #ifdef CONFIG_SLABINFO
+unsigned long sysctl_fast_slub_nr_free = 0;
 void get_slabinfo(struct kmem_cache *s, struct slabinfo *sinfo)
 {
 	unsigned long nr_slabs = 0;
@@ -5848,9 +5865,12 @@ void get_slabinfo(struct kmem_cache *s, struct slabinfo *sinfo)
 	for_each_kmem_cache_node(s, node, n) {
 		nr_slabs += node_nr_slabs(n);
 		nr_objs += node_nr_objs(n);
-		nr_free += count_partial(n, count_free);
+		if (!sysctl_fast_slub_nr_free)
+			nr_free += count_partial(n, count_free);
 	}
-
+	if (sysctl_fast_slub_nr_free)
+		nr_free = atomic_long_read(&s->total_objects_free);
+	nr_free = min(nr_objs, nr_free);
 	sinfo->active_objs = nr_objs - nr_free;
 	sinfo->num_objs = nr_objs;
 	sinfo->active_slabs = nr_slabs;

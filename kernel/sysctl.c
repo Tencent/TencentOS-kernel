@@ -309,6 +309,8 @@ static int min_extfrag_threshold;
 static int max_extfrag_threshold = 1000;
 #endif
 
+extern unsigned long sysctl_fast_slub_nr_free;
+
 static int sysrq_use_leftctrl_sysctl_handler(struct ctl_table * table ,int write,
 		void __user *buffer,size_t *lenp,
 		loff_t *ppos)
@@ -1810,6 +1812,13 @@ static struct ctl_table vm_table[] = {
 		.extra2		= (void *)&mmap_rnd_compat_bits_max,
 	},
 #endif
+	{
+		.procname	= "fast_slub_nr_free",
+		.data		= &sysctl_fast_slub_nr_free,
+		.maxlen		= sizeof(sysctl_fast_slub_nr_free),
+		.mode		= 0644,
+		.proc_handler	= proc_doulongvec_minmax,
+	},
 	{ }
 };
 
