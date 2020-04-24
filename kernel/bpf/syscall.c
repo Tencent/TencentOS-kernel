@@ -3703,8 +3703,10 @@ static int link_update(union bpf_attr *attr)
 		return PTR_ERR(link);
 
 	new_prog = bpf_prog_get(attr->link_update.new_prog_fd);
-	if (IS_ERR(new_prog))
-		return PTR_ERR(new_prog);
+	if (IS_ERR(new_prog)) {
+		ret = PTR_ERR(new_prog);
+		goto out_put_link;
+	}
 
 	if (flags & BPF_F_REPLACE) {
 		old_prog = bpf_prog_get(attr->link_update.old_prog_fd);
@@ -3713,6 +3715,9 @@ static int link_update(union bpf_attr *attr)
 			old_prog = NULL;
 			goto out_put_progs;
 		}
+	} else if (attr->link_update.old_prog_fd) {
+		ret = -EINVAL;
+		goto out_put_progs;
 	}
 
 	if (link->ops->update_prog)
@@ -3725,6 +3730,8 @@ out_put_progs:
 		bpf_prog_put(old_prog);
 	if (ret)
 		bpf_prog_put(new_prog);
+out_put_link:
+	bpf_link_put(link);
 	return ret;
 }
 
