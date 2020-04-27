@@ -12,15 +12,24 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/if_vlan.h>
+#ifdef HAVE_NDO_XDP
 #include <linux/bpf.h>
+#ifdef HAVE_BPF_TRACE
 #include <linux/bpf_trace.h>
+#endif
 #include <linux/filter.h>
+#endif
+#include "bnxt_compat.h"
 #include "bnxt_hsi.h"
 #include "bnxt.h"
 #include "bnxt_xdp.h"
+#ifdef CONFIG_PAGE_POOL
+#include <net/page_pool.h>
+#endif
 
-void bnxt_xmit_xdp(struct bnxt *bp, struct bnxt_tx_ring_info *txr,
-		   dma_addr_t mapping, u32 len, u16 rx_prod)
+struct bnxt_sw_tx_bd *bnxt_xmit_bd(struct bnxt *bp,
+				   struct bnxt_tx_ring_info *txr,
+				   dma_addr_t mapping, u32 len)
 {
 	struct bnxt_sw_tx_bd *tx_buf;
 	struct tx_bd *txbd;
@@ -28,8 +37,7 @@ void bnxt_xmit_xdp(struct bnxt *bp, struct bnxt_tx_ring_info *txr,
 	u16 prod;
 
 	prod = txr->tx_prod;
-	tx_buf = &txr->tx_buf_ring[prod];
-	tx_buf->rx_prod = rx_prod;
+	tx_buf = &txr->tx_buf_ring[RING_TX(prod)];
 
 	txbd = &txr->tx_desc_ring[TX_RING(prod)][TX_IDX(prod)];
 	flags = (len << TX_BD_LEN_SHIFT) | (1 << TX_BD_FLAGS_BD_CNT_SHIFT) |
@@ -40,30 +48,72 @@ void bnxt_xmit_xdp(struct bnxt *bp, struct bnxt_tx_ring_info *txr,
 
 	prod = NEXT_TX(prod);
 	txr->tx_prod = prod;
+	return tx_buf;
 }
+
+#ifdef HAVE_NDO_XDP
+static void __bnxt_xmit_xdp(struct bnxt *bp, struct bnxt_tx_ring_info *txr,
+			    dma_addr_t mapping, u32 len, u16 rx_prod)
+{
+	struct bnxt_sw_tx_bd *tx_buf;
+
+	tx_buf = bnxt_xmit_bd(bp, txr, mapping, len);
+	tx_buf->rx_prod = rx_prod;
+	tx_buf->action = XDP_TX;
+}
+
+#ifdef HAVE_XDP_FRAME
+static void __bnxt_xmit_xdp_redirect(struct bnxt *bp,
+				     struct bnxt_tx_ring_info *txr,
+				     dma_addr_t mapping, u32 len,
+				     struct xdp_frame *xdpf)
+{
+	struct bnxt_sw_tx_bd *tx_buf;
+
+	tx_buf = bnxt_xmit_bd(bp, txr, mapping, len);
+	tx_buf->action = XDP_REDIRECT;
+	tx_buf->xdpf = xdpf;
+	dma_unmap_addr_set(tx_buf, mapping, mapping);
+	dma_unmap_len_set(tx_buf, len, 0);
+}
+#endif
 
 void bnxt_tx_int_xdp(struct bnxt *bp, struct bnxt_napi *bnapi, int nr_pkts)
 {
 	struct bnxt_tx_ring_info *txr = bnapi->tx_ring;
 	struct bnxt_rx_ring_info *rxr = bnapi->rx_ring;
+	bool rx_doorbell_needed = false;
 	struct bnxt_sw_tx_bd *tx_buf;
 	u16 tx_cons = txr->tx_cons;
 	u16 last_tx_cons = tx_cons;
-	u16 rx_prod;
 	int i;
 
 	for (i = 0; i < nr_pkts; i++) {
-		last_tx_cons = tx_cons;
+		tx_buf = &txr->tx_buf_ring[RING_TX(tx_cons)];
+
+		if (tx_buf->action == XDP_REDIRECT) {
+			struct pci_dev *pdev = bp->pdev;
+
+			dma_unmap_single(&pdev->dev,
+					dma_unmap_addr(tx_buf, mapping),
+					dma_unmap_len(tx_buf, len),
+					PCI_DMA_TODEVICE);
+#ifdef HAVE_XDP_FRAME
+			xdp_return_frame(tx_buf->xdpf);
+#endif
+			tx_buf->action = 0;
+			tx_buf->xdpf = NULL;
+		} else if (tx_buf->action == XDP_TX) {
+			rx_doorbell_needed = true;
+			last_tx_cons = tx_cons;
+		}
 		tx_cons = NEXT_TX(tx_cons);
 	}
 	txr->tx_cons = tx_cons;
-	if (bnxt_tx_avail(bp, txr) == bp->tx_ring_size) {
-		rx_prod = rxr->rx_prod;
-	} else {
-		tx_buf = &txr->tx_buf_ring[last_tx_cons];
-		rx_prod = tx_buf->rx_prod;
+	if (rx_doorbell_needed) {
+		tx_buf = &txr->tx_buf_ring[RING_TX(last_tx_cons)];
+		bnxt_db_write(bp, &rxr->rx_db, tx_buf->rx_prod);
 	}
-	bnxt_db_write(bp, rxr->rx_doorbell, DB_KEY_RX | rx_prod);
 }
 
 /* returns the following:
@@ -88,17 +138,23 @@ bool bnxt_rx_xdp(struct bnxt *bp, struct bnxt_rx_ring_info *rxr, u16 cons,
 		return false;
 
 	pdev = bp->pdev;
-	txr = rxr->bnapi->tx_ring;
 	rx_buf = &rxr->rx_buf_ring[cons];
 	offset = bp->rx_offset;
 
-	xdp.data_hard_start = *data_ptr - offset;
-	xdp.data = *data_ptr;
-	xdp.data_end = *data_ptr + *len;
-	orig_data = xdp.data;
 	mapping = rx_buf->mapping - bp->rx_dma_offset;
-
 	dma_sync_single_for_cpu(&pdev->dev, mapping + offset, *len, bp->rx_dir);
+
+	txr = rxr->bnapi->tx_ring;
+#if XDP_PACKET_HEADROOM
+	xdp.data_hard_start = *data_ptr - offset;
+#endif
+	xdp.data = *data_ptr;
+	xdp_set_data_meta_invalid(&xdp);
+	xdp.data_end = *data_ptr + *len;
+#ifdef HAVE_XDP_RXQ_INFO
+	xdp.rxq = &rxr->xdp_rxq;
+#endif
+	orig_data = xdp.data;
 
 	rcu_read_lock();
 	act = bpf_prog_run_xdp(xdp_prog, &xdp);
@@ -111,10 +167,14 @@ bool bnxt_rx_xdp(struct bnxt *bp, struct bnxt_rx_ring_info *rxr, u16 cons,
 	if (tx_avail != bp->tx_ring_size)
 		*event &= ~BNXT_RX_EVENT;
 
+#if XDP_PACKET_HEADROOM
+	*len = xdp.data_end - xdp.data;
+#endif
 	if (orig_data != xdp.data) {
+#if XDP_PACKET_HEADROOM
 		offset = xdp.data - xdp.data_hard_start;
 		*data_ptr = xdp.data_hard_start + offset;
-		*len = xdp.data_end - xdp.data;
+#endif
 	}
 	switch (act) {
 	case XDP_PASS:
@@ -130,10 +190,38 @@ bool bnxt_rx_xdp(struct bnxt *bp, struct bnxt_rx_ring_info *rxr, u16 cons,
 		*event = BNXT_TX_EVENT;
 		dma_sync_single_for_device(&pdev->dev, mapping + offset, *len,
 					   bp->rx_dir);
-		bnxt_xmit_xdp(bp, txr, mapping + offset, *len,
+		__bnxt_xmit_xdp(bp, txr, mapping + offset, *len,
 			      NEXT_RX(rxr->rx_prod));
 		bnxt_reuse_rx_data(rxr, cons, page);
 		return true;
+	case XDP_REDIRECT:
+		/* if we are calling this here then we know that the
+		 * redirect is coming from a frame received by the
+		 * bnxt_en driver.
+		 */
+		dma_unmap_page_attrs(&pdev->dev, mapping,
+				     PAGE_SIZE, bp->rx_dir,
+				     DMA_ATTR_WEAK_ORDERING);
+
+		/* if we are unable to allocate a new buffer, abort and reuse */
+		if (bnxt_alloc_rx_data(bp, rxr, rxr->rx_prod, GFP_ATOMIC)) {
+			trace_xdp_exception(bp->dev, xdp_prog, act);
+			bnxt_reuse_rx_data(rxr, cons, page);
+			return true;
+		}
+
+		if (xdp_do_redirect(bp->dev, &xdp, xdp_prog)) {
+			trace_xdp_exception(bp->dev, xdp_prog, act);
+#ifndef CONFIG_PAGE_POOL
+			__free_page(page);
+#else
+			page_pool_recycle_direct(rxr->page_pool, page);
+#endif
+			return true;
+		}
+
+		*event |= BNXT_REDIRECT_EVENT;
+		break;
 	default:
 		bpf_warn_invalid_xdp_action(act);
 		/* Fall thru */
@@ -147,6 +235,57 @@ bool bnxt_rx_xdp(struct bnxt *bp, struct bnxt_rx_ring_info *rxr, u16 cons,
 	return true;
 }
 
+#ifdef HAVE_XDP_FRAME
+int bnxt_xdp_xmit(struct net_device *dev, int num_frames,
+		  struct xdp_frame **frames, u32 flags)
+{
+	struct bnxt *bp = netdev_priv(dev);
+	struct bpf_prog *xdp_prog = READ_ONCE(bp->xdp_prog);
+	struct pci_dev *pdev = bp->pdev;
+	struct bnxt_tx_ring_info *txr;
+	dma_addr_t mapping;
+	int drops = 0;
+	int ring;
+	int i;
+
+	if (!test_bit(BNXT_STATE_OPEN, &bp->state) ||
+	    !bp->tx_nr_rings_xdp ||
+	    !xdp_prog)
+		return -EINVAL;
+
+	ring = smp_processor_id() % bp->tx_nr_rings_xdp;
+	txr = &bp->tx_ring[ring];
+
+	for (i = 0; i < num_frames; i++) {
+		struct xdp_frame *xdp = frames[i];
+
+		if (!txr || !bnxt_tx_avail(bp, txr) ||
+		    !(bp->bnapi[ring]->flags & BNXT_NAPI_FLAG_XDP)) {
+			xdp_return_frame_rx_napi(xdp);
+			drops++;
+			continue;
+		}
+
+		mapping = dma_map_single(&pdev->dev, xdp->data, xdp->len,
+					 DMA_TO_DEVICE);
+
+		if (dma_mapping_error(&pdev->dev, mapping)) {
+			xdp_return_frame_rx_napi(xdp);
+			drops++;
+			continue;
+		}
+		__bnxt_xmit_xdp_redirect(bp, txr, mapping, xdp->len, xdp);
+	}
+
+	if (flags & XDP_XMIT_FLUSH) {
+		/* Sync BD data before updating doorbell */
+		wmb();
+		bnxt_db_write(bp, &txr->tx_db, txr->tx_prod);
+	}
+
+	return num_frames - drops;
+}
+#endif
 /* Under rtnl_lock */
 static int bnxt_xdp_set(struct bnxt *bp, struct bpf_prog *prog)
 {
@@ -197,7 +336,6 @@ static int bnxt_xdp_set(struct bnxt *bp, struct bpf_prog *prog)
 	bp->tx_nr_rings_xdp = tx_xdp;
 	bp->tx_nr_rings = bp->tx_nr_rings_per_tc * tc + tx_xdp;
 	bp->cp_nr_rings = max_t(int, bp->tx_nr_rings, bp->rx_nr_rings);
-	bp->num_stat_ctxs = bp->cp_nr_rings;
 	bnxt_set_tpa_flags(bp);
 	bnxt_set_ring_params(bp);
 
@@ -207,7 +345,7 @@ static int bnxt_xdp_set(struct bnxt *bp, struct bpf_prog *prog)
 	return 0;
 }
 
-int bnxt_xdp(struct net_device *dev, struct netdev_xdp *xdp)
+int bnxt_xdp(struct net_device *dev, struct netdev_bpf *xdp)
 {
 	struct bnxt *bp = netdev_priv(dev);
 	int rc;
@@ -217,8 +355,12 @@ int bnxt_xdp(struct net_device *dev, struct netdev_xdp *xdp)
 		rc = bnxt_xdp_set(bp, xdp->prog);
 		break;
 	case XDP_QUERY_PROG:
+#ifdef HAVE_PROG_ATTACHED
 		xdp->prog_attached = !!bp->xdp_prog;
+#endif
+#ifdef HAVE_IFLA_XDP_PROG_ID
 		xdp->prog_id = bp->xdp_prog ? bp->xdp_prog->aux->id : 0;
+#endif
 		rc = 0;
 		break;
 	default:
@@ -227,3 +369,14 @@ int bnxt_xdp(struct net_device *dev, struct netdev_xdp *xdp)
 	}
 	return rc;
 }
+#else
+void bnxt_tx_int_xdp(struct bnxt *bp, struct bnxt_napi *bnapi, int nr_pkts)
+{
+}
+
+bool bnxt_rx_xdp(struct bnxt *bp, struct bnxt_rx_ring_info *rxr, u16 cons,
+		 void *page, u8 **data_ptr, unsigned int *len, u8 *event)
+{
+	return false;
+}
+#endif

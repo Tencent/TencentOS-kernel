@@ -1,6 +1,6 @@
 /* Broadcom NetXtreme-C/E network driver.
  *
- * Copyright (c) 2016 Broadcom Limited
+ * Copyright (c) 2016-2017 Broadcom Limited
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -9,6 +9,8 @@
 
 #ifndef BNXT_ULP_H
 #define BNXT_ULP_H
+
+#include <linux/version.h>
 
 #define BNXT_ROCE_ULP	0
 #define BNXT_OTHER_ULP	1
@@ -20,6 +22,15 @@
 struct hwrm_async_event_cmpl;
 struct bnxt;
 
+struct bnxt_msix_entry {
+	u32	vector;
+	u32	ring_idx;
+	u32	db_offset;
+};
+
+/* Change BNXT_ULP_VERSION in bnxt.h if any structure or API exposed to
+ * bnxt_re is modified.
+ */
 struct bnxt_ulp_ops {
 	/* async_notifier() cannot sleep (in BH context) */
 	void (*ulp_async_notifier)(void *, struct hwrm_async_event_cmpl *);
@@ -27,12 +38,8 @@ struct bnxt_ulp_ops {
 	void (*ulp_start)(void *);
 	void (*ulp_sriov_config)(void *, int);
 	void (*ulp_shutdown)(void *);
-};
-
-struct bnxt_msix_entry {
-	u32	vector;
-	u32	ring_idx;
-	u32	db_offset;
+	void (*ulp_irq_stop)(void *);
+	void (*ulp_irq_restart)(void *, struct bnxt_msix_entry *);
 };
 
 struct bnxt_fw_msg {
@@ -49,6 +56,7 @@ struct bnxt_ulp {
 	unsigned long	*async_events_bmap;
 	u16		max_async_event_id;
 	u16		msix_requested;
+	u16		msix_base;
 	atomic_t	ref_count;
 };
 
@@ -60,8 +68,18 @@ struct bnxt_en_dev {
 	#define BNXT_EN_FLAG_ROCEV2_CAP		0x2
 	#define BNXT_EN_FLAG_ROCE_CAP		(BNXT_EN_FLAG_ROCEV1_CAP | \
 						 BNXT_EN_FLAG_ROCEV2_CAP)
+	#define BNXT_EN_FLAG_MSIX_REQUESTED	0x4
+	#define BNXT_EN_FLAG_ULP_STOPPED	0x8
 	const struct bnxt_en_ops	*en_ops;
 	struct bnxt_ulp			ulp_tbl[BNXT_MAX_ULP];
+	int				l2_db_size;	/* Doorbell BAR size in
+							 * bytes mapped by L2
+							 * driver.
+							 */
+	int				l2_db_size_nc;	/* Doorbell BAR size in
+							 * bytes mapped as non-
+							 * cacheable.
+							 */
 };
 
 struct bnxt_en_ops {
@@ -84,12 +102,15 @@ static inline bool bnxt_ulp_registered(struct bnxt_en_dev *edev, int ulp_id)
 	return false;
 }
 
-void bnxt_subtract_ulp_resources(struct bnxt *bp, int ulp_id);
+int bnxt_get_ulp_msix_num(struct bnxt *bp);
+int bnxt_get_ulp_msix_base(struct bnxt *bp);
+int bnxt_get_ulp_stat_ctxs(struct bnxt *bp);
 void bnxt_ulp_stop(struct bnxt *bp);
-void bnxt_ulp_start(struct bnxt *bp);
+void bnxt_ulp_start(struct bnxt *bp, int err);
 void bnxt_ulp_sriov_cfg(struct bnxt *bp, int num_vfs);
 void bnxt_ulp_shutdown(struct bnxt *bp);
+void bnxt_ulp_irq_stop(struct bnxt *bp);
+void bnxt_ulp_irq_restart(struct bnxt *bp, int err);
 void bnxt_ulp_async_events(struct bnxt *bp, struct hwrm_async_event_cmpl *cmpl);
 struct bnxt_en_dev *bnxt_ulp_probe(struct net_device *dev);
-
 #endif
