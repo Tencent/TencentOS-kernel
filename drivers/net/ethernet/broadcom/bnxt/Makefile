@@ -2,7 +2,13 @@
 # Makefile for building Linux Broadcom Gigabit ethernet driver as a module.
 # $id$
 
-LINUXSRC=$(shell pwd)
+KERNELDIR=$(shell pwd)
+
+ifneq ($(shell ls /$(KERNELDIR)/source > /dev/null 2>&1 && echo source),)
+  LINUXSRC=/$(KERNELDIR)/source
+else
+  LINUXSRC=$(KERNELDIR)
+endif
 
 ifeq ($(shell ls $(LINUXSRC)/include/uapi/linux > /dev/null 2>&1 && echo uapi),)
   UAPI=
