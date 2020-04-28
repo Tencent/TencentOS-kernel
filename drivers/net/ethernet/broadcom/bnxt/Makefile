@@ -1,68 +1,13 @@
 #!/usr/bin/make
 # Makefile for building Linux Broadcom Gigabit ethernet driver as a module.
 # $id$
-KVER=
-ifeq ($(KVER),)
-  KVER=$(shell uname -r)
-endif
 
-__ARCH=$(shell uname -m)
-
-# PREFIX may be set by the RPM build to set the effective root.
-PREFIX=
-ifeq ($(shell ls /lib/modules/$(KVER)/build > /dev/null 2>&1 && echo build),)
-# SuSE source RPMs
-  _KVER=$(shell echo $(KVER) | cut -d "-" -f1,2)
-  _KFLA=$(shell echo $(KVER) | cut -d "-" -f3)
-  _ARCH=$(shell file -b /lib/modules/$(shell uname -r)/build | cut -d "/" -f5)
-  ifeq ($(_ARCH),)
-    _ARCH=$(__ARCH)
-  endif
-  ifeq ($(shell ls /usr/src/linux-$(_KVER)-obj > /dev/null 2>&1 && echo linux),)
-    ifeq ($(shell ls /usr/src/kernels/$(KVER)-$(__ARCH) > /dev/null 2>&1 && echo linux),)
-      LINUX=
-    else
-      LINUX=/usr/src/kernels/$(KVER)-$(__ARCH)
-      LINUXSRC=$(LINUX)
-    endif
-  else
-    LINUX=/usr/src/linux-$(_KVER)-obj/$(_ARCH)/$(_KFLA)
-    LINUXSRC=/usr/src/linux-$(_KVER)
-  endif
-else
-  LINUX=/lib/modules/$(KVER)/build
-  ifeq ($(shell ls /lib/modules/$(KVER)/source > /dev/null 2>&1 && echo source),)
-    LINUXSRC=$(LINUX)
-  else
-    LINUXSRC=/lib/modules/$(KVER)/source
-  endif
-endif
-
-ifneq ($(KDIR),)
-  LINUX=$(KDIR)
-  LINUXSRC=$(LINUX)
-endif
+LINUXSRC=$(shell pwd)
 
 ifeq ($(shell ls $(LINUXSRC)/include/uapi/linux > /dev/null 2>&1 && echo uapi),)
   UAPI=
 else
   UAPI=uapi
-endif
-
-ifeq ($(BCMMODDIR),)
-  ifeq ($(shell ls /lib/modules/$(KVER)/updates > /dev/null 2>&1 && echo 1),1)
-    BCMMODDIR=/lib/modules/$(KVER)/updates
-  else
-    ifeq ($(shell grep -q "search.*[[:space:]]updates" /etc/depmod.conf > /dev/null 2>&1 && echo 1),1)
-      BCMMODDIR=/lib/modules/$(KVER)/updates
-    else
-      ifeq ($(shell grep -q "search.*[[:space:]]updates" /etc/depmod.d/* > /dev/null 2>&1 && echo 1),1)
-        BCMMODDIR=/lib/modules/$(KVER)/updates
-      else
-        BCMMODDIR=/lib/modules/$(KVER)/kernel/drivers/net
-      endif
-    endif
-  endif
 endif
 
 ifneq ($(shell grep -o "pci_enable_msix_range" $(LINUXSRC)/include/linux/pci.h),)
@@ -820,52 +765,7 @@ EXTRA_CFLAGS += ${DISTRO_CFLAG} -g -DCHIMP_FW -D__LINUX -DCONFIG_BNXT_SRIOV -DCO
 
 cflags-y += $(EXTRA_CFLAGS)
 
-BCM_DRV = bnxt_en.ko
-ifneq ($(KERNELRELEASE),)
-
-LINUX_VER=$(shell echo $(KVER) | cut -d "." -f1)
-ifeq ($(shell expr $(LINUX_VER) \>= 5), 1)
-        BNXT_DBGFS_OBJ = bnxt_debugfs.o
-else
-        BNXT_DBGFS_OBJ = bnxt_debugfs_cpt.o
-endif
+BNXT_DBGFS_OBJ = bnxt_debugfs_cpt.o
 
 obj-$(CONFIG_BNXT) += bnxt_en.o
 bnxt_en-y := bnxt.o bnxt_ethtool.o bnxt_sriov.o bnxt_dcb.o bnxt_ulp.o bnxt_xdp.o bnxt_ptp.o bnxt_vfr.o bnxt_tc.o bnxt_devlink.o bnxt_lfc.o bnxt_netlink.o bnxt_dim.o $(BNXT_DBGFS_OBJ) #decode_hsi.o
-
-else
-
-default:
-ifeq ($(CROSS_COMPILE),)
-	make -C $(LINUX) M=$(shell pwd) modules
-else ifneq ($(CROSS_COMPILE),)
-	make -C $(LINUXSRC) M=$(shell pwd) modules CROSS_COMPILE=$(CROSS_COMPILE) ARCH=$(ARCH)
-endif
-
-yocto_all:
-	$(MAKE) -C $(LINUXSRC) M=$(shell pwd)
-
-modules_install:
-	$(MAKE) -C $(LINUXSRC) M=$(shell pwd) modules_install
-
-endif
-
-install: default
-	@if [ "$(KDIR)" != "" ]; then \
-	echo "Cannot use install with KDIR option"; exit 2;\
-	fi
-	mkdir -p $(PREFIX)$(BCMMODDIR);
-	install -m 444 $(BCM_DRV) $(PREFIX)$(BCMMODDIR);
-	@if [ "$(PREFIX)" = "" ]; then /sbin/depmod -a ;\
-	else echo " *** Run '/sbin/depmod -a' to update the module database.";\
-	fi
-
-.PHONEY: all clean install
-
-clean:
-	-rm -f bnxt.o bnxt.mod.c bnxt.mod.o .bnxt.*.cmd *.cmd *.markers *.order *.symvers decode_hsi.o .decode_*
-	-rm -rf .tmp_versions
-	-rm -rf bnxt_en.o bnxt_en.ko bnxt_en.mod.o bnxt_en.mod.c .bnxt_en.* bnxt_sriov.o .bnxt_sriov.* bnxt_ethtool.o .bnxt_ethtool.* bnxt_dcb.o .bnxt_dcb.* bnxt_ulp.o .bnxt_ulp.* bnxt_ptp.o .bnxt_ptp.* bnxt_xdp.o .bnxt_xdp.* bnxt_lfc.o .bnxt_lfc.*
-	-rm -rf bnxt_vfr.o .bnxt_vfr.* bnxt_tc.o .bnxt_tc.* bnxt_devlink.o .bnxt_devlink.* bnxt_netlink.o .bnxt_netlink.*
-	-rm -rf bnxt_dim.o .bnxt_dim.* bnxt_debugfs*.o .bnxt_debugfs*
-	-rm -f Module.markers Module.symvers modules.order
