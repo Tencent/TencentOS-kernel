@@ -956,6 +956,7 @@ _out:							\
 
 #ifdef CONFIG_BPF_SYSCALL
 DECLARE_PER_CPU(int, bpf_prog_active);
+extern struct mutex bpf_stats_enabled_mutex;
 
 extern const struct file_operations bpf_map_fops;
 extern const struct file_operations bpf_prog_fops;
