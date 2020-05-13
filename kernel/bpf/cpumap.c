@@ -84,7 +84,7 @@ static struct bpf_map *cpu_map_alloc(union bpf_attr *attr)
 	int ret, cpu;
 	u64 cost;
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (!bpf_capable())
 		return ERR_PTR(-EPERM);
 
 	/* check sanity of attributes */
