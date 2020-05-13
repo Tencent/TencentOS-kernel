@@ -6384,7 +6384,7 @@ static int __init bpf_iter_register(void)
 
 static void bpf_iter_unregister(void)
 {
-	bpf_iter_unreg_target("ipv6_route");
+	bpf_iter_unreg_target(&ipv6_route_reg_info);
 }
 #endif
 #endif
