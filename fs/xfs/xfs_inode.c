@@ -779,11 +779,13 @@ xfs_ialloc(
 	int		error;
 	struct timespec	tv;
 	struct inode	*inode;
+	int		try_again = 0;
 
 	/*
 	 * Call the space management code to pick
 	 * the on-disk inode to be allocated.
 	 */
+inobt_try_again:
 	error = xfs_dialloc(tp, pip ? pip->i_ino : 0, mode,
 			    ialloc_context, &ino);
 	if (error)
@@ -801,8 +803,13 @@ xfs_ialloc(
 	 */
 	error = xfs_iget(mp, tp, ino, XFS_IGET_CREATE,
 			 XFS_ILOCK_EXCL, &ip);
-	if (error)
+	if (error) {
+		if (error == -EFSCORRUPTED && try_again < xfs_alloc_inode_try_again) {
+			try_again++;
+			goto inobt_try_again;
+		}
 		return error;
+	}
 	ASSERT(ip != NULL);
 	inode = VFS_I(ip);
 

@@ -46,6 +46,7 @@ xfs_param_t xfs_params = {
 	.kmem_fail_dump_stack = {	0,		0,		3	},
 	.kmem_alloc_by_vmalloc = {	0,		1,		4	},
 	.kmem_alloc_large_dump_stack = {	0,		0,		1	},
+	.alloc_inode_try_again = {	0,	100,		10000   },
 };
 
 struct xfs_globals xfs_globals = {

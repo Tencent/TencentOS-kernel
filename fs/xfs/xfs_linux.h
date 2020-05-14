@@ -113,6 +113,7 @@ typedef __u32			xfs_nlink_t;
 #define xfs_kmem_fail_dump_stack	xfs_params.kmem_fail_dump_stack.val
 #define xfs_kmem_alloc_by_vmalloc	xfs_params.kmem_alloc_by_vmalloc.val
 #define xfs_kmem_alloc_large_dump_stack		xfs_params.kmem_alloc_large_dump_stack.val
+#define	xfs_alloc_inode_try_again	xfs_params.alloc_inode_try_again.val
 
 #define current_cpu()		(raw_smp_processor_id())
 #define current_pid()		(current->pid)

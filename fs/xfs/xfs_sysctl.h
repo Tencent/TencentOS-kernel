@@ -52,6 +52,7 @@ typedef struct xfs_param {
 	xfs_sysctl_val_t kmem_fail_dump_stack;
 	xfs_sysctl_val_t kmem_alloc_by_vmalloc;
 	xfs_sysctl_val_t kmem_alloc_large_dump_stack;
+	xfs_sysctl_val_t alloc_inode_try_again;
 } xfs_param_t;
 
 /*

@@ -232,6 +232,15 @@ static struct ctl_table xfs_table[] = {
 		.extra1		= &xfs_params.kmem_alloc_large_dump_stack.min,
 		.extra2		= &xfs_params.kmem_alloc_large_dump_stack.max,
 	},
+	{
+		.procname       = "alloc_inode_try_again",
+		.data           = &xfs_params.alloc_inode_try_again.val,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = &xfs_params.alloc_inode_try_again.min,
+		.extra2         = &xfs_params.alloc_inode_try_again.max,
+	},
 
 	{}
 };
