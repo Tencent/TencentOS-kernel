@@ -36,6 +36,8 @@
 #include "tick-internal.h"
 #include "timekeeping_internal.h"
 
+int sysctl_clocksource_switch_unstable_cs = 0;
+
 /**
  * clocks_calc_mult_shift - calculate mult/shift factors for scaled math of clocks
  * @mult:	pointer to mult variable
@@ -229,8 +231,13 @@ static void clocksource_watchdog(unsigned long data)
 				watchdog->name, wdnow, wdlast, watchdog->mask);
 			pr_warn("                      '%s' cs_now: %llx cs_last: %llx mask: %llx\n",
 				cs->name, csnow, cslast, cs->mask);
-			__clocksource_unstable(cs);
-			continue;
+			if (sysctl_clocksource_switch_unstable_cs) {
+				__clocksource_unstable(cs);
+				continue;
+			} else {
+				pr_warn("clocksource watchdog detected %s unstable, sysctl_clocksource_switch_unstable_cs = %d, not switch\n",
+					cs->name, sysctl_clocksource_switch_unstable_cs);
+			}
 		}
 
 		if (cs == curr_clocksource && cs->tick_stable)

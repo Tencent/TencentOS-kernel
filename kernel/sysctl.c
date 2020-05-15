@@ -328,6 +328,7 @@ static int sysrq_use_leftctrl_sysctl_handler(struct ctl_table * table ,int write
 }
 
 extern int sysctl_min_epoll_wait_time;
+extern int sysctl_clocksource_switch_unstable_cs;
 
 static struct ctl_table kern_table[] = {
 	{
@@ -1336,6 +1337,13 @@ static struct ctl_table kern_table[] = {
 		.maxlen		= sizeof(sysctl_min_epoll_wait_time),
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
+	},
+	{
+		.procname	= "clocksource_switch_unstable_cs",
+		.data		= &sysctl_clocksource_switch_unstable_cs,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
 	},
 	{ }
 };
