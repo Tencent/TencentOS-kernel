@@ -27,6 +27,7 @@
 #include <linux/profile.h>
 #include <linux/security.h>
 #include <linux/syscalls.h>
+#include <linux/namei.h>
 
 #include <asm/switch_to.h>
 #include <asm/tlb.h>
@@ -90,6 +91,11 @@ int sysctl_sched_rt_runtime = 950000;
 #ifdef CONFIG_BT_SCHED
 unsigned int sysctl_sched_bt_period = 1000000;
 int sysctl_sched_bt_runtime = -1;
+
+#if defined(CONFIG_BT_SCHED) && defined(CONFIG_INTEL_RDT)
+unsigned int sysctl_sched_bt_rdt_cache_percent = 10;
+__read_mostly bool rdt_offline_schemata_set = false;
+#endif
 #endif
 
 /* CPUs with isolated domains */
@@ -4150,6 +4156,33 @@ static void __setscheduler_params(struct task_struct *p,
 	set_load_weight(p);
 }
 
+#if defined(CONFIG_BT_SCHED) && defined(CONFIG_INTEL_RDT)
+void rdt_create_schemata(char *schema, int val);
+static int rdt_set_bt_schemata(char *str);
+static int rdt_set_pid(pid_t pid, bool offline);
+
+static void set_rdt(struct task_struct *p, bool offline) {
+	char schema[256];
+
+	if (offline) {
+		rdt_create_schemata(schema, sysctl_sched_bt_rdt_cache_percent);
+		if (rdt_set_bt_schemata(schema) != 0) {
+			printk(KERN_ERR "set bt schemata failed for pid:%d\n", p->pid);
+			return;
+		}
+		if (rdt_set_pid(p->pid, true) < 0) {
+			printk(KERN_ERR "move pid:%d to rdt offline group failed\n", p->pid);
+			return;
+		}
+	} else {
+		if (rdt_set_pid(p->pid, false) < 0) {
+			printk(KERN_ERR "move pid:%d to default rdt group failed\n", p->pid);
+			return;
+		}
+	}
+}
+#endif
+
 /* Actually do priority change: must hold pi & rq lock. */
 static void __setscheduler(struct rq *rq, struct task_struct *p,
 			   const struct sched_attr *attr, bool keep_boost)
@@ -4166,14 +4199,23 @@ static void __setscheduler(struct rq *rq, struct task_struct *p,
 
 	if (dl_prio(p->prio))
 		p->sched_class = &dl_sched_class;
-	else if (rt_prio(p->prio))
+	else if (rt_prio(p->prio)) {
 		p->sched_class = &rt_sched_class;
 #ifdef CONFIG_BT_SCHED
-	else if (bt_prio(p->prio))
+	 } else if (bt_prio(p->prio)) {
+#ifdef CONFIG_INTEL_RDT
+		if (bt_use_rdt && p->sched_class == &fair_sched_class)
+			set_rdt(p, true);
+#endif
 		p->sched_class = &bt_sched_class;
 #endif
-	else
+	} else {
+#ifdef CONFIG_INTEL_RDT
+		if (bt_use_rdt && p->sched_class == & bt_sched_class)
+			set_rdt(p, false);
+#endif
 		p->sched_class = &fair_sched_class;
+	}
 }
 
 /*
@@ -4191,6 +4233,135 @@ static bool check_same_owner(struct task_struct *p)
 	rcu_read_unlock();
 	return match;
 }
+
+#if defined(CONFIG_BT_SCHED) && defined(CONFIG_INTEL_RDT)
+static struct file *file_open(const char *path, int flags, int rights)
+{
+        struct file *filp = NULL;
+        int err = 0;
+	struct path tpath;
+
+	err = kern_path(path, LOOKUP_FOLLOW, &tpath);
+	if (err)
+		printk(KERN_ERR "bt-rdt:path:%s does not exist\n", path);
+
+        filp = filp_open(path, flags, rights);
+        if (IS_ERR(filp)) {
+                err = PTR_ERR(filp);
+		printk(KERN_ERR "file open failed:%d\n", err);
+                return NULL;
+        }
+        return filp;
+}
+
+static void file_close(struct file *file)
+{
+        filp_close(file, NULL);
+}
+
+extern char rdt_mount_dir[PATH_MAX];
+static int rdt_set_pid(pid_t pid, bool offline)
+{
+        struct file *fp;
+        char path[256]; /* should use PATH_MAX here but the stack is 2048 */
+        unsigned char pid_str[64];
+	int len;
+	int r;
+	loff_t pos = 0;
+
+	len = strlen(rdt_mount_dir);
+	if (len <= 0) {
+		printk(KERN_ERR "rdt mount dir:%s is null\n", rdt_mount_dir);
+		return -EINVAL;
+	}
+        strncpy(path, rdt_mount_dir, len);
+	path[len]='\0';
+	if (offline)
+		strcat(path, "/rdt_offline/tasks");
+	else
+		strcat(path, "/tasks");
+        sprintf(pid_str, "%d", pid);
+
+        fp = file_open(path, O_RDWR, 0);
+	if (fp == NULL) {
+		printk(KERN_ERR "bt-rdt:open:%s failed\n", path);
+		return -EINVAL;
+	}
+	r = kernel_write(fp, pid_str, strlen(pid_str), &pos);
+	if (r <= 0)
+		printk(KERN_ERR "bt-rdt:set pid:%s failed\n", pid_str);
+        file_close(fp);
+
+	return 0;
+}
+
+static int rdt_set_bt_schemata(char *str)
+{
+        struct file *fp;
+        char path[256], buffer[256];
+	int len, r = 0;
+	loff_t pos = 0;
+	int err;
+
+	sprintf(buffer, "%s\n", str);
+	len = strlen(rdt_mount_dir);
+	if (len <= 0) {
+		printk(KERN_ERR "bt-rdt:rdt_set_bt_schemata failed:rdt mount dir:%s empty len:%d\n", rdt_mount_dir, len);
+		return -EINVAL;
+	}
+        strncpy(path, rdt_mount_dir, len);
+	path[len]='\0';
+        strcat(path, "/rdt_offline/schemata");
+
+        fp = file_open(path, O_RDWR, 0);
+	 if (fp == NULL) {
+		printk(KERN_ERR "rdt_set_bt_schemata failed:file open failed:%s\n", path);
+                return -EINVAL;
+        }
+	len = strlen(buffer);
+	r = kernel_write(fp, buffer, len, &pos);
+	if (r <= 0)
+		printk(KERN_ERR "bt-rdt:write schemata:[%s] failed:%d\n", buffer, r);
+
+        file_close(fp);
+	return 0;
+}
+
+int sched_bt_rdt_cache_percent_handler(struct ctl_table *table, int write,
+                void __user *buffer, size_t *lenp,
+                loff_t *ppos)
+{
+	int old_val = sysctl_sched_bt_rdt_cache_percent;
+        int ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
+	char schema[256];
+
+	if (!bt_use_rdt) {
+		printk(KERN_ERR "bt rdt is not enabled, add offline_rdt to cmdline to enable it.\n");
+		return -ENODEV;
+	}
+
+	if (ret != 0) {
+		printk(KERN_ERR "set bt rdt cache percent failed invalid value\n");
+		return -EINVAL;
+	}
+	if (old_val == sysctl_sched_bt_rdt_cache_percent)
+		return 0;
+
+	ret = -EINVAL;
+
+	rdt_create_schemata(schema, sysctl_sched_bt_rdt_cache_percent);
+	if (rdt_set_bt_schemata(schema) != 0) {
+		printk(KERN_ERR "set bt rdt cache percent failed schema:%s\n", schema);
+		goto out;
+	}
+
+	return 0;
+out:
+	sysctl_sched_bt_rdt_cache_percent = old_val;
+
+	return ret;
+}
+#endif
 
 static int __sched_setscheduler(struct task_struct *p,
 				const struct sched_attr *attr,

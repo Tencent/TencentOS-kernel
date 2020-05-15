@@ -27,6 +27,10 @@
 
 extern unsigned int sched_bt_on;
 
+#ifdef CONFIG_INTEL_RDT
+extern unsigned int bt_use_rdt;
+#endif
+
 static inline int cfs_prio(int prio)
 {
 	if (prio >= MAX_RT_PRIO && prio < MIN_BT_PRIO)
