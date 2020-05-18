@@ -34,6 +34,7 @@ struct ipv6_packet {
 extern struct ipv6_packet pkt_v6;
 
 int start_server(int family, int type);
+int start_server_with_port(int family, int type, __u16 port);
 int connect_to_fd(int family, int type, int server_fd);
 
 #endif
