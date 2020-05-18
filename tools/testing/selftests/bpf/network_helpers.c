@@ -4,6 +4,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+
+#include <arpa/inet.h>
+
 #include <linux/err.h>
 #include <linux/in.h>
 #include <linux/in6.h>
@@ -31,7 +34,7 @@ struct ipv6_packet pkt_v6 = {
 	.tcp.doff = 5,
 };
 
-int start_server(int family, int type)
+int start_server_with_port(int family, int type, __u16 port)
 {
 	struct sockaddr_storage addr = {};
 	socklen_t len;
@@ -41,11 +44,13 @@ int start_server(int family, int type)
 		struct sockaddr_in *sin = (void *)&addr;
 
 		sin->sin_family = AF_INET;
+		sin->sin_port = htons(port);
 		len = sizeof(*sin);
 	} else {
 		struct sockaddr_in6 *sin6 = (void *)&addr;
 
 		sin6->sin6_family = AF_INET6;
+		sin6->sin6_port = htons(port);
 		len = sizeof(*sin6);
 	}
 
@@ -70,6 +75,11 @@ int start_server(int family, int type)
 	}
 
 	return fd;
+}
+
+int start_server(int family, int type)
+{
+	return start_server_with_port(family, type, 0);
 }
 
 static const struct timeval timeo_sec = { .tv_sec = 3 };
