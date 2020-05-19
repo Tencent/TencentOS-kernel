@@ -104,6 +104,9 @@ static void estimation_timer(unsigned long arg)
 	u64 rate;
 	struct netns_ipvs *ipvs = (struct netns_ipvs *)arg;
 
+	if (!ipvs->sysctl_estimation_timer_work)
+		goto out;
+
 	spin_lock(&ipvs->est_lock);
 	list_for_each_entry(e, &ipvs->est_list, list) {
 		s = container_of(e, struct ip_vs_stats, est);
@@ -135,6 +138,8 @@ static void estimation_timer(unsigned long arg)
 		spin_unlock(&s->lock);
 	}
 	spin_unlock(&ipvs->est_lock);
+
+out:
 	mod_timer(&ipvs->est_timer, jiffies + 2*HZ);
 }
 

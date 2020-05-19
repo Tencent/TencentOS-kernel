@@ -947,6 +947,7 @@ struct netns_ipvs {
 	unsigned int		sysctl_sync_refresh_period;
 	int			sysctl_sync_retries;
 	int			sysctl_nat_icmp_send;
+	int			sysctl_estimation_timer_work;
 	int			sysctl_pmtu_disc;
 	int			sysctl_backup_only;
 	int			sysctl_conn_reuse_mode;
