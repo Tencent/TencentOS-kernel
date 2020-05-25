@@ -572,7 +572,7 @@ static unsigned long memcg_sum_events(struct mem_cgroup *memcg,
 	unsigned long val = 0;
 	int cpu;
 
-	for_each_possible_cpu(cpu)
+	for_each_online_cpu(cpu)
 		val += per_cpu(memcg->stat->events[event], cpu);
 	return val;
 }
@@ -3176,6 +3176,7 @@ static const char *const memcg1_event_names[] = {
 	"pgmajfault",
 };
 
+__read_mostly unsigned int sysctl_memcg_stat_show_subtree = 1;
 static int memcg_stat_show(struct seq_file *m, void *v)
 {
 	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
@@ -3214,31 +3215,56 @@ static int memcg_stat_show(struct seq_file *m, void *v)
 		seq_printf(m, "hierarchical_memsw_limit %llu\n",
 			   (u64)memsw * PAGE_SIZE);
 
-	for (i = 0; i < ARRAY_SIZE(memcg1_stats); i++) {
-		unsigned long long val = 0;
+	if (sysctl_memcg_stat_show_subtree) {
+		for (i = 0; i < ARRAY_SIZE(memcg1_stats); i++) {
+			unsigned long long val = 0;
 
-		if (memcg1_stats[i] == MEMCG_SWAP && !do_memsw_account())
-			continue;
-		for_each_mem_cgroup_tree(mi, memcg)
-			val += memcg_page_state(mi, memcg1_stats[i]) *
-			PAGE_SIZE;
-		seq_printf(m, "total_%s %llu\n", memcg1_stat_names[i], val);
-	}
+			if (memcg1_stats[i] == MEMCG_SWAP && !do_memsw_account())
+				continue;
+			for_each_mem_cgroup_tree(mi, memcg) {
+				val += memcg_page_state(mi, memcg1_stats[i]) *
+				PAGE_SIZE;
+				cond_resched();
+			}
+			seq_printf(m, "total_%s %llu\n", memcg1_stat_names[i], val);
+		}
 
-	for (i = 0; i < ARRAY_SIZE(memcg1_events); i++) {
-		unsigned long long val = 0;
+		for (i = 0; i < ARRAY_SIZE(memcg1_events); i++) {
+			unsigned long long val = 0;
 
-		for_each_mem_cgroup_tree(mi, memcg)
-			val += memcg_sum_events(mi, memcg1_events[i]);
-		seq_printf(m, "total_%s %llu\n", memcg1_event_names[i], val);
-	}
+			for_each_mem_cgroup_tree(mi, memcg) {
+				val += memcg_sum_events(mi, memcg1_events[i]);
+				cond_resched();
+			}
+			seq_printf(m, "total_%s %llu\n", memcg1_event_names[i], val);
+		}
 
-	for (i = 0; i < NR_LRU_LISTS; i++) {
-		unsigned long long val = 0;
+		for (i = 0; i < NR_LRU_LISTS; i++) {
+			unsigned long long val = 0;
 
-		for_each_mem_cgroup_tree(mi, memcg)
-			val += mem_cgroup_nr_lru_pages(mi, BIT(i)) * PAGE_SIZE;
-		seq_printf(m, "total_%s %llu\n", mem_cgroup_lru_names[i], val);
+			for_each_mem_cgroup_tree(mi, memcg) {
+				val += mem_cgroup_nr_lru_pages(mi, BIT(i)) * PAGE_SIZE;
+				cond_resched();
+			}
+			seq_printf(m, "total_%s %llu\n", mem_cgroup_lru_names[i], val);
+		}
+	} else {
+		for (i = 0; i < ARRAY_SIZE(memcg1_stats); i++) {
+			if (memcg1_stats[i] == MEMCG_SWAP && !do_memsw_account())
+				continue;
+			seq_printf(m, "total_%s %lu\n", memcg1_stat_names[i],
+				   memcg_page_state(memcg, memcg1_stats[i]) * PAGE_SIZE);
+		}
+
+		for (i = 0; i < ARRAY_SIZE(memcg1_events); i++) {
+			seq_printf(m, "total_%s %lu\n", memcg1_event_names[i],
+				   memcg_sum_events(memcg, memcg1_events[i]));
+		}
+
+		for (i = 0; i < NR_LRU_LISTS; i++) {
+			seq_printf(m, "total_%s %lu\n", mem_cgroup_lru_names[i],
+				   mem_cgroup_nr_lru_pages(memcg, BIT(i)) * PAGE_SIZE);
+		}
 	}
 
 #ifdef CONFIG_DEBUG_VM

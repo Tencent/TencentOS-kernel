@@ -337,6 +337,7 @@ static int sysrq_use_leftctrl_sysctl_handler(struct ctl_table * table ,int write
 extern int sysctl_min_epoll_wait_time;
 extern int sysctl_clocksource_switch_unstable_cs;
 extern int sysctl_clocksource_unstable_cnt;
+extern unsigned int sysctl_memcg_stat_show_subtree;
 
 static struct ctl_table kern_table[] = {
 	{
@@ -346,6 +347,14 @@ static struct ctl_table kern_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},
+	{
+		.procname	= "memcg_stat_show_subtree",
+		.data		= &sysctl_memcg_stat_show_subtree,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+
 #ifdef CONFIG_PID_NS
 	{
 		.procname       = "watch_host_pid",
