@@ -1988,21 +1988,21 @@ ip_vs_in(struct netns_ipvs *ipvs, unsigned int hooknum, struct sk_buff *skb, int
 	 */
 	cp = pp->conn_in_get(ipvs, af, skb, &iph);
 
+	conn_reuse_mode = sysctl_conn_reuse_mode(ipvs);
 	/*
 	 * fix IPVS no route to host bug!
 	 * don't redirect new connection to zero weight rs,
 	 * as zero rs may be killed already.
 	 * Only enable in bpf mode currently. Shall promote to IPVS mode later.
 	 */
-	if (no_route_to_host_fix && bpf_mode_on && cp &&
+	if (no_route_to_host_fix && bpf_mode_on && cp && cp->dest &&
 	    unlikely(!atomic_read(&cp->dest->weight)) &&
-	    is_new_conn(skb, &iph) && !iph.fragoffs) {
+	    is_new_conn(skb, &iph) && !iph.fragoffs &&
+	    conn_reuse_mode == 0) {
 		ip_vs_conn_expire_now(cp);
 		__ip_vs_conn_put(cp);
 		cp = NULL;
 	}
-
-	conn_reuse_mode = sysctl_conn_reuse_mode(ipvs);
 	if (conn_reuse_mode && !iph.fragoffs && is_new_conn(skb, &iph) && cp) {
 		bool uses_ct = false, resched = false;
 
