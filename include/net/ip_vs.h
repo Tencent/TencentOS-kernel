@@ -1683,6 +1683,7 @@ struct bpf_lb_conn_key {
 };
 
 struct bpf_lb_conn_value {
+	atomic_t ref;
 	__be32 sip;
 	__be32 dip;
 	__be16 sport;

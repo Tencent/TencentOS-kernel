@@ -270,6 +270,8 @@ static void ip_vs_unlink_bpf(struct ip_vs_conn *cp)
 			return;
 		}
 
+		if (atomic_dec_return(&v->ref) != 0)
+			return;
 		reply.sip = cp->dest->addr.ip;
 		reply.sport = cp->dest->port;
 		/* v sip/sport shall be the lip/lport */
@@ -1082,9 +1084,12 @@ static bool ip_vs_conn_new_bpf(struct ip_vs_dest *dest,
 	struct bpf_lb_conn_key reply_key = {};
 	struct bpf_lb_conn_value value = {};
 	struct bpf_lb_conn_value reply_value = {};
+	struct bpf_lb_conn_value *v;
 	int inserted = 0;
 	struct bpf_map *map;
 	__be32 lip;
+
+	BUILD_BUG_ON(sizeof(atomic_t) != 4);
 
 	if (!bpf_mode_on)
 		return true;
@@ -1108,10 +1113,25 @@ static bool ip_vs_conn_new_bpf(struct ip_vs_dest *dest,
 	key.vport = p->vport;
 	key.pad = 0;
 
-	lip = alloc_localip();
-	/* reply dir key:(rsip:rsport -> lip:lport)
-	 * value: (rsip:rsport -> cip:cport)
+	/* when client cport reuse happens, we may do reschedule
+	 * or not. if rs weight is zero or conn_reuse_mode=1 && timewait
+	 * it does reschedule, in this case old ip_vs_conn and
+	 * new ip_vs_conn shares the same bpf ct. if they
+	 * are scheduled to the same rs.
+	 *
+	 * Then old ip_vs_conn will be recycled. Add the ref count here
+	 * so that new ip_vs_conn will not lose it ct.
+	 *
+	 * otherwise, it doesn't reschedule. in such case, the following code
+	 * will not run.
 	 */
+	v = map->ops->map_lookup_elem(map, &key);
+	if (v) {
+		atomic_inc(&v->ref);
+		return true;
+	}
+
+	lip = alloc_localip();
 	reply_key.sip = key.dip;
 	reply_key.sport = key.dport;
 	reply_key.dip = lip;
@@ -1121,6 +1141,7 @@ static bool ip_vs_conn_new_bpf(struct ip_vs_dest *dest,
 	reply_key.vport = 0;
 	reply_key.pad = 0;
 
+	atomic_set(&reply_value.ref, 0);
 	reply_value.sip = key.dip;
 	reply_value.sport = key.dport;
 	reply_value.dip = key.sip;
@@ -1170,7 +1191,9 @@ static bool ip_vs_conn_new_bpf(struct ip_vs_dest *dest,
 		BPF_STAT_INC(p->ipvs, BPF_NEW_RACE);
 		return false;
 	}
+
 	/* incoming dir: (cip -> rsip)-> (lip->rsip) */
+	atomic_set(&value.ref, 1);
 	value.sip = lip;
 	value.sport = reply_key.dport;
 	value.dip = key.dip;
