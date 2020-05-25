@@ -1704,6 +1704,7 @@ struct bpf_sym_addrs {
 extern struct bpf_sym_addrs resolve_addrs;
 extern struct bpf_map *conntrack_map;
 extern bool bpf_mode_on;
+extern bool no_route_to_host_fix;
 extern __be32 major_nic_ip;
 
 int ip_vs_bpf_put(void);

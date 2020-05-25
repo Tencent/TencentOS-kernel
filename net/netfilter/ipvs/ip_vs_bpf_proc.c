@@ -54,7 +54,7 @@ __be32 major_nic_ip;
 static int ip_local_port_begin;
 static int ip_local_port_end;
 struct bpf_map  *conntrack_map;
-
+bool no_route_to_host_fix;
 struct ip_vs_iter_state {
 	struct seq_net_private	p;
 	struct hlist_head	*l;
@@ -667,6 +667,58 @@ static ssize_t ip_vs_port_write(struct file *file,
 	return count;
 }
 
+static ssize_t ip_vs_bpf_fix_write(struct file *file,
+				   const char __user *ubuf,
+				   size_t count,
+				   loff_t *ppos)
+{
+	char buf[10];
+	int fix;
+
+	memset(buf, 0, sizeof(buf));
+	if (*ppos > 0) {
+		pr_err("%s %d\n", __func__, __LINE__);
+		return -EFAULT;
+	}
+	if (copy_from_user(buf, ubuf, count)) {
+		pr_err("%s %d\n", __FILE__, __LINE__);
+		return -EFAULT;
+	}
+	if (kstrtoint(buf, 0, &fix) != 0) {
+		pr_err("%s %d\n", __FILE__, __LINE__);
+		return -EINVAL;
+	}
+	if (fix != 1 && fix != 0) {
+		pr_err("%s %d\n", __FILE__, __LINE__);
+		return -EINVAL;
+	}
+
+	no_route_to_host_fix = fix;
+	return count;
+}
+
+static ssize_t ip_vs_bpf_fix_read(struct file *file,
+				  char __user *ubuf,
+				  size_t count,
+				  loff_t *ppos)
+{
+	int len = 0;
+	char buf[10];
+
+	memset(buf, 0, sizeof(buf));
+	if (*ppos > 0) {
+		/* return 0 to sigal eof to user */
+		return 0;
+	}
+	/* snprintf need tail to save null bytes */
+	len = snprintf(buf, sizeof(buf), "0x%d\n", no_route_to_host_fix);
+	if (copy_to_user(ubuf, buf, len))
+		return -EFAULT;
+	/* so next time ppos will be bigger than 0 and return 0 */
+	*ppos = len;
+	return len;
+}
+
 static const struct file_operations ip_vs_svc_fops = {
 	.owner	 = THIS_MODULE,
 	.open    = ip_vs_svc_open,
@@ -692,6 +744,12 @@ static const struct file_operations ip_vs_port_fops = {
 	.owner	 = THIS_MODULE,
 	.read    = ip_vs_port_read,
 	.write =  ip_vs_port_write,
+};
+
+static const struct file_operations ip_vs_bpf_fix_fops = {
+	.owner	 = THIS_MODULE,
+	.read    = ip_vs_bpf_fix_read,
+	.write   = ip_vs_bpf_fix_write,
 };
 
 struct ip_vs_err_map {
@@ -774,9 +832,14 @@ int ip_vs_svc_proc_init(struct netns_ipvs *ipvs)
 	if (!proc_create("ip_vs_bpf_stat", S_IRUGO, ipvs->net->proc_net,
 			 &ip_vs_bpf_stat_fops))
 		goto out_bpf_stat;
+	if (!proc_create("ip_vs_bpf_fix", 0600,
+			 ipvs->net->proc_net, &ip_vs_bpf_fix_fops))
+		goto out_bpf_fix;
 
 	return 0;
 
+out_bpf_fix:
+	remove_proc_entry("ip_vs_bpf_stat", ipvs->net->proc_net);
 out_bpf_stat:
 	remove_proc_entry("ip_vs_port_range", ipvs->net->proc_net);
 out_port_range:
@@ -796,5 +859,6 @@ int ip_vs_svc_proc_cleanup(struct netns_ipvs *ipvs)
 	remove_proc_entry("ip_vs_devip", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_port_range", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_bpf_stat", ipvs->net->proc_net);
+	remove_proc_entry("ip_vs_bpf_fix", ipvs->net->proc_net);
 	return 0;
 }

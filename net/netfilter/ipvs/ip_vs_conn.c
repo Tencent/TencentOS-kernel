@@ -270,7 +270,7 @@ static void ip_vs_unlink_bpf(struct ip_vs_conn *cp)
 			return;
 		}
 
-		if (atomic_dec_return(&v->ref) != 0)
+		if (no_route_to_host_fix && atomic_dec_return(&v->ref) != 0)
 			return;
 		reply.sip = cp->dest->addr.ip;
 		reply.sport = cp->dest->port;
@@ -1125,10 +1125,12 @@ static bool ip_vs_conn_new_bpf(struct ip_vs_dest *dest,
 	 * otherwise, it doesn't reschedule. in such case, the following code
 	 * will not run.
 	 */
-	v = map->ops->map_lookup_elem(map, &key);
-	if (v) {
-		atomic_inc(&v->ref);
-		return true;
+	if (no_route_to_host_fix) {
+		v = map->ops->map_lookup_elem(map, &key);
+		if (v) {
+			atomic_inc(&v->ref);
+			return true;
+		}
 	}
 
 	lip = alloc_localip();

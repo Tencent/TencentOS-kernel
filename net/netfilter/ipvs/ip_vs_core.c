@@ -1994,8 +1994,9 @@ ip_vs_in(struct netns_ipvs *ipvs, unsigned int hooknum, struct sk_buff *skb, int
 	 * as zero rs may be killed already.
 	 * Only enable in bpf mode currently. Shall promote to IPVS mode later.
 	 */
-	if (bpf_mode_on && cp && unlikely(!atomic_read(&cp->dest->weight)) &&
-	   is_new_conn(skb, &iph) && !iph.fragoffs) {
+	if (no_route_to_host_fix && bpf_mode_on && cp &&
+	    unlikely(!atomic_read(&cp->dest->weight)) &&
+	    is_new_conn(skb, &iph) && !iph.fragoffs) {
 		ip_vs_conn_expire_now(cp);
 		__ip_vs_conn_put(cp);
 		cp = NULL;
