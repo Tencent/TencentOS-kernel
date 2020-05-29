@@ -2952,6 +2952,59 @@ union bpf_attr {
  * 		namespaces instead of sockets.
  * 	Return
  * 		A 8-byte long opaque number.
+ * 
+ * void *bpf_ringbuf_output(void *ringbuf, void *data, u64 size, u64 flags)
+ * 	Description
+ * 		Copy *size* bytes from *data* into a ring buffer *ringbuf*.
+ * 		If BPF_RB_NO_WAKEUP is specified in *flags*, no notification of
+ * 		new data availability is sent.
+ * 		IF BPF_RB_FORCE_WAKEUP is specified in *flags*, notification of
+ * 		new data availability is sent unconditionally.
+ * 	Return
+ * 		0, on success;
+ * 		< 0, on error.
+ *
+ * void *bpf_ringbuf_reserve(void *ringbuf, u64 size, u64 flags)
+ * 	Description
+ * 		Reserve *size* bytes of payload in a ring buffer *ringbuf*.
+ * 	Return
+ * 		Valid pointer with *size* bytes of memory available; NULL,
+ * 		otherwise.
+ *
+ * void bpf_ringbuf_submit(void *data, u64 flags)
+ * 	Description
+ * 		Submit reserved ring buffer sample, pointed to by *data*.
+ * 		If BPF_RB_NO_WAKEUP is specified in *flags*, no notification of
+ * 		new data availability is sent.
+ * 		IF BPF_RB_FORCE_WAKEUP is specified in *flags*, notification of
+ * 		new data availability is sent unconditionally.
+ * 	Return
+ * 		Nothing. Always succeeds.
+ *
+ * void bpf_ringbuf_discard(void *data, u64 flags)
+ * 	Description
+ * 		Discard reserved ring buffer sample, pointed to by *data*.
+ * 		If BPF_RB_NO_WAKEUP is specified in *flags*, no notification of
+ * 		new data availability is sent.
+ * 		IF BPF_RB_FORCE_WAKEUP is specified in *flags*, notification of
+ * 		new data availability is sent unconditionally.
+ * 	Return
+ * 		Nothing. Always succeeds.
+ *
+ * u64 bpf_ringbuf_query(void *ringbuf, u64 flags)
+ *	Description
+ *		Query various characteristics of provided ring buffer. What
+ *		exactly is queries is determined by *flags*:
+ *		  - BPF_RB_AVAIL_DATA - amount of data not yet consumed;
+ *		  - BPF_RB_RING_SIZE - the size of ring buffer;
+ *		  - BPF_RB_CONS_POS - consumer position (can wrap around);
+ *		  - BPF_RB_PROD_POS - producer(s) position (can wrap around);
+ *		Data returned is just a momentary snapshots of actual values
+ *		and could be inaccurate, so this facility should be used to
+ *		power heuristics and for reporting, not to make 100% correct
+ *		calculation.
+ *	Return
+ *		Requested value, or 0, if flags are not recognized.
  *
  */
 #define __BPF_FUNC_MAPPER(FN)		\
@@ -3078,6 +3131,12 @@ union bpf_attr {
 	FN(get_ns_current_pid_tgid),	\
 	FN(xdp_output),			\
 	FN(get_netns_cookie),		\
+	FN(sk_ancestor_cgroup_id),	\
+	FN(ringbuf_output),		\
+	FN(ringbuf_reserve),		\
+	FN(ringbuf_submit),		\
+	FN(ringbuf_discard),		\
+	FN(ringbuf_query),
 
 /* integer value in 'imm' field of BPF_CALL instruction selects which helper
  * function eBPF program intends to call
@@ -3160,6 +3219,29 @@ enum {
 	 * and BPF_LOCAL_STORAGE_GET_F_CREATE must be used instead.
 	 */
 	BPF_SK_STORAGE_GET_F_CREATE  = BPF_LOCAL_STORAGE_GET_F_CREATE,
+};
+
+/* BPF_FUNC_bpf_ringbuf_commit, BPF_FUNC_bpf_ringbuf_discard, and
+ * BPF_FUNC_bpf_ringbuf_output flags.
+ */
+enum {
+	BPF_RB_NO_WAKEUP		= (1ULL << 0),
+	BPF_RB_FORCE_WAKEUP		= (1ULL << 1),
+};
+
+/* BPF_FUNC_bpf_ringbuf_query flags */
+enum {
+	BPF_RB_AVAIL_DATA = 0,
+	BPF_RB_RING_SIZE = 1,
+	BPF_RB_CONS_POS = 2,
+	BPF_RB_PROD_POS = 3,
+};
+
+/* BPF ring buffer constants */
+enum {
+	BPF_RINGBUF_BUSY_BIT		= (1U << 31),
+	BPF_RINGBUF_DISCARD_BIT		= (1U << 30),
+	BPF_RINGBUF_HDR_SZ		= 8,
 };
 
 /* Mode for BPF_FUNC_skb_adjust_room helper. */
