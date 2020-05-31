@@ -3472,6 +3472,9 @@ static int link_create(union bpf_attr *attr)
 	case BPF_PROG_TYPE_CGROUP_SOCKOPT:
 		ret = cgroup_bpf_link_attach(attr, prog);
 		break;
+	case BPF_PROG_TYPE_FLOW_DISSECTOR:
+		ret = netns_bpf_link_create(attr, prog);
+		break;
 	default:
 		ret = -EINVAL;
 	}
