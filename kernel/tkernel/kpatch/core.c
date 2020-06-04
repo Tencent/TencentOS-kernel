@@ -793,6 +793,7 @@ static int kpatch_write_relocations(struct kpatch_module *kpmod,
 	return 0;
 }
 
+#ifdef CONFIG_ARM64
 static int kpatch_write_relocations_arm64(struct kpatch_module *kpmod,
 					struct kpatch_object *object)
 {
@@ -833,6 +834,7 @@ static int kpatch_write_relocations_arm64(struct kpatch_module *kpmod,
 	module_enable_ro(mod, true);
 	return 0;
 }
+#endif
 
 static int kpatch_unlink_object(struct kpatch_object *object)
 {

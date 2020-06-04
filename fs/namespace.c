@@ -2867,7 +2867,7 @@ long do_mount(const char *dev_name, const char __user *dir_name,
 	    strncmp(dev_name, fs_resctrl, strlen(fs_resctrl)) == 0) {
 		memset(rdt_mount_dir, 0, PATH_MAX);
 		if (strncpy_from_user(rdt_mount_dir, dir_name, PATH_MAX) > 0) {
-			printk(KERN_INFO "mount resctrl file system mount point:%s len:%d\n", rdt_mount_dir, strlen(rdt_mount_dir));
+			printk(KERN_INFO "mount resctrl file system mount point:%s len:%ld\n", rdt_mount_dir, strlen(rdt_mount_dir));
 		}
 	}
 #endif

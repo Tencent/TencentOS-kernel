@@ -4274,7 +4274,7 @@ static int rdt_set_pid(pid_t pid, bool offline)
 		printk(KERN_ERR "rdt mount dir:%s is null\n", rdt_mount_dir);
 		return -EINVAL;
 	}
-        strncpy(path, rdt_mount_dir, len);
+        strncpy(path, rdt_mount_dir, sizeof(path));
 	path[len]='\0';
 	if (offline)
 		strcat(path, "/rdt_offline/tasks");
@@ -4301,7 +4301,6 @@ static int rdt_set_bt_schemata(char *str)
         char path[256], buffer[256];
 	int len, r = 0;
 	loff_t pos = 0;
-	int err;
 
 	sprintf(buffer, "%s\n", str);
 	len = strlen(rdt_mount_dir);
@@ -4309,7 +4308,7 @@ static int rdt_set_bt_schemata(char *str)
 		printk(KERN_ERR "bt-rdt:rdt_set_bt_schemata failed:rdt mount dir:%s empty len:%d\n", rdt_mount_dir, len);
 		return -EINVAL;
 	}
-        strncpy(path, rdt_mount_dir, len);
+        strncpy(path, rdt_mount_dir, sizeof(path));
 	path[len]='\0';
         strcat(path, "/rdt_offline/schemata");
 

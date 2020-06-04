@@ -193,6 +193,7 @@ static int __init set_bf_sort(const struct dmi_system_id *d)
 	return 0;
 }
 
+#if 0
 static void __init read_dmi_type_b1(const struct dmi_header *dm,
 				    void *private_data)
 {
@@ -209,6 +210,7 @@ static int __init find_sort_method(const struct dmi_system_id *d)
 	dmi_walk(read_dmi_type_b1, (void *)d);
 	return 0;
 }
+#endif
 
 /*
  * Enable renumbering of PCI bus# ranges to reach all PCI busses (Cardbus)

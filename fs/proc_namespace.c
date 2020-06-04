@@ -136,7 +136,7 @@ static int show_vfsmnt(struct seq_file *m, struct vfsmount *mnt)
 	struct mount *r = real_mount(mnt);
 	struct path mnt_path = { .dentry = mnt->mnt_root, .mnt = mnt };
 	struct super_block *sb = mnt_path.dentry->d_sb;
-	int err;
+	int err = 0;
 
 	if (is_in_container() && mnt_need_shield(mnt))
 		goto out;
@@ -173,7 +173,7 @@ static int show_mountinfo(struct seq_file *m, struct vfsmount *mnt)
 	struct mount *r = real_mount(mnt);
 	struct super_block *sb = mnt->mnt_sb;
 	struct path mnt_path = { .dentry = mnt->mnt_root, .mnt = mnt };
-	int err;
+	int err = 0;
 
 	if (is_in_container() && mnt_need_shield(mnt))
 		goto out;

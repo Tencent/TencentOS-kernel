@@ -290,6 +290,8 @@ static int ct_seq_show(struct seq_file *s, void *v)
 	struct net *net = seq_file_net(s);
 	int ret = 0;
 
+	void (*ct_get_vmip_vpcid_tmp)(const struct nf_conn *ct, __be32 *vmip, u32 *vpcid) = ct_get_vmip_vpcid;
+
 	WARN_ON(!ct);
 	if (unlikely(!atomic_inc_not_zero(&ct->ct_general.use)))
 		return 0;
@@ -356,7 +358,6 @@ static int ct_seq_show(struct seq_file *s, void *v)
 	ct_show_zone(s, ct, NF_CT_DEFAULT_ZONE_DIR);
 	ct_show_delta_time(s, ct);
 
-	void (*ct_get_vmip_vpcid_tmp)(const struct nf_conn *ct, __be32 *vmip, u32 *vpcid) = ct_get_vmip_vpcid;
 	if(ct_get_vmip_vpcid_tmp) {
 		__be32 vmip = 0;
 		u32 vpcid = 0;
