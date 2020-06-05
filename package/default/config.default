@@ -827,7 +827,7 @@ CONFIG_HOTPLUG_PCI_SHPC=m
 #
 # PCI host controller drivers
 #
-# CONFIG_VMD is not set
+CONFIG_VMD=y
 
 #
 # PCI Endpoint
