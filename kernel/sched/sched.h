@@ -6,6 +6,7 @@
 #include <linux/sched/topology.h>
 #include <linux/sched/rt.h>
 #include <linux/sched/deadline.h>
+#include <linux/sched/batch.h>
 #include <linux/sched/clock.h>
 #include <linux/sched/wake_q.h>
 #include <linux/sched/signal.h>
@@ -372,6 +373,8 @@ struct task_group {
 #endif
 
 	struct cfs_bandwidth cfs_bandwidth;
+
+	unsigned long offline;
 };
 
 #ifdef CONFIG_FAIR_GROUP_SCHED

@@ -100,6 +100,7 @@ static int kernel_init(void *);
 extern void init_IRQ(void);
 extern void fork_init(void);
 extern void radix_tree_init(void);
+extern void init_offline_cpu_control(void);
 
 /*
  * Debug helper: via this flag we know that we are in 'early bootup code'
@@ -1007,6 +1008,7 @@ static int __ref kernel_init(void *unused)
 	int ret;
 
 	kernel_init_freeable();
+	init_offline_cpu_control();
 	/* need to finish all async __init code before freeing the memory */
 	async_synchronize_full();
 	ftrace_free_init_mem();

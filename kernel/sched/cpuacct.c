@@ -519,6 +519,7 @@ static struct cftype files[] = {
 #ifdef CONFIG_BT_SCHED
 	{
 		.name = "bt_usage_percpu",
+		.flags = CFTYPE_BT_SHARES,
 		.seq_show = bt_cpuacct_percpu_seq_show,
 	},
 #endif
@@ -541,6 +542,7 @@ static struct cftype files[] = {
 #ifdef CONFIG_BT_SCHED
 	{
 		.name = "bt_stat",
+		.flags = CFTYPE_BT_SHARES,
 		.seq_show = bt_cpuacct_stats_show,
 	},
 #endif

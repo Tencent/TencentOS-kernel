@@ -60,6 +60,7 @@ extern int sysctl_sched_rt_runtime;
 #ifdef CONFIG_BT_SCHED
 extern unsigned int sysctl_sched_bt_period;
 extern int sysctl_sched_bt_runtime;
+extern unsigned int sysctl_sched_bt_ignore_cpubind;
 extern unsigned int sysctl_idle_balance_bt_cost;
 extern unsigned int sysctl_sched_bt_granularity_ns;
 extern unsigned int sysctl_sched_bt_load_fair;

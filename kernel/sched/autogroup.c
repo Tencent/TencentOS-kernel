@@ -5,11 +5,13 @@
 #include <linux/seq_file.h>
 #include <linux/kallsyms.h>
 #include <linux/utsname.h>
+#include <linux/sched.h>
 #include <linux/security.h>
 #include <linux/export.h>
 #include <linux/nospec.h>
 
 unsigned int __read_mostly sysctl_sched_autogroup_enabled = 1;
+unsigned int __read_mostly offlinegroup_enabled = 0;
 static struct autogroup autogroup_default;
 static atomic_t autogroup_seq_nr;
 
@@ -206,6 +208,14 @@ static int __init setup_autogroup(char *str)
 }
 
 __setup("noautogroup", setup_autogroup);
+
+static int __init setup_offlinegroup(char *str)
+{
+	if (sched_bt_on)
+		offlinegroup_enabled = 1;
+	return 1;
+}
+__setup("offline_group", setup_offlinegroup);
 
 #ifdef CONFIG_PROC_FS
 

@@ -42,6 +42,8 @@
 #include "../workqueue_internal.h"
 #include "../smpboot.h"
 
+extern unsigned int offlinegroup_enabled;
+extern unsigned int sysctl_sched_bt_ignore_cpubind;
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
 
@@ -1020,8 +1022,16 @@ struct migration_arg {
 static struct rq *__migrate_task(struct rq *rq, struct rq_flags *rf,
 				 struct task_struct *p, int dest_cpu)
 {
+	bool check_cpumask;
+
+	if (offlinegroup_enabled && sysctl_sched_bt_ignore_cpubind &&
+	    (p->sched_class == &bt_sched_class))
+		check_cpumask = false;
+	else
+		check_cpumask = true;
+
 	/* Affinity changed (again). */
-	if (!is_cpu_allowed(p, dest_cpu))
+	if (!check_cpumask && !is_cpu_allowed(p, dest_cpu))
 		return rq;
 
 	update_rq_clock(rq);
@@ -1604,6 +1614,10 @@ int select_task_rq(struct task_struct *p, int cpu, int sd_flags, int wake_flags)
 		cpu = p->sched_class->select_task_rq(p, cpu, sd_flags, wake_flags);
 	else
 		cpu = cpumask_any(&p->cpus_allowed);
+
+	if (offlinegroup_enabled && sysctl_sched_bt_ignore_cpubind &&
+	    (p->sched_class == &bt_sched_class))
+		return cpu;
 
 	/*
 	 * In order not to call set_task_cpu() on a blocking task we need
@@ -4675,6 +4689,7 @@ do_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
 	struct sched_param lparam;
 	struct task_struct *p;
 	int retval;
+	struct task_group *tg;
 
 	if (!param || pid < 0)
 		return -EINVAL;
@@ -4684,8 +4699,21 @@ do_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
 	rcu_read_lock();
 	retval = -ESRCH;
 	p = find_process_by_pid(pid);
-	if (p != NULL)
+	if (p != NULL) {
+		if (offlinegroup_enabled) {
+			tg = container_of(task_css_check(p, cpu_cgrp_id, false),
+					  struct task_group, css);
+			if (tg->parent && tg->offline && policy != SCHED_BT &&
+			    policy != SCHED_RR && policy != SCHED_FIFO)
+				goto out;
+
+			if (tg->parent && !tg->offline && policy == SCHED_BT)
+				goto out;
+		}
 		retval = sched_setscheduler(p, policy, &lparam);
+	}
+
+out:
 	rcu_read_unlock();
 
 	return retval;
@@ -6647,6 +6675,7 @@ void sched_offline_group(struct task_group *tg)
 static void sched_change_group(struct task_struct *tsk, int type)
 {
 	struct task_group *tg;
+	struct rq *rq = task_rq(tsk);
 
 	/*
 	 * All callers are synchronized by task_rq_lock(); we do not use RCU
@@ -6657,6 +6686,34 @@ static void sched_change_group(struct task_struct *tsk, int type)
 			  struct task_group, css);
 	tg = autogroup_task_group(tsk, tg);
 	tsk->sched_task_group = tg;
+
+	/* No need to re-setcheduler when fork or exit a task */
+	if (offlinegroup_enabled && !rt_task(tsk) &&
+	    !(tsk->flags & PF_EXITING) && (type != TASK_SET_GROUP)) {
+		struct sched_attr attr = {
+			.sched_priority = 0,
+		};
+
+		if (tg->offline) {
+			attr.sched_nice = PRIO_TO_BT_NICE(tsk->static_prio);
+			attr.sched_policy = SCHED_BT;
+		} else {
+			attr.sched_nice = PRIO_TO_NICE(tsk->static_prio);
+			attr.sched_policy = SCHED_NORMAL;
+		}
+
+		/*
+		 * FIXME: __setscheduler before task_change_group would
+		 * lead to missing prev cfs_rq/bt_rq stats updating.
+		 * Otherwise, putting __setscheduler after task_change_group
+		 * is not right either, which would miss next cfs_rq/bt_rq
+		 * stats updating.
+		 * In fact, __setscheduler should be right before set_task_rq
+		 * in task_change_group callback, but if so, the code would be
+		 * messed up.
+		 */
+		__setscheduler(rq, tsk, &attr, 0);
+	}
 
 #if defined(CONFIG_FAIR_GROUP_SCHED) || defined (CONFIG_BT_GROUP_SCHED)
 	if (tsk->sched_class->task_change_group)
@@ -6720,6 +6777,9 @@ cpu_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 	tg = sched_create_group(parent);
 	if (IS_ERR(tg))
 		return ERR_PTR(-ENOMEM);
+
+	if (offlinegroup_enabled)
+		tg->offline = parent->offline;
 
 	return &tg->css;
 }
@@ -7093,6 +7153,53 @@ static u64 cpu_bt_shares_read_u64(struct cgroup_subsys_state *css,
 
 	return (u64) scale_load_down(tg->bt_shares);
 }
+
+static int cpu_offline_write_uint(struct cgroup_subsys_state *css,
+				  struct cftype *cftype, u64 offline_input)
+{
+	struct css_task_iter it;
+	struct task_struct *tsk;
+	struct task_group *tg;
+	struct sched_param param;
+	int pid, sched_class;
+	int err;
+	tg = css_tg(css);
+
+	if (!tg->se[0])
+		return -EINVAL;
+
+	if (tg->offline == !!offline_input)
+		return 0;
+
+	if (!tg->offline && offline_input) {
+		sched_class = SCHED_BT;
+	} else if (tg->offline && !offline_input) {
+		sched_class = SCHED_NORMAL;
+	} else
+		return 0;
+
+	tg->offline = !!offline_input;
+
+	param.sched_priority = 0;
+	css_task_iter_start(css, 0, &it);
+	while ((tsk = css_task_iter_next(&it))) {
+		pid = task_tgid_vnr(tsk);
+
+		if (pid > 0 && !rt_task(tsk)) {
+			err=sched_setscheduler(tsk, sched_class, &param);
+		}
+	}
+	css_task_iter_end(&it);
+	return 0;
+}
+
+static u64 cpu_offline_read_uint(struct cgroup_subsys_state *css,
+				 struct cftype *cft)
+{
+        struct task_group *tg = css_tg(css);
+        return tg->offline;
+}
+
 #endif
 
 #ifdef CONFIG_RT_GROUP_SCHED
@@ -7132,8 +7239,15 @@ static struct cftype cpu_files[] = {
 #ifdef CONFIG_BT_GROUP_SCHED
 	{
 		.name = "bt_shares",
+		.flags = CFTYPE_BT_SHARES,
 		.read_u64 = cpu_bt_shares_read_u64,
 		.write_u64 = cpu_bt_shares_write_u64,
+	},
+	{
+		.name = "offline",
+		.flags = CFTYPE_BT_PRIVATE,
+		.read_u64 = cpu_offline_read_uint,
+		.write_u64 = cpu_offline_write_uint,
 	},
 #endif
 #ifdef CONFIG_CFS_BANDWIDTH

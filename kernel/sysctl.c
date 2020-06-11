@@ -571,6 +571,15 @@ static struct ctl_table kern_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},
+	{
+		.procname       = "sched_bt_ignore_cpubind",
+		.data           = &sysctl_sched_bt_ignore_cpubind,
+		.maxlen         = sizeof(unsigned int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = &zero,
+		.extra2         = &one,
+	},
 #ifdef CONFIG_INTEL_RDT
 	{
 		.procname	= "sched_bt_rdt_cache_percent",

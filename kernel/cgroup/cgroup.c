@@ -54,6 +54,7 @@
 #include <linux/proc_ns.h>
 #include <linux/nsproxy.h>
 #include <linux/file.h>
+#include <linux/sched/batch.h>
 #include <net/sock.h>
 
 #define CREATE_TRACE_POINTS
@@ -79,6 +80,8 @@ DEFINE_SPINLOCK(css_set_lock);
 EXPORT_SYMBOL_GPL(cgroup_mutex);
 EXPORT_SYMBOL_GPL(css_set_lock);
 #endif
+
+extern unsigned int offlinegroup_enabled;
 
 /*
  * Protects cgroup_idr and css_idr so that IDs can be released without
@@ -3525,6 +3528,12 @@ restart:
 		if ((cft->flags & CFTYPE_NOT_ON_ROOT) && !cgroup_parent(cgrp))
 			continue;
 		if ((cft->flags & CFTYPE_ONLY_ON_ROOT) && cgroup_parent(cgrp))
+			continue;
+		if ((cft->flags & CFTYPE_BT_SHARES) && !sched_bt_on)
+			continue;
+		if ((cft->flags & CFTYPE_BT_PRIVATE) && !sched_bt_on)
+			continue;
+		if ((cft->flags & CFTYPE_BT_PRIVATE) && !offlinegroup_enabled)
 			continue;
 
 		if (is_add) {

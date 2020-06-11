@@ -19,6 +19,10 @@
 #include <linux/task_work.h>
 #include <linux/hrtimer.h>
 #include <linux/sched/batch.h>
+#include <linux/proc_fs.h>
+#include <linux/kfifo.h>
+#include <linux/seq_file.h>
+#include <asm/uaccess.h>
 
 #include <trace/events/sched.h>
 #include "sched.h"
@@ -35,10 +39,13 @@ void set_bt_load_weight(struct task_struct *p)
 	load->inv_weight = sched_prio_to_wmult[prio];
 }
 
+extern unsigned int offlinegroup_enabled;
 const struct sched_class bt_sched_class;
 unsigned int sysctl_idle_balance_bt_cost = 300000UL;
 unsigned int sysctl_sched_bt_granularity_ns = 4000000;
 unsigned int sysctl_sched_bt_load_fair = 1;
+void * bt_cpu_control_set = 0;
+unsigned int sysctl_sched_bt_ignore_cpubind = 0;
 
 /*
  * sd_lb_stats_bt - Structure to store the statistics of a sched_domain
@@ -385,7 +392,8 @@ static void start_bandwidth_timer(struct hrtimer *period_timer, ktime_t period)
 
 static void start_bt_bandwidth(struct bt_bandwidth *bt_b)
 {
-	if (!bt_bandwidth_enabled() || bt_b->bt_runtime == RUNTIME_INF)
+	if (!offlinegroup_enabled &&
+	    (!bt_bandwidth_enabled() || bt_b->bt_runtime == RUNTIME_INF))
 		return;
 
 	if (hrtimer_active(&bt_b->bt_period_timer))
@@ -636,7 +644,7 @@ static int balance_bt_runtime(struct bt_rq *bt_rq)
 {
 	int more = 0;
 
-	if (!sched_feat(BT_RUNTIME_SHARE))
+	if (offlinegroup_enabled || !sched_feat(BT_RUNTIME_SHARE))
 		return more;
 
 	if (bt_rq->bt_time > bt_rq->bt_runtime) {
@@ -797,7 +805,8 @@ static int do_sched_bt_period_timer(struct bt_bandwidth *bt_b, int overrun)
 		raw_spin_unlock(&rq->lock);
 	}
 
-	if (!throttled && (!bt_bandwidth_enabled() || bt_b->bt_runtime == RUNTIME_INF))
+	if (!throttled && !offlinegroup_enabled &&
+	    (!bt_bandwidth_enabled() || bt_b->bt_runtime == RUNTIME_INF))
 		idle = 1;
 
 	if (idle)
@@ -829,22 +838,26 @@ static int sched_bt_runtime_exceeded(struct bt_rq *bt_rq)
 		 * Don't actually throttle groups that have no runtime assigned
 		 * but accrue some time due to boosting.
 		 */
-		if (likely(bt_b->bt_runtime)) {
-			static bool once = false;
+		if (!offlinegroup_enabled) {
+			if (likely(bt_b->bt_runtime)) {
+				static bool once = false;
 
-			throttle_bt_rq(bt_rq);
+				throttle_bt_rq(bt_rq);
 
-			if (!once) {
-				once = true;
-				printk_deferred("sched: BT throttling activated\n");
+				if (!once) {
+					once = true;
+					printk_deferred("sched: BT throttling activated\n");
+				}
+			} else {
+				/*
+				 * In case we did anyway, make it go away,
+				 * replenishment is a joke, since it will replenish us
+				 * with exactly 0 ns.
+				 */
+				bt_rq->bt_time = 0;
 			}
 		} else {
-			/*
-			 * In case we did anyway, make it go away,
-			 * replenishment is a joke, since it will replenish us
-			 * with exactly 0 ns.
-			 */
-			bt_rq->bt_time = 0;
+			throttle_bt_rq(bt_rq);
 		}
 
 		if (bt_rq_throttled(bt_rq)) {
@@ -861,7 +874,8 @@ static void
 account_bt_rq_runtime(struct bt_rq *bt_rq,
 			unsigned long delta_exec)
 {
-	if (!bt_bandwidth_enabled() || sched_bt_runtime(bt_rq) == RUNTIME_INF)
+	if (!offlinegroup_enabled &&
+	    (!bt_bandwidth_enabled() || sched_bt_runtime(bt_rq) == RUNTIME_INF))
 		return;
 
 	raw_spin_lock(&bt_rq->bt_runtime_lock);
@@ -2506,12 +2520,19 @@ select_task_rq_bt(struct task_struct *p, int prev_cpu, int sd_flag, int wake_fla
 	int cpu = smp_processor_id();
 	int new_cpu = prev_cpu;
 	int want_affine = 0;
+	bool check_cpumask;
 
-	if (p->nr_cpus_allowed == 1)
+	if (offlinegroup_enabled && sysctl_sched_bt_ignore_cpubind)
+		check_cpumask = false;
+	else
+		check_cpumask = true;
+
+	if (check_cpumask && p->nr_cpus_allowed == 1)
 		return prev_cpu;
 
 	if (sd_flag & SD_BALANCE_WAKE) {
-		if (cpumask_test_cpu(cpu, tsk_cpus_allowed(p)))
+		if (!check_cpumask ||
+		    (check_cpumask && cpumask_test_cpu(cpu, tsk_cpus_allowed(p))))
 			want_affine = 1;
 		new_cpu = prev_cpu;
 	}
@@ -2866,6 +2887,8 @@ static bool yield_to_task_bt(struct rq *rq, struct task_struct *p, bool preempt)
 static
 int can_migrate_bt_task(struct task_struct *p, struct lb_env *env)
 {
+	bool check_cpumask;
+
 	/*
 	 * We do not migrate tasks that are:
 	 * 1) throttled_lb_pair, or
@@ -2873,7 +2896,12 @@ int can_migrate_bt_task(struct task_struct *p, struct lb_env *env)
 	 * 3) running (obviously), or
 	 * 4) are cache-hot on their current CPU.
 	 */
-	if (!cpumask_test_cpu(env->dst_cpu, tsk_cpus_allowed(p))) {
+	if (offlinegroup_enabled && sysctl_sched_bt_ignore_cpubind)
+		check_cpumask = false;
+	else
+		check_cpumask = true;
+
+	if (check_cpumask && !cpumask_test_cpu(env->dst_cpu, tsk_cpus_allowed(p))) {
 		int cpu;
 
 		schedstat_inc(p->se.bt_statistics->nr_failed_migrations_affine);
@@ -3949,6 +3977,13 @@ static int load_balance_bt(int this_cpu, struct rq *this_rq,
 		.cpus		= cpus,
 	};
 
+	bool check_cpumask;
+
+	if (offlinegroup_enabled && sysctl_sched_bt_ignore_cpubind)
+		check_cpumask = true;
+	else
+		check_cpumask = false;
+
 	/*
 	 * For NEWLY_IDLE load_balancing, we don't need to consider
 	 * other cpus in our group
@@ -4088,8 +4123,8 @@ more_balance:
 			 * if the curr task on busiest cpu can't be
 			 * moved to this_cpu
 			 */
-			if (!cpumask_test_cpu(this_cpu,
-					tsk_cpus_allowed(busiest->curr))) {
+			if (check_cpumask &&
+			    !cpumask_test_cpu(this_cpu, tsk_cpus_allowed(busiest->curr))) {
 				raw_spin_unlock_irqrestore(&busiest->lock,
 							    flags);
 				env.flags |= LBF_ALL_PINNED;
@@ -4901,10 +4936,9 @@ static int sched_bt_global_constraints(void)
 	if (sysctl_sched_bt_period <= 0)
 		return -EINVAL;
 
-	/*
-	 * There's always some BT tasks in the root group
-	 * -- migration, kstopmachine etc..
-	 */
+	if (offlinegroup_enabled)
+		return 0;
+
 	if (sysctl_sched_bt_runtime == 0)
 		return -EINVAL;
 
@@ -4949,4 +4983,81 @@ int sched_bt_handler(struct ctl_table *table, int write,
 	mutex_unlock(&mutex);
 
 	return ret;
+}
+
+static int offline_proc_show(struct seq_file *m, void *v) {
+	unsigned long * n = (unsigned long*)m->private;
+
+	seq_printf(m, "%lu\n", *n);
+	return 0;
+}
+
+static int offline_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, offline_proc_show, PDE_DATA(inode));
+}
+
+#define OFFLINE_NUMBUF 8
+static ssize_t offline_proc_write(struct file *file, const char __user *ubuf,
+		size_t cnt, loff_t *ppos)
+{
+	unsigned long * start = (unsigned long *)bt_cpu_control_set;
+	unsigned long *to = (unsigned long *)PDE_DATA(file_inode(file));
+	char buffer[OFFLINE_NUMBUF];
+	int cpu = to - start;
+	struct bt_rq *bt_rq;
+	unsigned long tmp;
+	int cpn;
+
+	cpn = min((int)OFFLINE_NUMBUF, (int)cnt);
+	if (copy_from_user(buffer, ubuf, cpn))
+		return -EFAULT;
+
+	buffer[cpn - 1] = '\0';
+	if (kstrtoul(buffer, 0, &tmp) || tmp > 100)
+		return -EINVAL;
+
+	*to = tmp;
+	bt_rq = &cpu_rq(cpu)->bt;
+
+	raw_spin_lock(&bt_rq->bt_runtime_lock);
+	bt_rq->bt_runtime = (u64)sysctl_sched_bt_period * NSEC_PER_USEC * tmp / 100;
+	raw_spin_unlock(&bt_rq->bt_runtime_lock);
+
+	return cnt;
+}
+
+static const struct file_operations info_fops = {
+	.open           = offline_proc_open,
+	.read           = seq_read,
+	.write          = offline_proc_write,
+	.llseek         = seq_lseek,
+	.release        = single_release,
+};
+
+void init_offline_cpu_control(void)
+{
+	int i, nr = num_online_cpus();
+	char buffer[20] = "offline";
+	struct proc_dir_entry * dir;
+
+	if(!offlinegroup_enabled)
+		return;
+
+	dir= proc_mkdir(buffer, NULL);
+
+	if (!dir)
+		return;
+
+	bt_cpu_control_set = kmalloc(sizeof(unsigned long)*nr, GFP_KERNEL);
+
+	if(!bt_cpu_control_set)
+		return;
+
+	for(i=0; i<nr; i++) {
+		sprintf(buffer,"%s%d","cpu",i);
+		proc_create_data(buffer, 0400, dir, &info_fops, (void *)((unsigned long *)bt_cpu_control_set + i));
+		(*((unsigned long*)bt_cpu_control_set+i)) = 100;
+	}
+	return;
 }

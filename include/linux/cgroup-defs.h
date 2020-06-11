@@ -92,6 +92,7 @@ enum {
 	CFTYPE_WORLD_WRITABLE	= (1 << 4),	/* (DON'T USE FOR NEW FILES) S_IWUGO */
 #ifdef CONFIG_BT_SCHED
 	CFTYPE_BT_SHARES	= (1 << 5),	/* BT-sched shares */
+	CFTYPE_BT_PRIVATE	= (1 << 6),
 #endif
 
 	/* internal flags, do not use outside cgroup core proper */
