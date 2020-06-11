@@ -5225,14 +5225,16 @@ void update_idle_cpu_bt_load(struct rq *this_rq)
  */
 void update_cpu_bt_load_nohz(void)
 {
-	struct rq *this_rq = this_rq();
 	unsigned long curr_jiffies = ACCESS_ONCE(jiffies);
+	struct rq *this_rq = this_rq();
 	unsigned long pending_updates;
+	struct rq_flags rf;
 
 	if (curr_jiffies == this_rq->last_bt_load_update_tick)
 		return;
 
-	raw_spin_lock(&this_rq->lock);
+	rq_lock(this_rq, &rf);
+	update_rq_clock(this_rq);
 	pending_updates = curr_jiffies - this_rq->last_bt_load_update_tick;
 	if (pending_updates) {
 		this_rq->last_bt_load_update_tick = curr_jiffies;
@@ -5242,7 +5244,7 @@ void update_cpu_bt_load_nohz(void)
 		 */
 		__update_cpu_bt_load(this_rq, 0, pending_updates);
 	}
-	raw_spin_unlock(&this_rq->lock);
+	rq_unlock(this_rq, &rf);
 }
 #endif
 /*

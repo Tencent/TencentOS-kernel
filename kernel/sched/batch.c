@@ -704,8 +704,10 @@ void unthrottle_bt_rq(struct bt_rq *bt_rq)
 
 	bt = bt_rq->tg->bt[cpu_of(rq)];
 
-
 	bt_rq->bt_throttled = 0;
+
+	update_rq_clock(rq);
+
 	bt_rq->throttled_clock_task_time += rq_clock_task(rq) - bt_rq->throttled_clock_task;
 	if (!bt_rq->load.weight)
 		return;
@@ -2838,7 +2840,7 @@ static void yield_task_bt(struct rq *rq)
 	 * so we don't do microscopic update in schedule()
 	 * and double the fastpath cost.
 	 */
-//	 rq->skip_clock_update = 1;
+	rq_clock_skip_update(rq, true);
 
 	set_skip_buddy_bt(se);
 }
@@ -3997,6 +3999,7 @@ redo:
 more_balance:
 		local_irq_save(flags);
 		double_rq_lock(env.dst_rq, busiest);
+		update_rq_clock(busiest);
 
 		/*
 		 * cur_ld_moved - load moved in current iteration
