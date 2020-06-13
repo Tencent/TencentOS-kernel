@@ -35,7 +35,7 @@ struct thread_info {
 	__u32			tls;		/* TLS for this thread */
 
 	mm_segment_t		addr_limit;	/* thread address space:
-					 	   0-0xBFFFFFFF for user-thead
+					 	   0-0xBFFFFFFF for user-thread
 						   0-0xFFFFFFFF for kernel-thread
 						*/
 	__u8			supervisor_stack[0];
