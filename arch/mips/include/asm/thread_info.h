@@ -30,7 +30,7 @@ struct thread_info {
 	int			preempt_count;	/* 0 => preemptable, <0 => BUG */
 	mm_segment_t		addr_limit;	/*
 						 * thread address space limit:
-						 * 0x7fffffff for user-thead
+						 * 0x7fffffff for user-thread
 						 * 0xffffffff for kernel-thread
 						 */
 	struct pt_regs		*regs;
