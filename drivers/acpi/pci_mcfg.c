@@ -142,6 +142,26 @@ static struct mcfg_fixup mcfg_quirks[] = {
 	XGENE_V2_ECAM_MCFG(4, 0),
 	XGENE_V2_ECAM_MCFG(4, 1),
 	XGENE_V2_ECAM_MCFG(4, 2),
+
+#define AMPERE_ECAM32(rev, seg) \
+	{ "Ampere", "Altra   ", rev, seg, MCFG_BUS_ANY, &pci_32b_read_ops }
+
+	AMPERE_ECAM32(1, 0),
+	AMPERE_ECAM32(1, 1),
+	AMPERE_ECAM32(1, 2),
+	AMPERE_ECAM32(1, 3),
+	AMPERE_ECAM32(1, 4),
+	AMPERE_ECAM32(1, 5),
+	AMPERE_ECAM32(1, 6),
+	AMPERE_ECAM32(1, 7),
+	AMPERE_ECAM32(1, 8),
+	AMPERE_ECAM32(1, 9),
+	AMPERE_ECAM32(1, 10),
+	AMPERE_ECAM32(1, 11),
+	AMPERE_ECAM32(1, 12),
+	AMPERE_ECAM32(1, 13),
+	AMPERE_ECAM32(1, 14),
+	AMPERE_ECAM32(1, 15),
 };
 
 static char mcfg_oem_id[ACPI_OEM_ID_SIZE];
