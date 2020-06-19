@@ -80,6 +80,10 @@ struct bpf_map_ops {
 	int (*map_direct_value_meta)(const struct bpf_map *map,
 				     u64 imm, u32 *off);
 	int (*map_mmap)(struct bpf_map *map, struct vm_area_struct *vma);
+
+	/* BTF name and id of struct allocated by map_alloc */
+	const char * const map_btf_name;
+	int *map_btf_id;
 };
 
 struct bpf_map_memory {
@@ -1156,6 +1160,11 @@ static inline void bpf_long_memcpy(void *dst, const void *src, u32 size)
 	size /= sizeof(long);
 	while (size--)
 		*ldst++ = *lsrc++;
+}
+
+static inline bool bpf_allow_ptr_to_map_access(void)
+{
+	return perfmon_capable();
 }
 
 /* verify correctness of eBPF program */
