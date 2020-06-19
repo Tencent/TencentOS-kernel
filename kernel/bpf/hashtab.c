@@ -1279,6 +1279,7 @@ static void htab_map_seq_show_elem(struct bpf_map *map, void *key,
 	rcu_read_unlock();
 }
 
+static int htab_map_btf_id;
 const struct bpf_map_ops htab_map_ops = {
 	.map_alloc_check = htab_map_alloc_check,
 	.map_alloc = htab_map_alloc,
@@ -1289,6 +1290,8 @@ const struct bpf_map_ops htab_map_ops = {
 	.map_delete_elem = htab_map_delete_elem,
 	.map_gen_lookup = htab_map_gen_lookup,
 	.map_seq_show_elem = htab_map_seq_show_elem,
+	.map_btf_name = "bpf_htab",
+	.map_btf_id = &htab_map_btf_id,
 };
 
 const struct bpf_map_ops htab_lru_map_ops = {
