@@ -10,12 +10,18 @@
 #include <linux/seqlock.h>
 #include <linux/time.h>
 
+extern int cs_cgroup_loadavg_show(struct seq_file *sf, void *v,
+				struct task_struct *p);
+
 #define LOAD_INT(x) ((x) >> FSHIFT)
 #define LOAD_FRAC(x) LOAD_INT(((x) & (FIXED_1-1)) * 100)
 
 static int loadavg_proc_show(struct seq_file *m, void *v)
 {
 	unsigned long avnrun[3];
+
+	if (!cs_cgroup_loadavg_show(m, v, current))
+		return 0;
 
 	get_avenrun(avnrun, FIXED_1/200, 0);
 

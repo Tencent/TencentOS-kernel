@@ -69,6 +69,7 @@ struct blkcg {
 #endif
 	/* disk_stats for per blkcg */
 	unsigned int			dkstats_on;
+	unsigned int			stats_isolated;
 	struct list_head		dkstats_list;
 	struct blkcg_dkstats		*dkstats_hint;
 };

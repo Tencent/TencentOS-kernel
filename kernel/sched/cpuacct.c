@@ -48,6 +48,7 @@ struct cpuacct {
 	struct kernel_cpustat __percpu *cpustat;
 	struct timespec uptime;
 	u64 idletime;
+	u64 stats_isolated;
 };
 
 static inline struct cpuacct *css_ca(struct cgroup_subsys_state *css)
@@ -59,6 +60,14 @@ static inline struct cpuacct *css_ca(struct cgroup_subsys_state *css)
 static inline struct cpuacct *task_ca(struct task_struct *tsk)
 {
 	return css_ca(task_css(tsk, cpuacct_cgrp_id));
+}
+
+void cpuacct_set_stats_isolated(struct task_struct *p, u64 val)
+{
+	struct cpuacct *ca = task_ca(p);
+
+	if (ca)
+		ca->stats_isolated = val;
 }
 
 static inline struct cpuacct *parent_ca(struct cpuacct *ca)
@@ -108,6 +117,8 @@ cpuacct_css_alloc(struct cgroup_subsys_state *parent_css)
 	get_monotonic_boottime(&ca->uptime);
 	for_each_possible_cpu(cpu)
 		ca->idletime += (__force u64) kcpustat_cpu(cpu).cpustat[CPUTIME_IDLE];
+
+	ca->stats_isolated = 1;
 
 	return &ca->css;
 
@@ -467,9 +478,8 @@ static int cpuacct_stats_show(struct seq_file *sf, void *v)
 	return 0;
 }
 
-static int cpuacct_uptime_show(struct seq_file *sf, void *v)
+static int ca_uptime_show(struct seq_file *sf, void *v, struct cpuacct *ca)
 {
-	struct cpuacct *ca = css_ca(seq_css(sf));
 	struct timespec uptime, idle, curr;
 	u64 idletime = 0;
 	u32 cpu, rem;
@@ -490,7 +500,35 @@ static int cpuacct_uptime_show(struct seq_file *sf, void *v)
 	return 0;
 }
 
+static int cpuacct_uptime_show(struct seq_file *sf, void *v)
+{
+	return ca_uptime_show(sf, v, css_ca(seq_css(sf)));
+}
+
+int ca_cg_uptime_show(struct seq_file *sf, void *v, struct task_struct *p)
+{
+	struct cpuacct *ca = task_ca(p);
+
+	if (sysctl_cgroup_stats_isolated && ca && ca != &root_cpuacct && ca->stats_isolated)
+		return ca_uptime_show(sf, v, task_ca(p));
+
+	return 1;
+}
+
+static u64 ca_stats_isolated_read(struct cgroup_subsys_state *css, struct cftype *cft)
+{
+	struct cpuacct *ca = css_ca(css);
+
+	return ca && ca->stats_isolated;
+}
+
+
 static struct cftype files[] = {
+	{
+		.name = "stats_isolated",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = ca_stats_isolated_read,
+	},
 	{
 		.name = "usage",
 		.read_u64 = cpuusage_read,

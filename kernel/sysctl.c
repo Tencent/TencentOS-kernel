@@ -225,6 +225,9 @@ static int proc_dostring_coredump(struct ctl_table *table, int write,
 		void __user *buffer, size_t *lenp, loff_t *ppos);
 #endif
 
+static int proc_stats_isolated(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp, loff_t *ppos);
+
 #ifdef CONFIG_MAGIC_SYSRQ
 /* Note: sysrq code uses it's own private copy */
 static int __sysrq_enabled = CONFIG_MAGIC_SYSRQ_DEFAULT_ENABLE;
@@ -332,7 +335,22 @@ extern int sysctl_clocksource_switch_unstable_cs;
 extern int sysctl_clocksource_unstable_cnt;
 extern unsigned int sysctl_memcg_stat_show_subtree;
 
+unsigned int sysctl_cgroup_stats_isolated = 0;
+
 static struct ctl_table kern_table[] = {
+	{
+		.procname	= "container_stats_isolated",
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0222,
+		.proc_handler	= proc_stats_isolated,
+	},
+	{
+		.procname	= "stats_isolated",
+		.data		= &sysctl_cgroup_stats_isolated,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
 	{
 		.procname	= "sched_child_runs_first",
 		.data		= &sysctl_sched_child_runs_first,
@@ -3392,6 +3410,42 @@ int proc_do_large_bitmap(struct ctl_table *table, int write,
 		kfree(tmp_bitmap);
 		return err;
 	}
+}
+
+extern void cpuset_set_stats_isolated(struct task_struct *p,
+				unsigned int val);
+extern void cpuacct_set_stats_isolated(struct task_struct *p,
+				u64 val);
+extern void blkcg_set_stats_isolated(struct task_struct *p,
+				unsigned int val);
+
+static int proc_stats_isolated(struct ctl_table *table, int write,
+		  void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int data = 0;
+	int err;
+	struct mem_cgroup *memcg = mem_cgroup_from_task(current);
+
+	table->data = &data;
+	err = proc_dointvec(table, write, buffer, lenp, ppos);
+	if (err)
+		return err;
+
+	if (data) {
+		if (memcg && memcg != root_mem_cgroup)
+			memcg->stats_isolated = 1;
+		cpuset_set_stats_isolated(current, 1);
+		cpuacct_set_stats_isolated(current, 1);
+		blkcg_set_stats_isolated(current, 1);
+	} else {
+		if (memcg && memcg != root_mem_cgroup)
+			memcg->stats_isolated = 0;
+		cpuset_set_stats_isolated(current, 0);
+		cpuacct_set_stats_isolated(current, 0);
+		blkcg_set_stats_isolated(current, 0);
+	}
+
+	return 0;
 }
 
 #else /* CONFIG_PROC_SYSCTL */

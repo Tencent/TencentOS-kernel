@@ -54,11 +54,21 @@ static void show_cpuinfo_misc(struct seq_file *m, struct cpuinfo_x86 *c)
 }
 #endif
 
+#ifdef CONFIG_X86
+extern int cpuset_cg_cpuinfo_next(struct task_struct *p);
+extern int cpuset_cg_cpuinfo_show(struct seq_file *sf, void *v, struct task_struct *p);
+#endif
+
 static int show_cpuinfo(struct seq_file *m, void *v)
 {
 	struct cpuinfo_x86 *c = v;
 	unsigned int cpu;
 	int i;
+
+#ifdef CONFIG_X86
+	if (!cpuset_cg_cpuinfo_show(m, v, current))
+		return 0;
+#endif
 
 	cpu = c->cpu_index;
 	seq_printf(m, "processor\t: %u\n"
@@ -143,9 +153,16 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 
 static void *c_start(struct seq_file *m, loff_t *pos)
 {
+	void *data;
+
 	*pos = cpumask_next(*pos - 1, cpu_online_mask);
-	if ((*pos) < nr_cpu_ids)
-		return &cpu_data(*pos);
+	if ((*pos) < nr_cpu_ids) {
+		data = &cpu_data(*pos);
+		if (!cpuset_cg_cpuinfo_next(current))
+			*pos = nr_cpu_ids;
+
+		return data;
+	}
 	return NULL;
 }
 

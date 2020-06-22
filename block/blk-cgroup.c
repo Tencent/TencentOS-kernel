@@ -28,6 +28,7 @@
 #include <linux/ctype.h>
 #include <linux/blk-cgroup.h>
 #include <linux/percpu.h>
+#include <linux/sched/sysctl.h>
 #include "blk.h"
 
 #define MAX_KEY_LEN 100
@@ -777,9 +778,8 @@ static int blkcg_dkstats_enable(struct cgroup_subsys_state *css,
 	return 0;
 }
 
-static int blkcg_dkstats_show(struct seq_file *sf, void *v)
+static int blk_cg_dkstats_show(struct seq_file *sf, void *v, struct blkcg *blkcg)
 {
-	struct blkcg *blkcg = css_to_blkcg(seq_css(sf));
 	struct class_dev_iter iter;
 	struct device *dev;
 
@@ -798,6 +798,36 @@ static int blkcg_dkstats_show(struct seq_file *sf, void *v)
  out:
 	mutex_unlock(&blkcg_pol_mutex);
 	return 0;
+}
+
+static int blkcg_dkstats_show(struct seq_file *sf, void *v)
+{
+	return blk_cg_dkstats_show(sf, v, css_to_blkcg(seq_css(sf)));
+}
+
+void blkcg_set_stats_isolated(struct task_struct *p, unsigned int val)
+{
+	struct blkcg *blkcg = task_blkcg(p);
+
+	if (blkcg && blkcg != &blkcg_root)
+		blkcg->stats_isolated = val;
+}
+
+#define blkcg_stats_isolated_enabled(blkcg) \
+	(sysctl_cgroup_stats_isolated && (blkcg) && (blkcg) != &blkcg_root && \
+	 (blkcg)->stats_isolated)
+
+int blkcg_diskstats_show(struct seq_file *sf, void *v, struct task_struct *p)
+{
+	struct blkcg *blkcg = task_blkcg(p);
+
+	return blkcg_stats_isolated_enabled(blkcg) ?
+		blk_cg_dkstats_show(sf, v, blkcg) : 1;
+}
+
+int blkcg_diskstats_next(struct task_struct *p)
+{
+	return blkcg_stats_isolated_enabled(task_blkcg(p)) ? 0 : 1;
 }
 
 const char *blkg_dev_name(struct blkcg_gq *blkg)
@@ -1313,6 +1343,14 @@ static int blkcg_print_stat(struct seq_file *sf, void *v)
 	return 0;
 }
 
+static u64 blkcg_stats_isolated_read(struct cgroup_subsys_state *css,
+			       struct cftype *cft)
+{
+	struct blkcg *blkcg = css_to_blkcg(css);
+
+	return (u64)(blkcg && blkcg->stats_isolated);
+}
+
 static struct cftype blkcg_files[] = {
 	{
 		.name = "stat",
@@ -1323,6 +1361,11 @@ static struct cftype blkcg_files[] = {
 };
 
 static struct cftype blkcg_legacy_files[] = {
+	{
+		.name = "stats_isolated",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = blkcg_stats_isolated_read,
+	},
 	{
 		.name = "reset_stats",
 		.write_u64 = blkcg_reset_stats,
@@ -1443,6 +1486,7 @@ blkcg_css_alloc(struct cgroup_subsys_state *parent_css)
 	INIT_RADIX_TREE(&blkcg->blkg_tree, GFP_NOWAIT | __GFP_NOWARN);
 	INIT_HLIST_HEAD(&blkcg->blkg_list);
 	INIT_LIST_HEAD(&blkcg->dkstats_list);
+	blkcg->stats_isolated = 1;
 #ifdef CONFIG_CGROUP_WRITEBACK
 	INIT_LIST_HEAD(&blkcg->cgwb_list);
 #endif

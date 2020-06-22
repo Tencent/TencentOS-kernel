@@ -69,6 +69,7 @@
 #include <linux/tick.h>
 #include <linux/cpufreq.h>
 #include <linux/pid_namespace.h>
+#include <linux/sched/sysctl.h>
 
 DEFINE_STATIC_KEY_FALSE(cpusets_pre_enable_key);
 DEFINE_STATIC_KEY_FALSE(cpusets_enabled_key);
@@ -87,6 +88,8 @@ struct cpuset {
 	struct cgroup_subsys_state css;
 
 	unsigned long flags;		/* "unsigned long" so bitops work */
+	unsigned int stats_isolated;
+	unsigned int stats_index;
 
 	/*
 	 * On default hierarchy:
@@ -156,6 +159,14 @@ static inline struct cpuset *css_cs(struct cgroup_subsys_state *css)
 static inline struct cpuset *task_cs(struct task_struct *task)
 {
 	return css_cs(task_css(task, cpuset_cgrp_id));
+}
+
+void cpuset_set_stats_isolated(struct task_struct *p, unsigned int val)
+{
+	struct cpuset *cs = task_cs(p);
+
+	if (cs)
+		cs->stats_isolated = val;
 }
 
 static inline struct cpuset *parent_cs(struct cpuset *cs)
@@ -1874,10 +1885,15 @@ static u64 get_iowait_time(int cpu)
 	return iowait;
 }
 
-
-static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
+static u64 cpuset_stats_isolated_read(struct cgroup_subsys_state *css, struct cftype *cft)
 {
-	struct cpuset *cs = css_cs(seq_css(sf));
+	struct cpuset *cs = css_cs(css);
+
+	return (u64)(cs && cs->stats_isolated);
+}
+
+static int cs_cg_stat_show(struct seq_file *sf, void *v, struct cpuset *cs)
+{
 	int i, j;
 	u64 user, nice, system, idle, iowait, irq, softirq, steal;
 	u64 guest, guest_nice, n_ctx_switch, n_process, n_running, n_blocked;
@@ -1994,6 +2010,23 @@ static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
 	return 0;
 }
 
+static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
+{
+	return cs_cg_stat_show(sf, v, css_cs(seq_css(sf)));
+}
+
+#define cpuset_stats_isolated_enabled(cs) \
+	(sysctl_cgroup_stats_isolated && (cs) && (cs)->css.parent && (cs)->stats_isolated)
+
+int cs_cgroup_stat_show(struct seq_file *sf, void *v, struct task_struct *p)
+{
+	struct cpuset *cs = task_cs(p);
+
+	return cpuset_stats_isolated_enabled(cs) ?
+		cs_cg_stat_show(sf, v, cs) : 1;
+}
+
+
 #ifdef CONFIG_X86
 /*
  *	Get CPU information for use by the procfs.
@@ -2042,22 +2075,23 @@ static void show_cpuinfo_misc(struct seq_file *m, struct cpuinfo_x86 *c)
 }
 #endif
 
-static int cpuset_cgroup_cpuinfo_show(struct seq_file *sf, void *v)
+static int cpuset_cg_cpuinfo_print(struct seq_file *sf, void *v,
+				struct cgroup_subsys_state *cs_css)
 {
 	int i, j, k = 0;
-	struct cpuset *cs = css_cs(seq_css(sf));
+	struct cpuset *cs = css_cs(cs_css);
 	struct cpuinfo_x86 *c;
 	unsigned int cpu;
 	bool is_top_cgrp;
 
-	if (!seq_css(sf)->parent)
+	if (!cs_css->parent)
 		is_top_cgrp = true;
 	else
 		is_top_cgrp = false;
 
-	for_each_cpu(j, cs->cpus_allowed)
-	{
+	for_each_cpu(j, cs->cpus_allowed) {
 		c = &cpu_data(j);
+
 		if (is_top_cgrp || cpuset_cpuinfo_show_realinfo)
 			cpu = c->cpu_index;
 		else
@@ -2127,7 +2161,7 @@ static int cpuset_cgroup_cpuinfo_show(struct seq_file *sf, void *v)
 		for (i = 0; i < 32; i++) {
 			if (c->x86_power & (1 << i)) {
 				if (i < ARRAY_SIZE(x86_power_flags) &&
-						x86_power_flags[i])
+					x86_power_flags[i])
 					seq_printf(sf, "%s%s",
 							x86_power_flags[i][0] ? " " : "",
 							x86_power_flags[i]);
@@ -2140,6 +2174,25 @@ static int cpuset_cgroup_cpuinfo_show(struct seq_file *sf, void *v)
 	}
 	return 0;
 }
+
+static int cpuset_cgroup_cpuinfo_show(struct seq_file *sf, void *v)
+{
+	return cpuset_cg_cpuinfo_print(sf, v, seq_css(sf));
+}
+
+int cpuset_cg_cpuinfo_next(struct task_struct *p)
+{
+	return cpuset_stats_isolated_enabled(task_cs(p)) ? 0 : 1;
+}
+
+int cpuset_cg_cpuinfo_show(struct seq_file *sf, void *v, struct task_struct *p)
+{
+	struct cgroup_subsys_state *css = task_css(p, cpuset_cgrp_id);
+	struct cpuset *cs = css_cs(css);
+
+	return cpuset_stats_isolated_enabled(cs) ?
+		cpuset_cg_cpuinfo_print(sf, v, css) : 1;
+}
 #endif
 
 static int cpuset_cgroup_loadavg_show(struct seq_file *sf, void *v);
@@ -2149,6 +2202,11 @@ static int cpuset_cgroup_loadavg_show(struct seq_file *sf, void *v);
  */
 
 static struct cftype files[] = {
+	{
+		.name = "stats_isolated",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = cpuset_stats_isolated_read,
+	},
 	{
 		.name = "cpus",
 		.seq_show = cpuset_common_seq_show,
@@ -2291,6 +2349,7 @@ cpuset_css_alloc(struct cgroup_subsys_state *parent_css)
 	nodes_clear(cs->effective_mems);
 	fmeter_init(&cs->fmeter);
 	cs->relax_domain_level = -1;
+	cs->stats_isolated = 1;
 
 	return &cs->css;
 
@@ -3161,9 +3220,8 @@ static unsigned long cpuset_nr_running(struct cpuset *cs)
 	return nr_running;
 }
 
-static int cpuset_cgroup_loadavg_show(struct seq_file *sf, void *v)
+static int cs_cg_loadavg_show(struct seq_file *sf, void *v, struct cpuset *cs)
 {
-	struct cpuset *cs = css_cs(seq_css(sf));
 	unsigned long loads[3] = {0};
 	unsigned long offset = FIXED_1/200;
 	int shift = 0;
@@ -3182,4 +3240,17 @@ static int cpuset_cgroup_loadavg_show(struct seq_file *sf, void *v)
 			n_running, nr_threads,
 			task_active_pid_ns(current)->last_pid);
 	return 0;
+}
+
+static int cpuset_cgroup_loadavg_show(struct seq_file *sf, void *v)
+{
+	return cs_cg_loadavg_show(sf, v, css_cs(seq_css(sf)));
+}
+
+int cs_cgroup_loadavg_show(struct seq_file *sf, void *v, struct task_struct *p)
+{
+	struct cpuset *cs = task_cs(p);
+
+	return cpuset_stats_isolated_enabled(cs) ?
+		cs_cg_loadavg_show(sf, v, cs) : 1;
 }

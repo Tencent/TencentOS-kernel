@@ -27,6 +27,7 @@
 #include <linux/mm_inline.h>
 #include <linux/page_ext.h>
 #include <linux/page_owner.h>
+#include <linux/sched/sysctl.h>
 
 #include "internal.h"
 
@@ -1620,10 +1621,13 @@ enum writeback_stat_item {
 	NR_VM_WRITEBACK_STAT_ITEMS,
 };
 
+extern void memcg_vmstat_read(void *vv, struct mem_cgroup *memcg);
+
 static void *vmstat_start(struct seq_file *m, loff_t *pos)
 {
 	unsigned long *v;
 	int i, stat_items_size;
+	struct mem_cgroup *memcg = mem_cgroup_from_task(current);
 
 	if (*pos >= ARRAY_SIZE(vmstat_text))
 		return NULL;
@@ -1640,6 +1644,14 @@ static void *vmstat_start(struct seq_file *m, loff_t *pos)
 	m->private = v;
 	if (!v)
 		return ERR_PTR(-ENOMEM);
+
+	if (sysctl_cgroup_stats_isolated && memcg && memcg != root_mem_cgroup &&
+	    memcg->stats_isolated) {
+		memset(v, 0, stat_items_size);
+		memcg_vmstat_read(v, memcg);
+		return (unsigned long *)m->private + *pos;
+	}
+
 	for (i = 0; i < NR_VM_ZONE_STAT_ITEMS; i++)
 		v[i] = global_zone_page_state(i);
 	v += NR_VM_ZONE_STAT_ITEMS;
