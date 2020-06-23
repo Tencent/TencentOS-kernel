@@ -3141,6 +3141,12 @@ union bpf_attr {
  * 		0 on success, or a negative errno in case of failure.
  *
  *		* **-EOVERFLOW**	Overflow happens, the same object will be tried again.
+ *
+ * struct tcp6_sock *bpf_skc_to_tcp6_sock(void *sk)
+ *	Description
+ *		Dynamically cast a *sk* pointer to a *tcp6_sock* pointer.
+ *	Return
+ *		*sk* if casting is valid, or NULL otherwise.
  */
 #define __BPF_FUNC_MAPPER(FN)		\
 	FN(unspec),			\
@@ -3270,7 +3276,16 @@ union bpf_attr {
 	FN(sk_assign),			\
 	FN(ktime_get_boot_ns),		\
 	FN(seq_printf),			\
-	FN(seq_write),
+	FN(seq_write),			\
+	FN(sk_cgroup_id),		\
+	FN(sk_ancestor_cgroup_id),	\
+	FN(ringbuf_output),		\
+	FN(ringbuf_reserve),		\
+	FN(ringbuf_submit),		\
+	FN(ringbuf_discard),		\
+	FN(ringbuf_query),		\
+	FN(csum_level),			\
+	FN(skc_to_tcp6_sock),
 
 /* integer value in 'imm' field of BPF_CALL instruction selects which helper
  * function eBPF program intends to call
