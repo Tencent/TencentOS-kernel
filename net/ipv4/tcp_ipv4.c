@@ -85,6 +85,8 @@
 #include <crypto/hash.h>
 #include <linux/scatterlist.h>
 
+int sysctl_tcp_proc_sched __read_mostly = 1;
+
 #ifdef CONFIG_TCP_MD5SIG
 static int tcp_v4_md5_hash_hdr(char *md5_hash, const struct tcp_md5sig_key *key,
 			       __be32 daddr, __be32 saddr, const struct tcphdr *th);
@@ -1966,6 +1968,8 @@ get_sk:
 			return sk;
 	}
 	spin_unlock(&ilb->lock);
+	if (sysctl_tcp_proc_sched)
+		cond_resched();
 	st->offset = 0;
 	if (++st->bucket < INET_LHTABLE_SIZE)
 		goto get_head;
@@ -2023,6 +2027,8 @@ static void *established_get_first(struct seq_file *seq)
 			goto out;
 		}
 		spin_unlock_bh(lock);
+		if (sysctl_tcp_proc_sched)
+			cond_resched();
 	}
 out:
 	return rc;
