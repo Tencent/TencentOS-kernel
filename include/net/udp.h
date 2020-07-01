@@ -103,6 +103,7 @@ extern atomic_long_t udp_memory_allocated;
 extern long sysctl_udp_mem[3];
 extern int sysctl_udp_rmem_min;
 extern int sysctl_udp_wmem_min;
+extern int sysctl_udp_proc_sched;
 
 struct sk_buff;
 
