@@ -257,15 +257,6 @@ static void ip_vs_unlink_bpf(struct ip_vs_conn *cp)
 	if (likely(map)) {
 		v = map->ops->map_lookup_elem(map, &k);
 		if (!v) {
-			/* report error to user! */
-			pr_err("ipvs lookup fail key sip %x sport %u dip %x dport %u vip %x vport %u\n",
-			       ntohl(k.sip),
-			       ntohs(k.sport),
-			       ntohl(k.dip),
-			       ntohs(k.dport),
-			       ntohl(k.vip),
-			       ntohs(k.vport)
-			      );
 			BPF_STAT_INC(cp->ipvs, BPF_UNLINK_LOOKUP);
 			return;
 		}
@@ -1069,6 +1060,31 @@ static void nf_conntrack_single_unlock(struct bpf_lb_conn_key *key,
 	spin_unlock_bh(&bpf_conntrack_locks[hash]);
 }
 
+struct cidr {
+	int netip;		/* ip in host endian */
+	int netmask;	        /* e.g 24->0xffffff00 */
+};
+
+#define IPMAXNUM 256
+struct cidrs {
+	struct cidr items[IPMAXNUM];
+	int len;
+} non_masq_cidrs;
+
+/* ip in host endian */
+bool ip_in_vpc(u32 ip)
+{
+	int i = 0;
+	struct cidr *p = &non_masq_cidrs.items[0];
+	for (; i < non_masq_cidrs.len && i < IPMAXNUM; i++, p++) {
+		if ((ip & p->netmask) == (p->netip & p->netmask)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 /* Only write bpf map for nodeport VIP. Do it before nf_conn allocation to
  * avoid memory leak! return ture if bpf map inserted ok or unrelated packet!
  * false if not.
@@ -1100,9 +1116,11 @@ static bool ip_vs_conn_new_bpf(struct ip_vs_dest *dest,
 	if ((flags & IP_VS_CONN_F_TEMPLATE) || !svc || !map)
 		return true;
 
-	*skip = svc->skip_bpf;
-	if (*skip == 1)
+	if (svc->skip_bpf && ip_in_vpc(ntohl(dest->addr.ip))) {
+		*skip = 1;
 		return true;
+	}
+	*skip = 0;
 
 	key.proto = p->protocol;
 	key.sip = p->caddr->ip;
