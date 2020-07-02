@@ -1031,7 +1031,7 @@ static struct rq *__migrate_task(struct rq *rq, struct rq_flags *rf,
 		check_cpumask = true;
 
 	/* Affinity changed (again). */
-	if (!check_cpumask && !is_cpu_allowed(p, dest_cpu))
+	if (check_cpumask && !is_cpu_allowed(p, dest_cpu))
 		return rq;
 
 	update_rq_clock(rq);
