@@ -4206,6 +4206,9 @@ int idle_balance_bt(struct rq *this_rq, struct rq_flags *rf)
 	int pulled_task = 0;
 	unsigned long next_balance = jiffies + HZ;
 
+	if (likely(!sched_bt_on))
+		return 0;
+
 	if (this_rq->bt.bt_throttled || !this_rq->bt.bt_runtime)
 		return 0;
 
@@ -4414,6 +4417,9 @@ static void run_rebalance_domains_bt(struct softirq_action *h)
 	int this_cpu = smp_processor_id();
 	enum cpu_idle_type idle = idle_cpu(this_cpu)?
 						CPU_IDLE : CPU_NOT_IDLE;
+
+	if (likely(!sched_bt_on))
+		return;
 
 	rebalance_domains_bt(this_cpu, idle);
 
