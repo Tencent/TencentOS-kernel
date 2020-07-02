@@ -815,6 +815,102 @@ static const struct file_operations ip_vs_bpf_stat_fops = {
 	.release = single_release_net,
 };
 
+static ssize_t ip_vs_nosnat_read(struct file *file,
+				char __user *ubuf,
+				size_t count,
+				loff_t *ppos)
+{
+	int len = 0;
+	char buf[100];
+
+	memset(buf, 0, sizeof(buf));
+	if (*ppos > 0) {
+		/* return 0 to sigal eof to user */
+		return 0;
+	}
+	/* snprintf need tail to save null bytes */
+	len = snprintf(buf, sizeof(buf), "0x%x\n", major_nic_ip);
+	if (copy_to_user(ubuf, buf, len))
+		return -EFAULT;
+	/* so next time ppos will be bigger than 0 and return 0 */
+	*ppos = len;
+	return len;
+}
+
+/* move to rcu pointer */
+__be32 testipaddr[MAXCIDRNUM];
+int testmask[MAXCIDRNUM];
+int testnum;
+
+/* echo "10.10.10.1/24:1.1.3.4/25" > me */
+static ssize_t ip_vs_nosnat_write(struct file *file,
+				 const char __user *ubuf,
+				 size_t count,
+				 loff_t *ppos)
+{
+	/* take care of stack of */
+	#define CIDRLEN sizeof("255.255.255.255/24:")
+	char buf[MAXCIDRNUM * CIDRLEN];
+	char cidrs[MAXCIDRNUM][CIDRLEN];
+	char *s = buf;
+	const char delim[2] = ":";
+	char *token;
+	int i = 0;
+	int cidrnum = 0;
+	memset(buf, 0, sizeof(buf));
+	memset(cidrs, 0, sizeof(cidrs));
+
+	if (*ppos > 0) {
+		pr_err("%s %d\n", __func__, __LINE__);
+		return -EFAULT;
+	}
+	if (copy_from_user(buf, ubuf, count)) {
+		pr_err("%s %d\n", __FILE__, __LINE__);
+		return -EFAULT;
+	}
+
+	while ((token = strsep(&s, delim)) != NULL) {
+                strncpy(cidrs[i], token, CIDRLEN);
+                i++;
+        }
+	cidrnum = i;
+
+	for (i = 0; i < cidrnum; i++) {
+		char ip[20];
+		char mask[3];
+
+		s = cidrs[i];
+
+		token = strsep(&s, "/");
+		if (token == NULL)
+			return -EINVAL;
+
+		strncpy(ip, token, sizeof(ip));
+		if (in4_pton(ip, -1, (u8 *)&testipaddr[i], -1, NULL) != 1) {
+			return -EINVAL;
+		}
+
+		token = strsep(&s, "/");
+		if (token == NULL)
+			return -EINVAL;
+
+		strncpy(mask, token, sizeof(mask));
+		if (kstrtoint(mask, 0, &testmask[i]) != 0) {
+			return -EINVAL;
+		}
+	}
+	testnum = i;
+
+	return count;
+}
+
+
+static const struct file_operations ip_vs_nosnat_fops = {
+	.owner	 = THIS_MODULE,
+	.read    = ip_vs_nosnat_read,
+	.write =  ip_vs_nosnat_write,
+};
+
 int ip_vs_svc_proc_init(struct netns_ipvs *ipvs)
 {
 	if (!proc_create("ip_vs_svc_ip_attr", 0600,
@@ -835,9 +931,13 @@ int ip_vs_svc_proc_init(struct netns_ipvs *ipvs)
 	if (!proc_create("ip_vs_bpf_fix", 0600,
 			 ipvs->net->proc_net, &ip_vs_bpf_fix_fops))
 		goto out_bpf_fix;
+	if (!proc_create("ip_vs_non_masq_cidrs", 0600,
+			 ipvs->net->proc_net, &ip_vs_nosnat_fops))
+		goto out_non_masq;
 
 	return 0;
-
+out_non_masq:
+	remove_proc_entry("ip_vs_bpf_fix", ipvs->net->proc_net);
 out_bpf_fix:
 	remove_proc_entry("ip_vs_bpf_stat", ipvs->net->proc_net);
 out_bpf_stat:
@@ -860,5 +960,6 @@ int ip_vs_svc_proc_cleanup(struct netns_ipvs *ipvs)
 	remove_proc_entry("ip_vs_port_range", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_bpf_stat", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_bpf_fix", ipvs->net->proc_net);
+	remove_proc_entry("ip_vs_non_masq_cidrs", ipvs->net->proc_net);
 	return 0;
 }

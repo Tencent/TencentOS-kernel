@@ -1060,23 +1060,14 @@ static void nf_conntrack_single_unlock(struct bpf_lb_conn_key *key,
 	spin_unlock_bh(&bpf_conntrack_locks[hash]);
 }
 
-struct cidr {
-	int netip;		/* ip in host endian */
-	int netmask;	        /* e.g 24->0xffffff00 */
-};
-
-#define IPMAXNUM 256
-struct cidrs {
-	struct cidr items[IPMAXNUM];
-	int len;
-} non_masq_cidrs;
+struct cidrs non_masq_cidrs;
 
 /* ip in host endian */
 bool ip_in_vpc(u32 ip)
 {
 	int i = 0;
 	struct cidr *p = &non_masq_cidrs.items[0];
-	for (; i < non_masq_cidrs.len && i < IPMAXNUM; i++, p++) {
+	for (; i < non_masq_cidrs.len && i < MAXCIDRNUM; i++, p++) {
 		if ((ip & p->netmask) == (p->netip & p->netmask)) {
 			return true;
 		}
