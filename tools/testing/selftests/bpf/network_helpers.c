@@ -11,11 +11,17 @@
 #include <linux/in.h>
 #include <linux/in6.h>
 
+#include "bpf_util.h"
 #include "network_helpers.h"
 
 #define clean_errno() (errno == 0 ? "None" : strerror(errno))
-#define log_err(MSG, ...) fprintf(stderr, "(%s:%d: errno: %s) " MSG "\n", \
-	__FILE__, __LINE__, clean_errno(), ##__VA_ARGS__)
+#define log_err(MSG, ...) ({						\
+			int __save = errno;				\
+			fprintf(stderr, "(%s:%d: errno: %s) " MSG "\n", \
+				__FILE__, __LINE__, clean_errno(),	\
+				##__VA_ARGS__);				\
+			errno = __save;					\
+})
 
 struct ipv4_packet pkt_v4 = {
 	.eth.h_proto = __bpf_constant_htons(ETH_P_IP),
@@ -34,87 +40,169 @@ struct ipv6_packet pkt_v6 = {
 	.tcp.doff = 5,
 };
 
-int start_server_with_port(int family, int type, __u16 port)
+static int settimeo(int fd, int timeout_ms)
+{
+	struct timeval timeout = { .tv_sec = 3 };
+
+	if (timeout_ms > 0) {
+		timeout.tv_sec = timeout_ms / 1000;
+		timeout.tv_usec = (timeout_ms % 1000) * 1000;
+	}
+
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+		       sizeof(timeout))) {
+		log_err("Failed to set SO_RCVTIMEO");
+		return -1;
+	}
+
+	if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
+		       sizeof(timeout))) {
+		log_err("Failed to set SO_SNDTIMEO");
+		return -1;
+	}
+
+	return 0;
+}
+
+#define save_errno_close(fd) ({ int __save = errno; close(fd); errno = __save; })
+
+int start_server(int family, int type, const char *addr_str, __u16 port,
+		 int timeout_ms)
 {
 	struct sockaddr_storage addr = {};
 	socklen_t len;
 	int fd;
 
-	if (family == AF_INET) {
-		struct sockaddr_in *sin = (void *)&addr;
+	if (make_sockaddr(family, addr_str, port, &addr, &len))
+		return -1;
 
-		sin->sin_family = AF_INET;
-		sin->sin_port = htons(port);
-		len = sizeof(*sin);
-	} else {
-		struct sockaddr_in6 *sin6 = (void *)&addr;
-
-		sin6->sin6_family = AF_INET6;
-		sin6->sin6_port = htons(port);
-		len = sizeof(*sin6);
-	}
-
-	fd = socket(family, type | SOCK_NONBLOCK, 0);
+	fd = socket(family, type, 0);
 	if (fd < 0) {
 		log_err("Failed to create server socket");
 		return -1;
 	}
 
+	if (settimeo(fd, timeout_ms))
+		goto error_close;
+
 	if (bind(fd, (const struct sockaddr *)&addr, len) < 0) {
 		log_err("Failed to bind socket");
-		close(fd);
-		return -1;
+		goto error_close;
 	}
 
 	if (type == SOCK_STREAM) {
 		if (listen(fd, 1) < 0) {
 			log_err("Failed to listed on socket");
-			close(fd);
-			return -1;
+			goto error_close;
 		}
 	}
 
 	return fd;
+
+error_close:
+	save_errno_close(fd);
+	return -1;
 }
 
-int start_server(int family, int type)
+static int connect_fd_to_addr(int fd,
+			      const struct sockaddr_storage *addr,
+			      socklen_t addrlen)
 {
-	return start_server_with_port(family, type, 0);
+	if (connect(fd, (const struct sockaddr *)addr, addrlen)) {
+		log_err("Failed to connect to server");
+		return -1;
+	}
+
+	return 0;
 }
 
-static const struct timeval timeo_sec = { .tv_sec = 3 };
-static const size_t timeo_optlen = sizeof(timeo_sec);
-
-int connect_to_fd(int family, int type, int server_fd)
+int connect_to_fd(int server_fd, int timeout_ms)
 {
 	struct sockaddr_storage addr;
-	socklen_t len = sizeof(addr);
-	int fd;
+	struct sockaddr_in *addr_in;
+	socklen_t addrlen, optlen;
+	int fd, type;
 
-	fd = socket(family, type, 0);
+	optlen = sizeof(type);
+	if (getsockopt(server_fd, SOL_SOCKET, SO_TYPE, &type, &optlen)) {
+		log_err("getsockopt(SOL_TYPE)");
+		return -1;
+	}
+
+	addrlen = sizeof(addr);
+	if (getsockname(server_fd, (struct sockaddr *)&addr, &addrlen)) {
+		log_err("Failed to get server addr");
+		return -1;
+	}
+
+	addr_in = (struct sockaddr_in *)&addr;
+	fd = socket(addr_in->sin_family, type, 0);
 	if (fd < 0) {
 		log_err("Failed to create client socket");
 		return -1;
 	}
 
-	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeo_sec, timeo_optlen)) {
-		log_err("Failed to set SO_RCVTIMEO");
-		goto out;
-	}
+	if (settimeo(fd, timeout_ms))
+		goto error_close;
 
-	if (getsockname(server_fd, (struct sockaddr *)&addr, &len)) {
-		log_err("Failed to get server addr");
-		goto out;
-	}
-
-	if (connect(fd, (const struct sockaddr *)&addr, len) < 0) {
-		log_err("Fail to connect to server with family %d", family);
-		goto out;
-	}
+	if (connect_fd_to_addr(fd, &addr, addrlen))
+		goto error_close;
 
 	return fd;
 
-out:
-	close(fd);
+error_close:
+	save_errno_close(fd);
+	return -1;
+}
+
+int connect_fd_to_fd(int client_fd, int server_fd, int timeout_ms)
+{
+	struct sockaddr_storage addr;
+	socklen_t len = sizeof(addr);
+
+	if (settimeo(client_fd, timeout_ms))
+		return -1;
+
+	if (getsockname(server_fd, (struct sockaddr *)&addr, &len)) {
+		log_err("Failed to get server addr");
+		return -1;
+	}
+
+	if (connect_fd_to_addr(client_fd, &addr, len))
+		return -1;
+
+	return 0;
+}
+
+int make_sockaddr(int family, const char *addr_str, __u16 port,
+		  struct sockaddr_storage *addr, socklen_t *len)
+{
+	if (family == AF_INET) {
+		struct sockaddr_in *sin = (void *)addr;
+
+		sin->sin_family = AF_INET;
+		sin->sin_port = htons(port);
+		if (addr_str &&
+		    inet_pton(AF_INET, addr_str, &sin->sin_addr) != 1) {
+			log_err("inet_pton(AF_INET, %s)", addr_str);
+			return -1;
+		}
+		if (len)
+			*len = sizeof(*sin);
+		return 0;
+	} else if (family == AF_INET6) {
+		struct sockaddr_in6 *sin6 = (void *)addr;
+
+		sin6->sin6_family = AF_INET6;
+		sin6->sin6_port = htons(port);
+		if (addr_str &&
+		    inet_pton(AF_INET6, addr_str, &sin6->sin6_addr) != 1) {
+			log_err("inet_pton(AF_INET6, %s)", addr_str);
+			return -1;
+		}
+		if (len)
+			*len = sizeof(*sin6);
+		return 0;
+	}
 	return -1;
 }
