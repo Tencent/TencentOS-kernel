@@ -38,7 +38,7 @@ struct thread_info {
 
 	/*
 	 * thread address space:
-	 * 0-0xBFFFFFFF for user-thead
+	 * 0-0xBFFFFFFF for user-thread
 	 * 0-0xFFFFFFFF for kernel-thread
 	 */
 	mm_segment_t		addr_limit;

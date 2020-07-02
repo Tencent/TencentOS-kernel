@@ -46,7 +46,7 @@ struct thread_info {
 	__s32			preempt_count;	/* 0 => preemptable, <0 => BUG */
 
 	mm_segment_t		addr_limit;	/* thread address space:
-						   0-0xBFFFFFFF for user-thead
+						   0-0xBFFFFFFF for user-thread
 						   0-0xFFFFFFFF for kernel-thread
 						*/
 
