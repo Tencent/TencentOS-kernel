@@ -290,11 +290,6 @@ static inline struct bt_rq *task_bt_rq(struct task_struct *p)
 	return &task_rq(p)->bt;
 }
 
-static inline int bt_rq_throttled(struct bt_rq *bt_rq)
-{
-	return bt_rq->bt_throttled;
-}
-
 static inline struct bt_rq *bt_rq_of(struct sched_entity *bt_se)
 {
 	struct task_struct *p = bt_task_of(bt_se);

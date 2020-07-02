@@ -3529,12 +3529,14 @@ restart:
 			continue;
 		if ((cft->flags & CFTYPE_ONLY_ON_ROOT) && cgroup_parent(cgrp))
 			continue;
+#ifdef CONFIG_BT_SCHED
 		if ((cft->flags & CFTYPE_BT_SHARES) && !sched_bt_on)
 			continue;
 		if ((cft->flags & CFTYPE_BT_PRIVATE) && !sched_bt_on)
 			continue;
 		if ((cft->flags & CFTYPE_BT_PRIVATE) && !offlinegroup_enabled)
 			continue;
+#endif
 
 		if (is_add) {
 			ret = cgroup_add_file(css, cgrp, cft);
