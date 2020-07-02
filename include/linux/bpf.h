@@ -1031,6 +1031,7 @@ void *bpf_map_area_mmapable_alloc(u64 size, int numa_node);
 void bpf_map_area_free(void *base);
 void bpf_map_init_from_attr(struct bpf_map *map, union bpf_attr *attr);
 struct bpf_map *bpf_map_get_curr_or_next(u32 *id);
+struct bpf_prog *bpf_prog_get_curr_or_next(u32 *id);
 
 extern int sysctl_unprivileged_bpf_disabled;
 
