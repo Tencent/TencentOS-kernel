@@ -816,9 +816,7 @@ static const struct file_operations ip_vs_bpf_stat_fops = {
 };
 
 /* move to rcu pointer */
-__u32 testipaddr[MAXCIDRNUM];
-int testmask[MAXCIDRNUM];
-int testnum;
+struct cidrs __rcu *non_masq_cidrs;
 
 static int find_leading_zero(__u32 mask)
 {
@@ -831,6 +829,7 @@ static int find_leading_zero(__u32 mask)
 	}
 	return i;
 }
+
 #define CIDRLEN sizeof("255.255.255.255/24:")
 static ssize_t ip_vs_nosnat_read(struct file *file,
 				char __user *ubuf,
@@ -842,27 +841,36 @@ static ssize_t ip_vs_nosnat_read(struct file *file,
 	int remaining = sizeof(buf) - written;
 	int ret = 0;
 	int i = 0;
+	struct cidrs *c;
+
 	if (*ppos > 0) {
 		/* return 0 to sigal eof to user */
 		return 0;
 	}
 
 	memset(buf, 0, sizeof(buf));
-
-	for (i = 0; i < testnum; i++) {
+	rcu_read_lock();
+	c = rcu_dereference(non_masq_cidrs);
+	if (!c) {
+		rcu_read_unlock();
+		return -EFAULT;
+	}
+	for (i = 0; i < c->len; i++) {
 		/* snprintf need tail to save null bytes */
 		ret = snprintf(buf + written, remaining, "%x/%d:",
-			       testipaddr[i],
-			       find_leading_zero(~testmask[i])
+			       c->items[i].netip,
+			       find_leading_zero(~(c->items[i].netmask))
 			       );
 
 		if (ret < 0 || ret >= remaining) {
+			rcu_read_unlock();
 			return -EFAULT;
 		}
 
 		written += ret;
 		remaining -= ret;
 	}
+	rcu_read_unlock();
 
 	if (copy_to_user(ubuf, buf, written))
 		return -EFAULT;
@@ -880,19 +888,21 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 {
 	/* take care of stack of */
 	char * buf;
-	char cidrs[MAXCIDRNUM][CIDRLEN];
 	const char delim[2] = ":";
 	char *token;
 	char *s;
 	int i;
 	int cidrnum = 0;
 	int ret = count;
+	struct cidrs *new = NULL;
+	struct cidrs *old;
+	char cidrs2[MAXCIDRNUM][CIDRLEN];
 
 	if (*ppos > 0) {
 		return -EFAULT;
 	}
 	/* prevent buffer of */
-	if (count > MAXCIDRNUM * CIDRLEN) {
+	if (count <= 0 || count > MAXCIDRNUM * CIDRLEN) {
 		pr_err("%s %d count %ld\n", __func__, __LINE__, count);
 		return -EINVAL;
 	}
@@ -900,7 +910,11 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 	if (!buf)
 		return -ENOMEM;
 
-	memset(cidrs, 0, sizeof(cidrs));
+	new = kzalloc(sizeof(struct cidrs), GFP_KERNEL);
+	if (!new)
+		return -ENOMEM;
+
+	memset(cidrs2, 0, sizeof(cidrs2));
 
 	if (copy_from_user(buf, ubuf, count)) {
 		ret = -EFAULT;
@@ -914,7 +928,7 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 			ret = -EINVAL;
 			goto out;;
 		}
-                strncpy(cidrs[i], token, CIDRLEN);
+                strncpy(cidrs2[i], token, CIDRLEN);
                 i++;
         }
 	cidrnum = i;
@@ -928,7 +942,7 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 		memset(ip, 0, sizeof(ip));
 		memset(mask, 0, sizeof(mask));
 
-		s = cidrs[i];
+		s = cidrs2[i];
 
 		token = strsep(&s, "/");
 		if (token == NULL) {
@@ -943,7 +957,7 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 			ret = -EINVAL;
 			goto out;
 		}
-		testipaddr[i] = ntohl(ipi);
+		new->items[i].netip = ntohl(ipi);
 
 		token = strsep(&s, "/");
 		if (token == NULL) {
@@ -952,19 +966,32 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 			goto out;
 		}
 
-		printk("token to mask is %s\n", token);
 		strncpy(mask, token, 2);
 		if (kstrtoint(mask, 0, &maski) != 0) {
-			pr_err("%s %d mask %s\n", __func__, __LINE__, mask);
 			ret = -EINVAL;
 			goto out;
 		}
-
-		testmask[i] = ~((1 << (32 - maski)) - 1);
+		new->items[i].netmask = ~((1 << (32 - maski)) - 1);
 	}
-	testnum = i;
+
+	/* reserve the old one to free */
+	rcu_read_lock();
+	old = rcu_dereference(non_masq_cidrs);
+	rcu_read_unlock();
+
+	/* public the cidrs */
+	new->len = i;
+	rcu_assign_pointer(non_masq_cidrs, new);
+
+	/* free the old one after grace period*/
+	synchronize_rcu();
+	kfree(old);
 out:
 	kfree(buf);
+	/* the new one is not published, delete it */
+	if  (ret < 0) {
+		kfree(new);
+	}
 	return ret;
 }
 
@@ -976,6 +1003,11 @@ static const struct file_operations ip_vs_nosnat_fops = {
 
 int ip_vs_svc_proc_init(struct netns_ipvs *ipvs)
 {
+	struct cidrs *c = kzalloc(sizeof(struct cidrs), GFP_KERNEL);
+	if (!c)
+		return -ENOMEM;
+	rcu_assign_pointer(non_masq_cidrs, c);
+
 	if (!proc_create("ip_vs_svc_ip_attr", 0600,
 		    ipvs->net->proc_net, &ip_vs_svc_fops))
 		goto out_svc_ip;
@@ -998,6 +1030,7 @@ int ip_vs_svc_proc_init(struct netns_ipvs *ipvs)
 			 ipvs->net->proc_net, &ip_vs_nosnat_fops))
 		goto out_non_masq;
 
+
 	return 0;
 out_non_masq:
 	remove_proc_entry("ip_vs_bpf_fix", ipvs->net->proc_net);
@@ -1017,6 +1050,7 @@ out_svc_ip:
 
 int ip_vs_svc_proc_cleanup(struct netns_ipvs *ipvs)
 {
+	struct cidrs *old;
 	remove_proc_entry("ip_vs_svc_ip_attr", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_bpf_id", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_devip", ipvs->net->proc_net);
@@ -1024,5 +1058,9 @@ int ip_vs_svc_proc_cleanup(struct netns_ipvs *ipvs)
 	remove_proc_entry("ip_vs_bpf_stat", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_bpf_fix", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_non_masq_cidrs", ipvs->net->proc_net);
+	rcu_read_lock();
+	old = rcu_dereference(non_masq_cidrs);
+	rcu_read_unlock();
+	kfree(old);
 	return 0;
 }

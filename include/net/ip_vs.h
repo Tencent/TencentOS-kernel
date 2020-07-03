@@ -1732,7 +1732,7 @@ struct cidrs {
 	struct cidr items[MAXCIDRNUM];
 	int len;
 };
-extern  struct cidrs non_masq_cidrs;
+extern struct cidrs __rcu *non_masq_cidrs;
 
 /* FIXME This is hack, borrowed from ip_vs_ctl.c */
 #define IP_VS_SVC_TAB_BITS 8

@@ -1060,20 +1060,32 @@ static void nf_conntrack_single_unlock(struct bpf_lb_conn_key *key,
 	spin_unlock_bh(&bpf_conntrack_locks[hash]);
 }
 
-struct cidrs non_masq_cidrs;
 
 /* ip in host endian */
 bool ip_in_vpc(u32 ip)
 {
 	int i = 0;
-	struct cidr *p = &non_masq_cidrs.items[0];
-	for (; i < non_masq_cidrs.len && i < MAXCIDRNUM; i++, p++) {
-		if ((ip & p->netmask) == (p->netip & p->netmask)) {
-			return true;
-		}
+	struct cidrs *c;
+	struct cidr *p;
+	int ret = false;
+
+	rcu_read_lock();
+	c = rcu_dereference(non_masq_cidrs);
+	if (unlikely(!c)) {
+		ret = false;
+		goto out;
 	}
 
-	return false;
+	p = &c->items[0];
+	for (; i < c->len && i < MAXCIDRNUM; i++, p++) {
+		if ((ip & p->netmask) == (p->netip & p->netmask)) {
+			ret = true;
+			goto out;
+		}
+	}
+out:
+	rcu_read_unlock();
+	return ret;
 }
 
 /* Only write bpf map for nodeport VIP. Do it before nf_conn allocation to
