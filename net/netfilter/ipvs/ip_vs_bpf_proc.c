@@ -820,6 +820,17 @@ __u32 testipaddr[MAXCIDRNUM];
 int testmask[MAXCIDRNUM];
 int testnum;
 
+static int find_leading_zero(__u32 mask)
+{
+	int msb = 1 << 31;
+	int i;
+	for (i = 0; i < 32; i++) {
+		if ((mask << i) & msb) {
+			break;
+		}
+	}
+	return i;
+}
 #define CIDRLEN sizeof("255.255.255.255/24:")
 static ssize_t ip_vs_nosnat_read(struct file *file,
 				char __user *ubuf,
@@ -841,8 +852,9 @@ static ssize_t ip_vs_nosnat_read(struct file *file,
 	for (i = 0; i < testnum; i++) {
 		/* snprintf need tail to save null bytes */
 		ret = snprintf(buf + written, remaining, "%x/%d:",
-				testipaddr[i],
-				32 - ((~testmask[i]) & 0xffffffff));
+			       testipaddr[i],
+			       find_leading_zero(~testmask[i])
+			       );
 
 		if (ret < 0 || ret >= remaining) {
 			return -EFAULT;
@@ -872,7 +884,7 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 	const char delim[2] = ":";
 	char *token;
 	char *s;
-	int i = 0;
+	int i;
 	int cidrnum = 0;
 	int ret = count;
 
@@ -881,6 +893,7 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 	}
 	/* prevent buffer of */
 	if (count > MAXCIDRNUM * CIDRLEN) {
+		pr_err("%s %d count %ld\n", __func__, __LINE__, count);
 		return -EINVAL;
 	}
 	buf = kzalloc(MAXCIDRNUM * CIDRLEN, GFP_KERNEL);
@@ -894,8 +907,13 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 		goto out;
 	}
 
+	i = 0;
 	s = buf;
 	while ((token = strsep(&s, delim)) != NULL) {
+		if (i > MAXCIDRNUM - 1) {
+			ret = -EINVAL;
+			goto out;;
+		}
                 strncpy(cidrs[i], token, CIDRLEN);
                 i++;
         }
@@ -907,16 +925,21 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 		__u32  ipi;
 		__u32  maski;
 
+		memset(ip, 0, sizeof(ip));
+		memset(mask, 0, sizeof(mask));
+
 		s = cidrs[i];
 
 		token = strsep(&s, "/");
 		if (token == NULL) {
+			pr_err("%s %d\n", __func__, __LINE__);
 			ret = -EINVAL;
 			goto out;
 		};
 
-		strncpy(ip, token, sizeof(ip));
+		strncpy(ip, token, sizeof(ip)-1);
 		if (in4_pton(ip, -1, (u8 *)&ipi, -1, NULL) != 1) {
+			pr_err("%s %d\n", __func__, __LINE__);
 			ret = -EINVAL;
 			goto out;
 		}
@@ -924,12 +947,15 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 
 		token = strsep(&s, "/");
 		if (token == NULL) {
+			pr_err("%s %d\n", __func__, __LINE__);
 			ret = -EINVAL;
 			goto out;
 		}
 
-		strncpy(mask, token, sizeof(mask));
+		printk("token to mask is %s\n", token);
+		strncpy(mask, token, 2);
 		if (kstrtoint(mask, 0, &maski) != 0) {
+			pr_err("%s %d mask %s\n", __func__, __LINE__, mask);
 			ret = -EINVAL;
 			goto out;
 		}
