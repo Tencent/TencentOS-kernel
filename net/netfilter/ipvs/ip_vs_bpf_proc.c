@@ -815,32 +815,50 @@ static const struct file_operations ip_vs_bpf_stat_fops = {
 	.release = single_release_net,
 };
 
+/* move to rcu pointer */
+__u32 testipaddr[MAXCIDRNUM];
+int testmask[MAXCIDRNUM];
+int testnum;
+
+#define CIDRLEN sizeof("255.255.255.255/24:")
 static ssize_t ip_vs_nosnat_read(struct file *file,
 				char __user *ubuf,
 				size_t count,
 				loff_t *ppos)
 {
-	int len = 0;
-	char buf[100];
-
-	memset(buf, 0, sizeof(buf));
+	char buf[MAXCIDRNUM * CIDRLEN];
+	int written = 0;
+	int remaining = sizeof(buf) - written;
+	int ret = 0;
+	int i = 0;
 	if (*ppos > 0) {
 		/* return 0 to sigal eof to user */
 		return 0;
 	}
-	/* snprintf need tail to save null bytes */
-	len = snprintf(buf, sizeof(buf), "0x%x\n", major_nic_ip);
-	if (copy_to_user(ubuf, buf, len))
-		return -EFAULT;
-	/* so next time ppos will be bigger than 0 and return 0 */
-	*ppos = len;
-	return len;
-}
 
-/* move to rcu pointer */
-__be32 testipaddr[MAXCIDRNUM];
-int testmask[MAXCIDRNUM];
-int testnum;
+	memset(buf, 0, sizeof(buf));
+
+	for (i = 0; i < testnum; i++) {
+		/* snprintf need tail to save null bytes */
+		ret = snprintf(buf + written, remaining, "%x/%d:",
+				testipaddr[i],
+				32 - ((~testmask[i]) & 0xffffffff));
+
+		if (ret < 0 || ret >= remaining) {
+			return -EFAULT;
+		}
+
+		written += ret;
+		remaining -= ret;
+	}
+
+	if (copy_to_user(ubuf, buf, written))
+		return -EFAULT;
+
+	/* so next time ppos will be bigger than 0 and return 0 */
+	*ppos = written;
+	return written;
+}
 
 /* echo "10.10.10.1/24:1.1.3.4/25" > me */
 static ssize_t ip_vs_nosnat_write(struct file *file,
@@ -849,26 +867,34 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 				 loff_t *ppos)
 {
 	/* take care of stack of */
-	#define CIDRLEN sizeof("255.255.255.255/24:")
-	char buf[MAXCIDRNUM * CIDRLEN];
+	char * buf;
 	char cidrs[MAXCIDRNUM][CIDRLEN];
-	char *s = buf;
 	const char delim[2] = ":";
 	char *token;
+	char *s;
 	int i = 0;
 	int cidrnum = 0;
-	memset(buf, 0, sizeof(buf));
-	memset(cidrs, 0, sizeof(cidrs));
+	int ret = count;
 
 	if (*ppos > 0) {
-		pr_err("%s %d\n", __func__, __LINE__);
 		return -EFAULT;
 	}
+	/* prevent buffer of */
+	if (count > MAXCIDRNUM * CIDRLEN) {
+		return -EINVAL;
+	}
+	buf = kzalloc(MAXCIDRNUM * CIDRLEN, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	memset(cidrs, 0, sizeof(cidrs));
+
 	if (copy_from_user(buf, ubuf, count)) {
-		pr_err("%s %d\n", __FILE__, __LINE__);
-		return -EFAULT;
+		ret = -EFAULT;
+		goto out;
 	}
 
+	s = buf;
 	while ((token = strsep(&s, delim)) != NULL) {
                 strncpy(cidrs[i], token, CIDRLEN);
                 i++;
@@ -878,37 +904,48 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 	for (i = 0; i < cidrnum; i++) {
 		char ip[20];
 		char mask[3];
+		__u32  ipi;
+		__u32  maski;
 
 		s = cidrs[i];
 
 		token = strsep(&s, "/");
-		if (token == NULL)
-			return -EINVAL;
+		if (token == NULL) {
+			ret = -EINVAL;
+			goto out;
+		};
 
 		strncpy(ip, token, sizeof(ip));
-		if (in4_pton(ip, -1, (u8 *)&testipaddr[i], -1, NULL) != 1) {
-			return -EINVAL;
+		if (in4_pton(ip, -1, (u8 *)&ipi, -1, NULL) != 1) {
+			ret = -EINVAL;
+			goto out;
 		}
+		testipaddr[i] = ntohl(ipi);
 
 		token = strsep(&s, "/");
-		if (token == NULL)
-			return -EINVAL;
+		if (token == NULL) {
+			ret = -EINVAL;
+			goto out;
+		}
 
 		strncpy(mask, token, sizeof(mask));
-		if (kstrtoint(mask, 0, &testmask[i]) != 0) {
-			return -EINVAL;
+		if (kstrtoint(mask, 0, &maski) != 0) {
+			ret = -EINVAL;
+			goto out;
 		}
+
+		testmask[i] = ~((1 << (32 - maski)) - 1);
 	}
 	testnum = i;
-
-	return count;
+out:
+	kfree(buf);
+	return ret;
 }
 
-
 static const struct file_operations ip_vs_nosnat_fops = {
-	.owner	 = THIS_MODULE,
-	.read    = ip_vs_nosnat_read,
-	.write =  ip_vs_nosnat_write,
+	.owner = THIS_MODULE,
+	.read  = ip_vs_nosnat_read,
+	.write = ip_vs_nosnat_write,
 };
 
 int ip_vs_svc_proc_init(struct netns_ipvs *ipvs)
