@@ -6648,7 +6648,7 @@ void sched_online_group(struct task_group *tg, struct task_group *parent)
 	spin_unlock_irqrestore(&task_group_lock, flags);
 
 	online_fair_sched_group(tg);
-#ifdef CONFIG_BT_SCHED
+#ifdef CONFIG_BT_GROUP_SCHED
 	online_bt_sched_group(tg);
 #endif
 }

@@ -55,7 +55,6 @@ struct bt_rq {
  * removed when useful for applications beyond shares distribution (e.g.
  * load-balance).
  */
-#ifdef CONFIG_BT_GROUP_SCHED
 	/*
 	 * BT Load tracking
 	 */
@@ -63,7 +62,7 @@ struct bt_rq {
 	u64 runnable_load_sum;
 	unsigned long runnable_load_avg;
 
-
+#ifdef CONFIG_BT_GROUP_SCHED
 	unsigned long tg_load_avg_contrib;
 #endif /* CONFIG_BT_GROUP_SCHED */
 	atomic_long_t removed_load_avg, removed_util_avg;

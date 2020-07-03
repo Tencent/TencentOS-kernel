@@ -444,12 +444,7 @@ static inline struct bt_bandwidth *sched_bt_bandwidth(struct bt_rq *bt_rq)
 	return &def_bt_bandwidth;
 }
 
-#ifdef CONFIG_SMP
-static unsigned long capacity_of_bt(int cpu)
-{
-	return cpu_rq(cpu)->cpu_capacity;
-}
-
+#ifdef CONFIG_BT_GROUP_SCHED
 /*
  * We ran out of runtime, see if we can borrow some from our neighbours.
  */
@@ -611,30 +606,6 @@ static void __enable_bt_runtime(struct rq *rq)
 	}
 }
 
-#if 0
-int update_bt_runtime(struct notifier_block *nfb, unsigned long action, void *hcpu)
-{
-	int cpu = (int)(long)hcpu;
-
-	switch (action) {
-	case CPU_DOWN_PREPARE:
-	case CPU_DOWN_PREPARE_FROZEN:
-		disable_bt_runtime(cpu_rq(cpu));
-		return NOTIFY_OK;
-
-	case CPU_DOWN_FAILED:
-	case CPU_DOWN_FAILED_FROZEN:
-	case CPU_ONLINE:
-	case CPU_ONLINE_FROZEN:
-		enable_bt_runtime(cpu_rq(cpu));
-		return NOTIFY_OK;
-
-	default:
-		return NOTIFY_DONE;
-	}
-}
-#endif
-
 static int balance_bt_runtime(struct bt_rq *bt_rq)
 {
 	int more = 0;
@@ -650,13 +621,12 @@ static int balance_bt_runtime(struct bt_rq *bt_rq)
 
 	return more;
 }
-#else /* !CONFIG_SMP */
-static inline int balance_bt_runtime(struct bt_rq *bt_rq)
-{
-	return 0;
-}
-#endif /* CONFIG_SMP */
+#else /* !CONFIG_BT_GROUP_SCHED */
+static void __disable_bt_runtime(struct rq *rq) {}
+static void __enable_bt_runtime(struct rq *rq) {}
+#endif /* CONFIG_BT_GROUP_SCHED */
 
+#ifdef CONFIG_BT_GROUP_SCHED
 static void
 dequeue_bt_entity(struct bt_rq *bt_rq, struct sched_entity *se, int flags);
 
@@ -880,6 +850,20 @@ account_bt_rq_runtime(struct bt_rq *bt_rq,
 	}
 	raw_spin_unlock(&bt_rq->bt_runtime_lock);
 }
+#else /* !CONFIG_BT_GROUP_SCHED */
+static inline u64 bt_rq_clock_task(struct bt_rq *bt_rq)
+{
+	return rq_clock_task(rq_of_bt_rq(bt_rq));
+}
+
+static int do_sched_bt_period_timer(struct bt_bandwidth *bt_b, int overrun)
+{
+	return 1;
+}
+
+static void
+account_bt_rq_runtime(struct bt_rq *bt_rq, unsigned long delta_exec) {}
+#endif /* CONFIG_BT_GROUP_SCHED */
 
 /**************************************************************
  * Scheduling class tree data structure manipulation methods:
@@ -3128,82 +3112,23 @@ static unsigned long task_h_bt_load(struct task_struct *p)
 }
 #endif
 
-#ifdef CONFIG_CFS_BANDWIDTH
-/* cpu online calback */
-static void __maybe_unused update_runtime_enabled(struct rq *rq)
-{
-	return;
-	#if 0
-	struct task_group *tg;
-
-	lockdep_assert_held(&rq->lock);
-
-	rcu_read_lock();
-	list_for_each_entry_rcu(tg, &task_groups, list) {
-		struct cfs_bandwidth *cfs_b = &tg->cfs_bandwidth;
-		struct cfs_rq *cfs_rq = tg->cfs_rq[cpu_of(rq)];
-
-		raw_spin_lock(&cfs_b->lock);
-		cfs_rq->runtime_enabled = cfs_b->quota != RUNTIME_INF;
-		raw_spin_unlock(&cfs_b->lock);
-	}
-	rcu_read_unlock();
-	#endif
-}
-
-/* cpu offline callback */
-static void __maybe_unused unthrottle_offline_cfs_rqs(struct rq *rq)
-{
-	return;
-	#if 0
-	struct task_group *tg;
-
-	lockdep_assert_held(&rq->lock);
-
-	rcu_read_lock();
-	list_for_each_entry_rcu(tg, &task_groups, list) {
-		struct bt_rq *bt_rq = tg->bt_rq[cpu_of(rq)];
-
-		if (!bt_rq->runtime_enabled)
-			continue;
-
-		/*
-		 * clock_task is not advancing so we just need to make sure
-		 * there's some valid quota amount
-		 */
-		bt_rq->runtime_remaining = 1;
-		/*
-		 * Offline rq is schedulable till cpu is completely disabled
-		 * in take_cpu_down(), so we prevent new cfs throttling here.
-		 */
-		bt_rq->runtime_enabled = 0;
-
-		if (bt_rq_throttled(bt_rq))
-			unthrottle_bt_rq(bt_rq);
-	}
-	rcu_read_unlock();
-	#endif
-}
-#else
-static inline void update_runtime_enabled(struct rq *rq) {}
-static inline void unthrottle_offline_cfs_rqs(struct rq *rq) {}
-#endif
-
 #ifdef CONFIG_SMP
 static void rq_online_bt(struct rq *rq)
 {
 	update_sysctl();
-	__enable_bt_runtime(rq);
 
-	update_runtime_enabled(rq);
+#ifdef CONFIG_BT_GROUP_SCHED
+	__enable_bt_runtime(rq);
+#endif
 }
 
 static void rq_offline_bt(struct rq *rq)
 {
 	update_sysctl();
-	__disable_bt_runtime(rq);
 
-	unthrottle_offline_cfs_rqs(rq);
+#ifdef CONFIG_BT_GROUP_SCHED
+	__disable_bt_runtime(rq);
+#endif
 }
 
 /**
@@ -3794,6 +3719,11 @@ out_balanced:
 ret:
 	env->imbalance = 0;
 	return NULL;
+}
+
+static unsigned long capacity_of_bt(int cpu)
+{
+	return cpu_rq(cpu)->cpu_capacity;
 }
 
 /*
