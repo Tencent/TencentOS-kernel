@@ -1372,13 +1372,15 @@ void do_machine_check(struct pt_regs *regs, long error_code)
 
 	/* Fault was in user mode and we need to take some action */
 	if ((m.cs & 3) == 3) {
-		ist_begin_non_atomic(regs);
+		/* If this triggers there is no way to recover. Die hard. */
+		BUG_ON(!on_thread_stack() || !user_mode(regs));
 		local_irq_enable();
+		preempt_enable();
 
 		if (kill_it || do_memory_failure(&m))
 			force_sig(SIGBUS);
+		preempt_disable();
 		local_irq_disable();
-		ist_end_non_atomic();
 	} else {
 		/*
 		 * Handle an MCE which has happened in kernel space but from
