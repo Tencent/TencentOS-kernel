@@ -127,6 +127,14 @@
 #define MSR_AMD64_SMCA_MCx_DEADDR(x)	(MSR_AMD64_SMCA_MC0_DEADDR + 0x10*(x))
 #define MSR_AMD64_SMCA_MCx_MISCy(x, y)	((MSR_AMD64_SMCA_MC0_MISC1 + y) + (0x10*(x)))
 
+/* mce.kflags flag bits for logging etc. */
+#define	MCE_HANDLED_CEC		BIT_ULL(0)
+#define	MCE_HANDLED_UC		BIT_ULL(1)
+#define	MCE_HANDLED_EXTLOG	BIT_ULL(2)
+#define	MCE_HANDLED_NFIT	BIT_ULL(3)
+#define	MCE_HANDLED_EDAC	BIT_ULL(4)
+#define	MCE_HANDLED_MCELOG	BIT_ULL(5)
+
 /*
  * This structure contains all data related to the MCE log.  Also
  * carries a signature to make it easier to find from external
