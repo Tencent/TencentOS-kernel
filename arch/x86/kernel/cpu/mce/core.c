@@ -42,6 +42,7 @@
 #include <linux/export.h>
 #include <linux/jump_label.h>
 #include <linux/set_memory.h>
+#include <linux/task_work.h>
 
 #include <asm/intel-family.h>
 #include <asm/processor.h>
@@ -1117,23 +1118,6 @@ static void mce_clear_state(unsigned long *toclear)
 	}
 }
 
-static int do_memory_failure(struct mce *m)
-{
-	int flags = MF_ACTION_REQUIRED;
-	int ret;
-
-	pr_err("Uncorrected hardware memory error in user-access at %llx", m->addr);
-	if (!(m->mcgstatus & MCG_STATUS_RIPV))
-		flags |= MF_MUST_KILL;
-	ret = memory_failure(m->addr >> PAGE_SHIFT, flags);
-	if (ret)
-		pr_err("Memory error not recovered");
-	else
-		set_mce_nospec(m->addr >> PAGE_SHIFT, whole_page(m));
-	return ret;
-}
-
-
 /*
  * Cases where we avoid rendezvous handler timeout:
  * 1) If this CPU is offline.
@@ -1227,6 +1211,29 @@ static void __mc_scan_banks(struct mce *m, struct mce *final,
 
 	/* mce_clear_state will clear *final, save locally for use later */
 	*m = *final;
+}
+
+static void kill_me_now(struct callback_head *ch)
+{
+	force_sig(SIGBUS);
+}
+
+static void kill_me_maybe(struct callback_head *cb)
+{
+	struct task_struct *p = container_of(cb, struct task_struct, mce_kill_me);
+	int flags = MF_ACTION_REQUIRED;
+
+	pr_err("Uncorrected hardware memory error in user-access at %llx", p->mce_addr);
+	if (!p->mce_ripv)
+		flags |= MF_MUST_KILL;
+
+	if (!memory_failure(p->mce_addr >> PAGE_SHIFT, flags)) {
+		set_mce_nospec(p->mce_addr >> PAGE_SHIFT, p->mce_whole_page);
+		return;
+	}
+
+	pr_err("Memory error not recovered");
+	kill_me_now(cb);
 }
 
 /*
@@ -1374,13 +1381,14 @@ void do_machine_check(struct pt_regs *regs, long error_code)
 	if ((m.cs & 3) == 3) {
 		/* If this triggers there is no way to recover. Die hard. */
 		BUG_ON(!on_thread_stack() || !user_mode(regs));
-		local_irq_enable();
-		preempt_enable();
 
-		if (kill_it || do_memory_failure(&m))
-			force_sig(SIGBUS);
-		preempt_disable();
-		local_irq_disable();
+		current->mce_addr = m.addr;
+		current->mce_ripv = !!(m.mcgstatus & MCG_STATUS_RIPV);
+		current->mce_whole_page = whole_page(&m);
+		current->mce_kill_me.func = kill_me_maybe;
+		if (kill_it)
+			current->mce_kill_me.func = kill_me_now;
+		task_work_add(current, &current->mce_kill_me, true);
 	} else {
 		/*
 		 * Handle an MCE which has happened in kernel space but from
