@@ -986,8 +986,7 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 			goto out;
 		}
 
-		/*
-		 * Note: in compiler 1 << 32 is 0. during run time,
+		/* Note: in compiler 1 << 32 is 0. during run time,
 		 * 1 << (32 - i), where i is zero, return 1
 		 */
 		if (maski == 0)
@@ -1005,14 +1004,12 @@ skip_parse:
 
 	/* free the old one after grace period*/
 	synchronize_rcu();
-	if (old)
-		kfree(old);
+	kfree(old);
 out:
 	kfree(buf);
 	/* the new one is not published, delete it */
-	if  (ret < 0) {
+	if (ret < 0)
 		kfree(new);
-	}
 
 	mutex_unlock(&ip_vs_bpf_proc_lock);
 	return ret;
