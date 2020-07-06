@@ -38,7 +38,7 @@
 #include <linux/filter.h>
 #include <net/net_namespace.h>
 #include <net/ip_vs.h>
-
+#include <linux/mutex.h>
 /*  since map id is defined as static in kernel/bpf/syscall.c
  *  pass pid and bpf map fd from controller to ipvs.
  *  The controller shall open the map and pass its pid
@@ -60,6 +60,8 @@ struct ip_vs_iter_state {
 	struct hlist_head	*l;
 };
 
+/* make sure only one process write the interface*/
+static DEFINE_MUTEX(ip_vs_bpf_proc_lock);
 /* return the POS - 1 th item in the list */
 static void *ip_vs_svc_array(struct seq_file *seq, loff_t pos)
 {
@@ -906,13 +908,20 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 		pr_err("%s %d count %ld\n", __func__, __LINE__, count);
 		return -EINVAL;
 	}
+
+	/* prevent mulitple user processes write to me*/
+	mutex_lock(&ip_vs_bpf_proc_lock);
 	buf = kzalloc(MAXCIDRNUM * CIDRLEN, GFP_KERNEL);
-	if (!buf)
+	if (!buf) {
+		mutex_unlock(&ip_vs_bpf_proc_lock);
 		return -ENOMEM;
+	}
 
 	new = kzalloc(sizeof(struct cidrs), GFP_KERNEL);
-	if (!new)
+	if (!new) {
+		mutex_unlock(&ip_vs_bpf_proc_lock);
 		return -ENOMEM;
+	}
 
 	memset(cidrs2, 0, sizeof(cidrs2));
 
@@ -989,6 +998,8 @@ out:
 	if  (ret < 0) {
 		kfree(new);
 	}
+
+	mutex_unlock(&ip_vs_bpf_proc_lock);
 	return ret;
 }
 
@@ -1056,7 +1067,8 @@ int ip_vs_svc_proc_cleanup(struct netns_ipvs *ipvs)
 	remove_proc_entry("ip_vs_bpf_fix", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_non_masq_cidrs", ipvs->net->proc_net);
 	old = rcu_dereference(non_masq_cidrs);
-	kfree(old);
 	rcu_assign_pointer(non_masq_cidrs, NULL);
+	synchronize_rcu();
+	kfree(old);
 	return 0;
 }

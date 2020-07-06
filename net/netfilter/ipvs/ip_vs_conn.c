@@ -1062,7 +1062,7 @@ static void nf_conntrack_single_unlock(struct bpf_lb_conn_key *key,
 
 
 /* ip in host endian */
-bool ip_in_vpc(u32 ip)
+static bool ip_in_nosnat_vector(u32 ip)
 {
 	int i = 0;
 	struct cidrs *c;
@@ -1124,7 +1124,7 @@ static bool ip_vs_conn_new_bpf(struct ip_vs_dest *dest,
 	if ((flags & IP_VS_CONN_F_TEMPLATE) || !svc || !map)
 		return true;
 
-	if (svc->skip_bpf && ip_in_vpc(ntohl(dest->addr.ip))) {
+	if (svc->skip_bpf && ip_in_nosnat_vector(ntohl(dest->addr.ip))) {
 		*skip = 1;
 		return true;
 	}
