@@ -904,13 +904,14 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 		return -EFAULT;
 	}
 	/* prevent buffer of */
-	if (count <= 0 || count > MAXCIDRNUM * CIDRLEN) {
+	if (count > MAXCIDRNUM * CIDRLEN) {
 		pr_err("%s %d count %ld\n", __func__, __LINE__, count);
 		return -EINVAL;
 	}
 
 	/* prevent mulitple user processes write to me*/
 	mutex_lock(&ip_vs_bpf_proc_lock);
+
 	buf = kzalloc(MAXCIDRNUM * CIDRLEN, GFP_KERNEL);
 	if (!buf) {
 		mutex_unlock(&ip_vs_bpf_proc_lock);
@@ -932,6 +933,7 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 
 	i = 0;
 	s = buf;
+
 	while ((token = strsep(&s, delim)) != NULL) {
 		if (i > MAXCIDRNUM - 1) {
 			ret = -EINVAL;
@@ -980,7 +982,19 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 			ret = -EINVAL;
 			goto out;
 		}
-		new->items[i].netmask = ~((1 << (32 - maski)) - 1);
+		if (maski > 32) {
+			ret = -EINVAL;
+			goto out;
+		}
+
+		/* 
+		 * Note: in compiler 1 << 32 is 0. during run time,
+		 * 1 << (32 - i), where i is zero, return 1
+		 */
+		if (maski == 0)
+			new->items[i].netmask = 0;
+		else
+			new->items[i].netmask = ~((1 << (32 - maski)) - 1);
 	}
 
 	/* reserve the old one to free */
@@ -991,7 +1005,8 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 
 	/* free the old one after grace period*/
 	synchronize_rcu();
-	kfree(old);
+	if (old)
+		kfree(old);
 out:
 	kfree(buf);
 	/* the new one is not published, delete it */
