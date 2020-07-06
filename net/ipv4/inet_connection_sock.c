@@ -789,6 +789,7 @@ struct sock *inet_csk_clone_lock(const struct sock *sk,
 		struct inet_connection_sock *newicsk = inet_csk(newsk);
 
 		newsk->sk_state = TCP_SYN_RECV;
+		newsk->sk_mark2 = req->mark;
 		newicsk->icsk_bind_hash = NULL;
 
 		inet_sk(newsk)->inet_dport = inet_rsk(req)->ir_rmt_port;
