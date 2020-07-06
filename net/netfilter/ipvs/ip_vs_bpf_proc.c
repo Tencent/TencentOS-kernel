@@ -975,11 +975,8 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 	}
 
 	/* reserve the old one to free */
-	rcu_read_lock();
 	old = rcu_dereference(non_masq_cidrs);
-	rcu_read_unlock();
-
-	/* public the cidrs */
+	/* publish the cidrs */
 	new->len = i;
 	rcu_assign_pointer(non_masq_cidrs, new);
 
@@ -1058,9 +1055,8 @@ int ip_vs_svc_proc_cleanup(struct netns_ipvs *ipvs)
 	remove_proc_entry("ip_vs_bpf_stat", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_bpf_fix", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_non_masq_cidrs", ipvs->net->proc_net);
-	rcu_read_lock();
 	old = rcu_dereference(non_masq_cidrs);
-	rcu_read_unlock();
 	kfree(old);
+	rcu_assign_pointer(non_masq_cidrs, NULL);
 	return 0;
 }

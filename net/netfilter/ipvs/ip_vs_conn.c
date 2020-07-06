@@ -1072,7 +1072,12 @@ bool ip_in_vpc(u32 ip)
 	rcu_read_lock();
 	c = rcu_dereference(non_masq_cidrs);
 	if (unlikely(!c)) {
-		ret = false;
+		ret = true;
+		goto out;
+	}
+
+	if (c->len == 0) {
+		ret = true;
 		goto out;
 	}
 
