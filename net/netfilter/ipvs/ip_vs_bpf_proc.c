@@ -825,9 +825,8 @@ static int find_leading_zero(__u32 mask)
 	int msb = 1 << 31;
 	int i;
 	for (i = 0; i < 32; i++) {
-		if ((mask << i) & msb) {
+		if ((mask << i) & msb)
 			break;
-		}
 	}
 	return i;
 }
@@ -889,7 +888,7 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 				 loff_t *ppos)
 {
 	/* take care of stack of */
-	char * buf;
+	char *buf;
 	const char delim[2] = ":";
 	char *token;
 	char *s;
@@ -899,9 +898,8 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 	struct cidrs *new = NULL;
 	struct cidrs *old;
 	char cidrs2[MAXCIDRNUM][CIDRLEN];
-	if (*ppos > 0) {
+	if (*ppos > 0)
 		return -EFAULT;
-	}
 	/* prevent buffer of */
 	if (count > MAXCIDRNUM * CIDRLEN) {
 		pr_err("%s %d count %ld\n", __func__, __LINE__, count);
@@ -932,19 +930,18 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 	}
 
 	i = 0;
-	if (count == 1 && strncmp(buf, ":", 1) == 0) {
+	if (count == 1 && strncmp(buf, ":", 1) == 0)
 		goto skip_parse;
-	}
 
 	s = buf;
 	while ((token = strsep(&s, delim)) != NULL) {
 		if (i > MAXCIDRNUM - 1) {
 			ret = -EINVAL;
-			goto out;;
+			goto out;
 		}
-                strncpy(cidrs2[i], token, CIDRLEN);
-                i++;
-        }
+		strncpy(cidrs2[i], token, CIDRLEN);
+		i++;
+	}
 	cidrnum = i;
 	for (i = 0; i < cidrnum; i++) {
 		char ip[20];
@@ -989,7 +986,7 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 			goto out;
 		}
 
-		/* 
+		/*
 		 * Note: in compiler 1 << 32 is 0. during run time,
 		 * 1 << (32 - i), where i is zero, return 1
 		 */
