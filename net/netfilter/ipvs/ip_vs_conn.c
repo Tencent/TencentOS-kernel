@@ -241,7 +241,7 @@ static void ip_vs_unlink_bpf(struct ip_vs_conn *cp)
 	struct bpf_map *map;
 	int err = 0;
 
-	if (!bpf_mode_on || cp->skip_bpf == 1)
+	if (!bpf_mode_on)
 		return;
 
 	k.sip = cp->caddr.ip;
@@ -257,7 +257,6 @@ static void ip_vs_unlink_bpf(struct ip_vs_conn *cp)
 	if (likely(map)) {
 		v = map->ops->map_lookup_elem(map, &k);
 		if (!v) {
-			BPF_STAT_INC(cp->ipvs, BPF_UNLINK_LOOKUP);
 			return;
 		}
 
