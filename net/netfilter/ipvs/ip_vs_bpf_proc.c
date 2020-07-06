@@ -858,8 +858,11 @@ static ssize_t ip_vs_nosnat_read(struct file *file,
 	}
 	for (i = 0; i < c->len; i++) {
 		/* snprintf need tail to save null bytes */
-		ret = snprintf(buf + written, remaining, "%x/%d:",
-			       c->items[i].netip,
+		ret = snprintf(buf + written, remaining, "%d.%d.%d.%d/%d:",
+			       (c->items[i].netip >> 24) & 0xff,
+			       (c->items[i].netip >> 16) & 0xff,
+			       (c->items[i].netip >> 8) & 0xff,
+			       c->items[i].netip & 0xff,
 			       find_leading_zero(~(c->items[i].netmask))
 			       );
 
