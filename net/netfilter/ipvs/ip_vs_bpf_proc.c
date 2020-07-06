@@ -899,7 +899,6 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 	struct cidrs *new = NULL;
 	struct cidrs *old;
 	char cidrs2[MAXCIDRNUM][CIDRLEN];
-
 	if (*ppos > 0) {
 		return -EFAULT;
 	}
@@ -921,6 +920,7 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 	new = kzalloc(sizeof(struct cidrs), GFP_KERNEL);
 	if (!new) {
 		mutex_unlock(&ip_vs_bpf_proc_lock);
+		kfree(buf);
 		return -ENOMEM;
 	}
 
@@ -932,8 +932,11 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 	}
 
 	i = 0;
-	s = buf;
+	if (count == 1 && strncmp(buf, ":", 1) == 0) {
+		goto skip_parse;
+	}
 
+	s = buf;
 	while ((token = strsep(&s, delim)) != NULL) {
 		if (i > MAXCIDRNUM - 1) {
 			ret = -EINVAL;
@@ -943,7 +946,6 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
                 i++;
         }
 	cidrnum = i;
-
 	for (i = 0; i < cidrnum; i++) {
 		char ip[20];
 		char mask[3];
@@ -997,6 +999,7 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 			new->items[i].netmask = ~((1 << (32 - maski)) - 1);
 	}
 
+skip_parse:
 	/* reserve the old one to free */
 	old = rcu_dereference(non_masq_cidrs);
 	/* publish the cidrs */
