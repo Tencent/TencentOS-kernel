@@ -1,0 +1,29 @@
+SRC :=	$(shell if test -d /usr/src/linux >/dev/null 2>&1;           \
+		then echo /usr/src/linux;                            \
+	elif test -d /usr/src/linux-2.6 >/dev/null 2>&1;             \
+		then echo /usr/src/linux-2.6;                        \
+	elif test -d /lib/modules/`uname -r`/build >/dev/null 2>&1;  \
+		then echo /lib/modules/`uname -r`/build;             \
+	elif test -d /lib/modules/`uname -r`/source >/dev/null 2>&1; \
+		then echo /lib/modules/`uname -r`/source;            \
+	fi)
+
+
+	CPPFLAGS += -I$(SRC)/drivers/scsi
+
+	obj-m  := megaraid_sas.o
+
+	megaraid_sas-objs := megaraid_sas_base.o megaraid_sas_fusion.o megaraid_sas_fp.o
+
+default: 
+ifneq ($(SRC),)
+	make V=1 $(CPPFLAGS) -C $(SRC) SUBDIRS=$(PWD) modules
+else
+	@echo
+	@echo Build Failed, Kernel Source/Headers Not Found!
+	@echo Please install the kernel devel package.
+	@echo
+endif
+
+clean:
+	rm -fr .megaraid* megaraid_sas.mod.* megaraid_sas.ko megaraid_sas.o megaraid_sas_base.o megaraid_sas_fp.o megaraid_sas_fusion.o .tmp_versions module* Module* *~
