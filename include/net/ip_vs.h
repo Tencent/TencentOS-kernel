@@ -1723,6 +1723,17 @@ int ip_vs_svc_proc_init(struct netns_ipvs *ipvs);
 int ip_vs_svc_proc_cleanup(struct netns_ipvs *ipvs);
 void ip_vs_get_local_port_range(int *low, int *high);
 
+#define MAXCIDRNUM 64
+struct cidr {
+	int netip;		/* ip in host endian */
+	int netmask;	        /* e.g 24->0xffffff00 */
+};
+struct cidrs {
+	struct cidr items[MAXCIDRNUM];
+	int len;
+};
+extern struct cidrs __rcu *non_masq_cidrs;
+
 /* FIXME This is hack, borrowed from ip_vs_ctl.c */
 #define IP_VS_SVC_TAB_BITS 8
 #define IP_VS_SVC_TAB_SIZE (1 << IP_VS_SVC_TAB_BITS)
