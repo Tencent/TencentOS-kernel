@@ -817,9 +817,7 @@ static const struct file_operations ip_vs_bpf_stat_fops = {
 	.release = single_release_net,
 };
 
-/* move to rcu pointer */
 struct cidrs __rcu *non_masq_cidrs;
-
 static int find_leading_zero(__u32 mask)
 {
 	int msb = 1 << 31;
@@ -905,11 +903,10 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 		return -EFAULT;
 	/* prevent buffer of */
 	if (count > MAXCIDRNUM * CIDRLEN) {
-		pr_err("%s %d count %ld\n", __func__, __LINE__, count);
 		return -EINVAL;
 	}
 
-	/* prevent mulitple user processes write to me*/
+	/* prevent mulitple user processes write to me */
 	mutex_lock(&ip_vs_bpf_proc_lock);
 
 	buf = kzalloc(MAXCIDRNUM * CIDRLEN, GFP_KERNEL);
@@ -959,14 +956,12 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 
 		token = strsep(&s, "/");
 		if (token == NULL) {
-			pr_err("%s %d\n", __func__, __LINE__);
 			ret = -EINVAL;
 			goto out;
 		};
 
 		strncpy(ip, token, sizeof(ip)-1);
 		if (in4_pton(ip, -1, (u8 *)&ipi, -1, NULL) != 1) {
-			pr_err("%s %d\n", __func__, __LINE__);
 			ret = -EINVAL;
 			goto out;
 		}
@@ -974,13 +969,12 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 
 		token = strsep(&s, "/");
 		if (token == NULL) {
-			pr_err("%s %d\n", __func__, __LINE__);
 			ret = -EINVAL;
 			goto out;
 		}
 
 		strncpy(mask, token, 2);
-		if (kstrtoint(mask, 0, &maski) != 0) {
+		if (kstrtouint(mask, 0, &maski) != 0) {
 			ret = -EINVAL;
 			goto out;
 		}
