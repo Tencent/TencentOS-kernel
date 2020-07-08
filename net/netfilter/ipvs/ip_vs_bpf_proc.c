@@ -60,7 +60,7 @@ struct ip_vs_iter_state {
 	struct hlist_head	*l;
 };
 
-/* make sure only one process write the interface*/
+/* make sure only one process write the interface */
 static DEFINE_MUTEX(ip_vs_bpf_proc_lock);
 /* return the POS - 1 th item in the list */
 static void *ip_vs_svc_array(struct seq_file *seq, loff_t pos)
@@ -820,8 +820,9 @@ static const struct file_operations ip_vs_bpf_stat_fops = {
 struct cidrs __rcu *non_masq_cidrs;
 static int find_leading_zero(__u32 mask)
 {
-	int msb = 1 << 31;
+	__u32 msb = 1 << 31;
 	int i;
+
 	for (i = 0; i < 32; i++) {
 		if ((mask << i) & msb)
 			break;
@@ -831,9 +832,9 @@ static int find_leading_zero(__u32 mask)
 
 #define CIDRLEN sizeof("255.255.255.255/24:")
 static ssize_t ip_vs_nosnat_read(struct file *file,
-				char __user *ubuf,
-				size_t count,
-				loff_t *ppos)
+				 char __user *ubuf,
+				 size_t count,
+				 loff_t *ppos)
 {
 	char buf[MAXCIDRNUM * CIDRLEN];
 	int written = 0;
@@ -842,10 +843,8 @@ static ssize_t ip_vs_nosnat_read(struct file *file,
 	int i = 0;
 	struct cidrs *c;
 
-	if (*ppos > 0) {
-		/* return 0 to sigal eof to user */
+	if (*ppos > 0)
 		return 0;
-	}
 
 	memset(buf, 0, sizeof(buf));
 	rcu_read_lock();
@@ -884,9 +883,9 @@ static ssize_t ip_vs_nosnat_read(struct file *file,
 
 /* echo "10.10.10.1/24:1.1.3.4/25" > me */
 static ssize_t ip_vs_nosnat_write(struct file *file,
-				 const char __user *ubuf,
-				 size_t count,
-				 loff_t *ppos)
+				  const char __user *ubuf,
+				  size_t count,
+				  loff_t *ppos)
 {
 	/* take care of stack of */
 	char *buf;
@@ -899,6 +898,7 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 	struct cidrs *new = NULL;
 	struct cidrs *old;
 	char cidrs2[MAXCIDRNUM][CIDRLEN];
+
 	if (*ppos > 0)
 		return -EFAULT;
 	/* prevent buffer of */
@@ -914,7 +914,7 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 		return -ENOMEM;
 	}
 
-	new = kzalloc(sizeof(struct cidrs), GFP_KERNEL);
+	new = kzalloc(sizeof(*new), GFP_KERNEL);
 	if (!new) {
 		mutex_unlock(&ip_vs_bpf_proc_lock);
 		kfree(buf);
@@ -954,12 +954,12 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 		s = cidrs2[i];
 
 		token = strsep(&s, "/");
-		if (token == NULL) {
+		if (!token) {
 			ret = -EINVAL;
 			goto out;
 		};
 
-		strncpy(ip, token, sizeof(ip)-1);
+		strncpy(ip, token, sizeof(ip) - 1);
 		if (in4_pton(ip, -1, (u8 *)&ipi, -1, NULL) != 1) {
 			ret = -EINVAL;
 			goto out;
@@ -967,11 +967,15 @@ static ssize_t ip_vs_nosnat_write(struct file *file,
 		new->items[i].netip = ntohl(ipi);
 
 		token = strsep(&s, "/");
-		if (token == NULL) {
+		if (!token) {
 			ret = -EINVAL;
 			goto out;
 		}
 
+		if (strlen(token) > 2) {
+			ret = -EINVAL;
+			goto out;
+		}
 		strncpy(mask, token, 2);
 		if (kstrtouint(mask, 0, &maski) != 0) {
 			ret = -EINVAL;
@@ -1019,7 +1023,9 @@ static const struct file_operations ip_vs_nosnat_fops = {
 
 int ip_vs_svc_proc_init(struct netns_ipvs *ipvs)
 {
-	struct cidrs *c = kzalloc(sizeof(struct cidrs), GFP_KERNEL);
+	struct cidrs *c;
+
+	c = kzalloc(sizeof(*c), GFP_KERNEL);
 	if (!c)
 		return -ENOMEM;
 	rcu_assign_pointer(non_masq_cidrs, c);
@@ -1045,7 +1051,6 @@ int ip_vs_svc_proc_init(struct netns_ipvs *ipvs)
 	if (!proc_create("ip_vs_non_masq_cidrs", 0600,
 			 ipvs->net->proc_net, &ip_vs_nosnat_fops))
 		goto out_non_masq;
-
 
 	return 0;
 out_non_masq:

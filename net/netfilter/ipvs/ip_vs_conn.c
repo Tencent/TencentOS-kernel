@@ -1059,7 +1059,6 @@ static void nf_conntrack_single_unlock(struct bpf_lb_conn_key *key,
 	spin_unlock_bh(&bpf_conntrack_locks[hash]);
 }
 
-
 /* ip in host endian */
 static bool ip_in_nosnat_vector(u32 ip)
 {
