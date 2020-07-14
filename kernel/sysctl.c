@@ -227,7 +227,8 @@ static int proc_dostring_coredump(struct ctl_table *table, int write,
 
 static int proc_stats_isolated(struct ctl_table *table, int write,
 		void __user *buffer, size_t *lenp, loff_t *ppos);
-
+static int proc_cpuquota_aware(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp, loff_t *ppos);
 #ifdef CONFIG_MAGIC_SYSRQ
 /* Note: sysrq code uses it's own private copy */
 static int __sysrq_enabled = CONFIG_MAGIC_SYSRQ_DEFAULT_ENABLE;
@@ -338,6 +339,12 @@ extern unsigned int sysctl_memcg_stat_show_subtree;
 unsigned int sysctl_cgroup_stats_isolated = 0;
 
 static struct ctl_table kern_table[] = {
+	{
+		.procname	= "container_cpuquota_aware",
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0222,
+		.proc_handler	= proc_cpuquota_aware,
+	},
 	{
 		.procname	= "container_stats_isolated",
 		.maxlen		= sizeof(unsigned int),
@@ -3418,6 +3425,26 @@ extern void cpuacct_set_stats_isolated(struct task_struct *p,
 				u64 val);
 extern void blkcg_set_stats_isolated(struct task_struct *p,
 				unsigned int val);
+extern void cpu_set_quota_aware(struct task_struct *p, u64 val);
+
+static int proc_cpuquota_aware(struct ctl_table *table, int write,
+		  void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int data = 0;
+	int err;
+
+	table->data = &data;
+	err = proc_dointvec(table, write, buffer, lenp, ppos);
+	if (err)
+		return err;
+
+	if (data)
+		cpu_set_quota_aware(current, 1);
+	else
+		cpu_set_quota_aware(current, 0);
+
+	return 0;
+}
 
 static int proc_stats_isolated(struct ctl_table *table, int write,
 		  void __user *buffer, size_t *lenp, loff_t *ppos)

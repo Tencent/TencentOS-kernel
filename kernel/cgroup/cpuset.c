@@ -2076,7 +2076,7 @@ static void show_cpuinfo_misc(struct seq_file *m, struct cpuinfo_x86 *c)
 #endif
 
 static int cpuset_cg_cpuinfo_print(struct seq_file *sf, void *v,
-				struct cgroup_subsys_state *cs_css)
+		struct cgroup_subsys_state *cs_css, int max_cpus)
 {
 	int i, j, k = 0;
 	struct cpuset *cs = css_cs(cs_css);
@@ -2097,6 +2097,9 @@ static int cpuset_cg_cpuinfo_print(struct seq_file *sf, void *v,
 		else
 			cpu = k;
 		k++;
+		if (k > max_cpus)
+			break;
+
 		seq_printf(sf, "processor\t: %u\n"
 				"vendor_id\t: %s\n"
 				"cpu family\t: %d\n"
@@ -2177,7 +2180,7 @@ static int cpuset_cg_cpuinfo_print(struct seq_file *sf, void *v,
 
 static int cpuset_cgroup_cpuinfo_show(struct seq_file *sf, void *v)
 {
-	return cpuset_cg_cpuinfo_print(sf, v, seq_css(sf));
+	return cpuset_cg_cpuinfo_print(sf, v, seq_css(sf), INT_MAX);
 }
 
 int cpuset_cg_cpuinfo_next(struct task_struct *p)
@@ -2185,13 +2188,14 @@ int cpuset_cg_cpuinfo_next(struct task_struct *p)
 	return cpuset_stats_isolated_enabled(task_cs(p)) ? 0 : 1;
 }
 
-int cpuset_cg_cpuinfo_show(struct seq_file *sf, void *v, struct task_struct *p)
+int cpuset_cg_cpuinfo_show(struct seq_file *sf, void *v,
+				struct task_struct *p, int max_cpus)
 {
 	struct cgroup_subsys_state *css = task_css(p, cpuset_cgrp_id);
 	struct cpuset *cs = css_cs(css);
 
 	return cpuset_stats_isolated_enabled(cs) ?
-		cpuset_cg_cpuinfo_print(sf, v, css) : 1;
+		cpuset_cg_cpuinfo_print(sf, v, css, max_cpus) : 1;
 }
 #endif
 

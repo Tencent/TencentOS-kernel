@@ -56,7 +56,9 @@ static void show_cpuinfo_misc(struct seq_file *m, struct cpuinfo_x86 *c)
 
 #ifdef CONFIG_X86
 extern int cpuset_cg_cpuinfo_next(struct task_struct *p);
-extern int cpuset_cg_cpuinfo_show(struct seq_file *sf, void *v, struct task_struct *p);
+extern int cpuset_cg_cpuinfo_show(struct seq_file *sf, void *v,
+				struct task_struct *p, int max_cpus);
+extern int cpu_get_max_cpus(struct task_struct *p);
 #endif
 
 static int show_cpuinfo(struct seq_file *m, void *v)
@@ -66,7 +68,8 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 	int i;
 
 #ifdef CONFIG_X86
-	if (!cpuset_cg_cpuinfo_show(m, v, current))
+	int max_cpus = cpu_get_max_cpus(current);
+	if (!cpuset_cg_cpuinfo_show(m, v, current, max_cpus))
 		return 0;
 #endif
 
