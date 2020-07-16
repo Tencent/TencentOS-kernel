@@ -359,7 +359,7 @@ static int __init set_sched_bt_on(char *str)
 {
     sched_bt_on = 1;
 
-    return 1;
+    return 0;
 }
 early_param("offline_class", set_sched_bt_on);
 
