@@ -38,7 +38,7 @@
 #include <linux/filter.h>
 #include <net/net_namespace.h>
 #include <net/ip_vs.h>
-
+#include <linux/mutex.h>
 /*  since map id is defined as static in kernel/bpf/syscall.c
  *  pass pid and bpf map fd from controller to ipvs.
  *  The controller shall open the map and pass its pid
@@ -60,6 +60,8 @@ struct ip_vs_iter_state {
 	struct hlist_head	*l;
 };
 
+/* make sure only one process write the interface */
+static DEFINE_MUTEX(ip_vs_bpf_proc_lock);
 /* return the POS - 1 th item in the list */
 static void *ip_vs_svc_array(struct seq_file *seq, loff_t pos)
 {
@@ -815,8 +817,219 @@ static const struct file_operations ip_vs_bpf_stat_fops = {
 	.release = single_release_net,
 };
 
+struct cidrs __rcu *non_masq_cidrs;
+static int find_leading_zero(__u32 mask)
+{
+	__u32 msb = 1 << 31;
+	int i;
+
+	for (i = 0; i < 32; i++) {
+		if ((mask << i) & msb)
+			break;
+	}
+	return i;
+}
+
+#define CIDRLEN sizeof("255.255.255.255/24:")
+static ssize_t ip_vs_nosnat_read(struct file *file,
+				 char __user *ubuf,
+				 size_t count,
+				 loff_t *ppos)
+{
+	char buf[MAXCIDRNUM * CIDRLEN];
+	int written = 0;
+	int remaining = sizeof(buf) - written;
+	int ret = 0;
+	int i = 0;
+	struct cidrs *c;
+
+	if (*ppos > 0)
+		return 0;
+
+	memset(buf, 0, sizeof(buf));
+	rcu_read_lock();
+	c = rcu_dereference(non_masq_cidrs);
+	if (!c) {
+		rcu_read_unlock();
+		return -EFAULT;
+	}
+	for (i = 0; i < c->len; i++) {
+		/* snprintf need tail to save null bytes */
+		ret = snprintf(buf + written, remaining, "%d.%d.%d.%d/%d:",
+			       (c->items[i].netip >> 24) & 0xff,
+			       (c->items[i].netip >> 16) & 0xff,
+			       (c->items[i].netip >> 8) & 0xff,
+			       c->items[i].netip & 0xff,
+			       find_leading_zero(~(c->items[i].netmask))
+			       );
+
+		if (ret < 0 || ret >= remaining) {
+			rcu_read_unlock();
+			return -EFAULT;
+		}
+
+		written += ret;
+		remaining -= ret;
+	}
+	rcu_read_unlock();
+
+	if (copy_to_user(ubuf, buf, written))
+		return -EFAULT;
+
+	/* so next time ppos will be bigger than 0 and return 0 */
+	*ppos = written;
+	return written;
+}
+
+/* echo "10.10.10.1/24:1.1.3.4/25" > me */
+static ssize_t ip_vs_nosnat_write(struct file *file,
+				  const char __user *ubuf,
+				  size_t count,
+				  loff_t *ppos)
+{
+	/* take care of stack of */
+	char *buf;
+	const char delim[2] = ":";
+	char *token;
+	char *s;
+	int i;
+	int cidrnum = 0;
+	int ret = count;
+	struct cidrs *new = NULL;
+	struct cidrs *old;
+	char cidrs2[MAXCIDRNUM][CIDRLEN];
+
+	if (*ppos > 0)
+		return -EFAULT;
+	/* prevent buffer of */
+	if (count > MAXCIDRNUM * CIDRLEN)
+		return -EINVAL;
+
+	/* prevent mulitple user processes write to me */
+	mutex_lock(&ip_vs_bpf_proc_lock);
+
+	buf = kzalloc(MAXCIDRNUM * CIDRLEN, GFP_KERNEL);
+	if (!buf) {
+		mutex_unlock(&ip_vs_bpf_proc_lock);
+		return -ENOMEM;
+	}
+
+	new = kzalloc(sizeof(*new), GFP_KERNEL);
+	if (!new) {
+		mutex_unlock(&ip_vs_bpf_proc_lock);
+		kfree(buf);
+		return -ENOMEM;
+	}
+
+	memset(cidrs2, 0, sizeof(cidrs2));
+
+	if (copy_from_user(buf, ubuf, count)) {
+		ret = -EFAULT;
+		goto out;
+	}
+
+	i = 0;
+	if (count == 1 && strncmp(buf, ":", 1) == 0)
+		goto skip_parse;
+
+	s = buf;
+	while ((token = strsep(&s, delim)) != NULL) {
+		if (i > MAXCIDRNUM - 1) {
+			ret = -EINVAL;
+			goto out;
+		}
+		strncpy(cidrs2[i], token, CIDRLEN);
+		i++;
+	}
+	cidrnum = i;
+	for (i = 0; i < cidrnum; i++) {
+		char ip[20];
+		char mask[3];
+		__u32  ipi;
+		__u32  maski;
+
+		memset(ip, 0, sizeof(ip));
+		memset(mask, 0, sizeof(mask));
+
+		s = cidrs2[i];
+
+		token = strsep(&s, "/");
+		if (!token) {
+			ret = -EINVAL;
+			goto out;
+		};
+
+		strncpy(ip, token, sizeof(ip) - 1);
+		if (in4_pton(ip, -1, (u8 *)&ipi, -1, NULL) != 1) {
+			ret = -EINVAL;
+			goto out;
+		}
+		new->items[i].netip = ntohl(ipi);
+
+		token = strsep(&s, "/");
+		if (!token) {
+			ret = -EINVAL;
+			goto out;
+		}
+
+		if (strlen(token) > 2) {
+			ret = -EINVAL;
+			goto out;
+		}
+		strncpy(mask, token, 2);
+		if (kstrtouint(mask, 0, &maski) != 0) {
+			ret = -EINVAL;
+			goto out;
+		}
+		if (maski > 32) {
+			ret = -EINVAL;
+			goto out;
+		}
+
+		/* Note: in compiler 1 << 32 is 0. during run time,
+		 * 1 << (32 - i), where i is zero, return 1
+		 */
+		if (maski == 0)
+			new->items[i].netmask = 0;
+		else
+			new->items[i].netmask = ~((1 << (32 - maski)) - 1);
+	}
+
+skip_parse:
+	/* reserve the old one to free */
+	old = rcu_dereference(non_masq_cidrs);
+	/* publish the cidrs */
+	new->len = i;
+	rcu_assign_pointer(non_masq_cidrs, new);
+
+	/* free the old one after grace period*/
+	synchronize_rcu();
+	kfree(old);
+out:
+	kfree(buf);
+	/* the new one is not published, delete it */
+	if (ret < 0)
+		kfree(new);
+
+	mutex_unlock(&ip_vs_bpf_proc_lock);
+	return ret;
+}
+
+static const struct file_operations ip_vs_nosnat_fops = {
+	.owner = THIS_MODULE,
+	.read  = ip_vs_nosnat_read,
+	.write = ip_vs_nosnat_write,
+};
+
 int ip_vs_svc_proc_init(struct netns_ipvs *ipvs)
 {
+	struct cidrs *c;
+
+	c = kzalloc(sizeof(*c), GFP_KERNEL);
+	if (!c)
+		return -ENOMEM;
+	rcu_assign_pointer(non_masq_cidrs, c);
+
 	if (!proc_create("ip_vs_svc_ip_attr", 0600,
 		    ipvs->net->proc_net, &ip_vs_svc_fops))
 		goto out_svc_ip;
@@ -835,9 +1048,13 @@ int ip_vs_svc_proc_init(struct netns_ipvs *ipvs)
 	if (!proc_create("ip_vs_bpf_fix", 0600,
 			 ipvs->net->proc_net, &ip_vs_bpf_fix_fops))
 		goto out_bpf_fix;
+	if (!proc_create("ip_vs_non_masq_cidrs", 0600,
+			 ipvs->net->proc_net, &ip_vs_nosnat_fops))
+		goto out_non_masq;
 
 	return 0;
-
+out_non_masq:
+	remove_proc_entry("ip_vs_bpf_fix", ipvs->net->proc_net);
 out_bpf_fix:
 	remove_proc_entry("ip_vs_bpf_stat", ipvs->net->proc_net);
 out_bpf_stat:
@@ -854,11 +1071,17 @@ out_svc_ip:
 
 int ip_vs_svc_proc_cleanup(struct netns_ipvs *ipvs)
 {
+	struct cidrs *old;
 	remove_proc_entry("ip_vs_svc_ip_attr", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_bpf_id", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_devip", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_port_range", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_bpf_stat", ipvs->net->proc_net);
 	remove_proc_entry("ip_vs_bpf_fix", ipvs->net->proc_net);
+	remove_proc_entry("ip_vs_non_masq_cidrs", ipvs->net->proc_net);
+	old = rcu_dereference(non_masq_cidrs);
+	rcu_assign_pointer(non_masq_cidrs, NULL);
+	synchronize_rcu();
+	kfree(old);
 	return 0;
 }
