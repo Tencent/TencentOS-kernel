@@ -26,7 +26,6 @@
 #include <linux/bootmem.h>
 #include <linux/task_work.h>
 #include <linux/sched/task.h>
-#include <linux/sched/batch.h>
 
 #include "pnode.h"
 #include "internal.h"
@@ -2784,11 +2783,6 @@ char *copy_mount_string(const void __user *data)
 	return data ? strndup_user(data, PAGE_SIZE) : NULL;
 }
 
-#if defined(CONFIG_BT_SCHED) && defined(CONFIG_INTEL_RDT)
-char rdt_mount_dir[PATH_MAX];
-char *fs_resctrl = "resctrl";
-#endif
-
 /*
  * Flags is a 32-bit value that allows up to 31 non-fs dependent flags to
  * be given to the mount() call (ie: read-only, no-dev, no-suid etc).
@@ -2862,15 +2856,6 @@ long do_mount(const char *dev_name, const char __user *dir_name,
 		mnt_flags &= ~MNT_ATIME_MASK;
 		mnt_flags |= path.mnt->mnt_flags & MNT_ATIME_MASK;
 	}
-#if defined(CONFIG_BT_SCHED) && defined(CONFIG_INTEL_RDT)
-	if (bt_use_rdt && dev_name != NULL &&
-	    strncmp(dev_name, fs_resctrl, strlen(fs_resctrl)) == 0) {
-		memset(rdt_mount_dir, 0, PATH_MAX);
-		if (strncpy_from_user(rdt_mount_dir, dir_name, PATH_MAX) > 0) {
-			printk(KERN_INFO "mount resctrl file system mount point:%s len:%ld\n", rdt_mount_dir, strlen(rdt_mount_dir));
-		}
-	}
-#endif
 
 	sb_flags = flags & (SB_RDONLY |
 			    SB_SYNCHRONOUS |

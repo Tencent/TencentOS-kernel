@@ -27,10 +27,8 @@
 #include <linux/seq_file.h>
 #include <linux/sched/signal.h>
 #include <linux/sched/task.h>
-#include <linux/sched/batch.h>
 #include <linux/slab.h>
 #include <linux/task_work.h>
-#include <linux/namei.h>
 
 #include <uapi/linux/magic.h>
 
@@ -1073,17 +1071,6 @@ void rdtgroup_kn_unlock(struct kernfs_node *kn)
 static int mkdir_mondata_all(struct kernfs_node *parent_kn,
 			     struct rdtgroup *prgrp,
 			     struct kernfs_node **mon_data_kn);
-static int rdtgroup_mkdir(struct kernfs_node *parent_kn, const char *name,
-			  umode_t mode);
-unsigned int __read_mostly bt_use_rdt = 0;
-
-static int __init setup_offline_rdt(char *str)
-{
-	if (sched_bt_on)
-		bt_use_rdt = 1;
-	return 1;
-}
-__setup("offline_rdt", setup_offline_rdt);
 
 static struct dentry *rdt_mount(struct file_system_type *fs_type,
 				int flags, const char *unused_dev_name,
@@ -1093,7 +1080,6 @@ static struct dentry *rdt_mount(struct file_system_type *fs_type,
 	struct rdt_resource *r;
 	struct dentry *dentry;
 	int ret;
-	bool mount = false;
 
 	cpus_read_lock();
 	mutex_lock(&rdtgroup_mutex);
@@ -1157,7 +1143,6 @@ static struct dentry *rdt_mount(struct file_system_type *fs_type,
 		list_for_each_entry(dom, &r->domains, list)
 			mbm_setup_overflow_handler(dom, MBM_OVERFLOW_INTERVAL);
 	}
-	mount = true;
 
 	goto out;
 
@@ -1175,76 +1160,8 @@ out:
 	mutex_unlock(&rdtgroup_mutex);
 	cpus_read_unlock();
 
-	if (bt_use_rdt && mount) {
-		if (!kernfs_get_active(rdtgroup_default.kn)) {
-			printk(KERN_ERR "rdt mkdir:get active failed\n");
-		} else {
-			rdtgroup_mkdir(rdtgroup_default.kn, "rdt_offline", 493);
-			kernfs_put_active(rdtgroup_default.kn);
-		}
-	}
-
 	return dentry;
 }
-
-static int rdt_pow(int a , int p)
-{
-	int i = p;
-	int ret = 1;
-
-	while (i > 0) {
-		ret *= a;
-		i--;
-	}
-
-	return ret;
-}
-
-static int rdt_get_user_cbm(int val, int cbm_len, int cbm_min)
-{
-	int precision = 100/cbm_len;
-	int count = val/precision;
-	int cbm = 0;
-
-	count = count > cbm_min ? count : cbm_min;
-	count = count > cbm_len ? cbm_len : count;
-
-	while (1) {
-		count--;
-		if (count < 0)
-			break;
-		cbm += rdt_pow(2, count);
-	}
-
-	return cbm;
-}
-
-void rdt_create_schemata(char *str, int val)
-{
-	struct rdt_resource *r;
-	bool sep = false;
-	int len;
-	struct rdt_domain *dom;
-	int val_cbm;
-
-	for_each_alloc_enabled_rdt_resource(r) {
-		if (strcmp(r->name, "L3") == 0) {
-			val_cbm = rdt_get_user_cbm(val, r->cache.cbm_len, r->cache.min_cbm_bits);
-			sprintf(str, "%*s:", max_name_width, r->name);
-			len = strlen(str);
-			list_for_each_entry(dom, &r->domains, list) {
-				if (sep) {
-					sprintf(str+len, ";");
-					len = strlen(str);
-				}
-				sprintf(str+len, r->format_str, dom->id, max_data_width, val_cbm);
-				len = strlen(str);
-				sep = true;
-			}
-		}
-	}
-}
-EXPORT_SYMBOL_GPL(rdt_create_schemata);
 
 static int reset_all_ctrls(struct rdt_resource *r)
 {

@@ -309,13 +309,6 @@ static int min_extfrag_threshold;
 static int max_extfrag_threshold = 1000;
 #endif
 
-#ifdef CONFIG_INTEL_RDT
-extern unsigned int sysctl_sched_bt_rdt_cache_percent;
-extern int sched_bt_rdt_cache_percent_handler(struct ctl_table *table, int write,
-		void __user *buffer, size_t *lenp,
-		loff_t *ppos);
-#endif
-
 extern unsigned long sysctl_fast_slub_nr_free;
 
 static int sysrq_use_leftctrl_sysctl_handler(struct ctl_table * table ,int write,
@@ -580,17 +573,6 @@ static struct ctl_table kern_table[] = {
 		.extra1         = &zero,
 		.extra2         = &one,
 	},
-#ifdef CONFIG_INTEL_RDT
-	{
-		.procname	= "sched_bt_rdt_cache_percent",
-		.data		= &sysctl_sched_bt_rdt_cache_percent,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= sched_bt_rdt_cache_percent_handler,
-		.extra1		= &one,
-		.extra2		= &one_hundred,
-	},
-#endif
 #endif
 #ifdef CONFIG_PROVE_LOCKING
 	{
