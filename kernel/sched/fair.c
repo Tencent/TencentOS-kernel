@@ -5390,11 +5390,7 @@ static unsigned long cpu_avg_load_per_task(int cpu)
 	struct rq *rq = cpu_rq(cpu);
 	unsigned long nr_running = READ_ONCE(rq->cfs.h_nr_running);
 	unsigned long load_avg = weighted_cpuload(rq);
-#ifdef	CONFIG_BT_SCHED
-	unsigned long bt_running = READ_ONCE(rq->bt.h_nr_running);
 
-	nr_running -= bt_running;
-#endif
 	if (nr_running)
 		return load_avg / nr_running;
 
