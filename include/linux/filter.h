@@ -1322,7 +1322,6 @@ extern struct static_key_false bpf_sk_lookup_enabled;
 		bool _all_pass = true;					\
 		u32 _ret;						\
 									\
-		migrate_disable();					\
 		_item = &(array)->items[0];				\
 		while ((_prog = READ_ONCE(_item->prog))) {		\
 			/* restore most recent selection */		\
@@ -1341,7 +1340,6 @@ extern struct static_key_false bpf_sk_lookup_enabled;
 		}							\
 		_ctx->selected_sk = _selected_sk;			\
 		_ctx->no_reuseport = _no_reuseport;			\
-		migrate_enable();					\
 		_all_pass || _selected_sk ? SK_PASS : SK_DROP;		\
 	 })
 
