@@ -3511,10 +3511,14 @@ static int check_func_arg(struct bpf_verifier_env *env, u32 regno,
 			}
 			meta->ref_obj_id = reg->ref_obj_id;
 		}
-	} else if (arg_type == ARG_PTR_TO_SOCKET) {
+	} else if (arg_type == ARG_PTR_TO_SOCKET ||
+		   arg_type == ARG_PTR_TO_SOCKET_OR_NULL) {
 		expected_type = PTR_TO_SOCKET;
-		if (type != expected_type)
-			goto err_type;
+		if (!(register_is_null(reg) &&
+		      arg_type == ARG_PTR_TO_SOCKET_OR_NULL)) {
+			if (type != expected_type)
+				goto err_type;
+		}
 	} else if (arg_type == ARG_PTR_TO_BTF_ID) {
 		expected_type = PTR_TO_BTF_ID;
 		if (type != expected_type)
@@ -6700,6 +6704,9 @@ static int check_return_code(struct bpf_verifier_env *env)
 		if (!env->prog->aux->attach_btf_id)
 			return 0;
 		range = tnum_const(0);
+		break;
+	case BPF_PROG_TYPE_SK_LOOKUP:
+		range = tnum_range(SK_DROP, SK_PASS);
 		break;
 	default:
 		return 0;
