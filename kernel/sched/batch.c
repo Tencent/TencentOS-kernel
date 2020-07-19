@@ -509,7 +509,7 @@ static void __disable_bt_runtime(struct rq *rq)
 	bt_rq_iter_t iter;
 	struct bt_rq *bt_rq;
 
-	if (unlikely(!scheduler_running))
+	if (unlikely(!scheduler_running || offlinegroup_enabled))
 		return;
 
 	for_each_bt_rq(bt_rq, iter, rq) {
