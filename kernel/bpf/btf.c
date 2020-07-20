@@ -3669,7 +3669,6 @@ struct btf *btf_parse_vmlinux(void)
 		goto errout;
 
 	bpf_struct_ops_init(btf);
-	init_btf_sock_ids(btf);
 
 	btf_verifier_env_free(env);
 	refcount_set(&btf->refcnt, 1);
