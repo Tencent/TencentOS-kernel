@@ -163,7 +163,7 @@ static long swap_inode_boot_loader(struct super_block *sb,
 	inode_bl->i_generation = sbi->s_next_generation++;
 	spin_unlock(&sbi->s_next_gen_lock);
 
-	ext4_discard_preallocations(inode);
+	ext4_discard_preallocations(inode, 0);
 
 	err = ext4_mark_inode_dirty(handle, inode);
 	if (err < 0) {

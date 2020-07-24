@@ -4511,7 +4511,7 @@ got_allocated_blocks:
 		/* free data blocks we just allocated */
 		/* not a good idea to call discard here directly,
 		 * but otherwise we'd need to call it every free() */
-		ext4_discard_preallocations(inode);
+		ext4_discard_preallocations(inode, 0);
 		ext4_free_blocks(handle, inode, NULL, newblock,
 				 EXT4_C2B(sbi, allocated_clusters), fb_flags);
 		goto out2;
@@ -5548,7 +5548,7 @@ int ext4_collapse_range(struct inode *inode, loff_t offset, loff_t len)
 	}
 
 	down_write(&EXT4_I(inode)->i_data_sem);
-	ext4_discard_preallocations(inode);
+	ext4_discard_preallocations(inode, 0);
 
 	ret = ext4_es_remove_extent(inode, punch_start,
 				    EXT_MAX_BLOCKS - punch_start);
@@ -5562,7 +5562,7 @@ int ext4_collapse_range(struct inode *inode, loff_t offset, loff_t len)
 		up_write(&EXT4_I(inode)->i_data_sem);
 		goto out_stop;
 	}
-	ext4_discard_preallocations(inode);
+	ext4_discard_preallocations(inode, 0);
 
 	ret = ext4_ext_shift_extents(inode, handle, punch_stop,
 				     punch_stop - punch_start, SHIFT_LEFT);
@@ -5695,7 +5695,7 @@ int ext4_insert_range(struct inode *inode, loff_t offset, loff_t len)
 		goto out_stop;
 
 	down_write(&EXT4_I(inode)->i_data_sem);
-	ext4_discard_preallocations(inode);
+	ext4_discard_preallocations(inode, 0);
 
 	path = ext4_find_extent(inode, offset_lblk, NULL, 0);
 	if (IS_ERR(path)) {
