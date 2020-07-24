@@ -2651,6 +2651,7 @@ int ext4_mb_init(struct super_block *sb)
 	sbi->s_mb_stats = MB_DEFAULT_STATS;
 	sbi->s_mb_stream_request = MB_DEFAULT_STREAM_THRESHOLD;
 	sbi->s_mb_order2_reqs = MB_DEFAULT_ORDER2_REQS;
+	sbi->s_mb_max_inode_prealloc = MB_DEFAULT_MAX_INODE_PREALLOC;
 	/*
 	 * The default group preallocation is 512, which for 4k block
 	 * sizes translates to 2 megabytes.  However for bigalloc file
@@ -4019,7 +4020,7 @@ out:
  *
  * FIXME!! Make sure it is valid at all the call sites
  */
-void ext4_discard_preallocations(struct inode *inode)
+void ext4_discard_preallocations(struct inode *inode, unsigned int needed)
 {
 	struct ext4_inode_info *ei = EXT4_I(inode);
 	struct super_block *sb = inode->i_sb;
@@ -4036,15 +4037,18 @@ void ext4_discard_preallocations(struct inode *inode)
 	}
 
 	mb_debug(1, "discard preallocation for inode %lu\n", inode->i_ino);
-	trace_ext4_discard_preallocations(inode);
+	trace_ext4_discard_preallocations(inode, needed);
 
 	INIT_LIST_HEAD(&list);
+
+	if (needed == 0)
+		needed = UINT_MAX;
 
 repeat:
 	/* first, collect all pa's in the inode */
 	spin_lock(&ei->i_prealloc_lock);
-	while (!list_empty(&ei->i_prealloc_list)) {
-		pa = list_entry(ei->i_prealloc_list.next,
+	while (!list_empty(&ei->i_prealloc_list) && needed) {
+		pa = list_entry(ei->i_prealloc_list.prev,
 				struct ext4_prealloc_space, pa_inode_list);
 		BUG_ON(pa->pa_obj_lock != &ei->i_prealloc_lock);
 		spin_lock(&pa->pa_lock);
@@ -4065,6 +4069,7 @@ repeat:
 			spin_unlock(&pa->pa_lock);
 			list_del_rcu(&pa->pa_inode_list);
 			list_add(&pa->u.pa_tmp_list, &list);
+			needed--;
 			continue;
 		}
 
@@ -4431,10 +4436,42 @@ static void ext4_mb_add_n_trim(struct ext4_allocation_context *ac)
 }
 
 /*
+ * if per-inode prealloc list is too long, trim some PA
+ */
+static void
+ext4_mb_trim_inode_pa(struct inode *inode)
+{
+	struct ext4_inode_info *ei = EXT4_I(inode);
+	struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
+	struct ext4_prealloc_space *pa;
+	int count = 0, delta;
+
+	rcu_read_lock();
+	list_for_each_entry_rcu(pa, &ei->i_prealloc_list, pa_inode_list) {
+		spin_lock(&pa->pa_lock);
+		if (pa->pa_deleted) {
+			spin_unlock(&pa->pa_lock);
+			continue;
+		}
+		count++;
+		spin_unlock(&pa->pa_lock);
+	}
+	rcu_read_unlock();
+	
+	delta = (sbi->s_mb_max_inode_prealloc >> 2) + 1;
+	if (count > sbi->s_mb_max_inode_prealloc + delta) {
+		count -= sbi->s_mb_max_inode_prealloc;
+		ext4_discard_preallocations(inode, count);
+	}
+}
+
+/*
  * release all resource we used in allocation
  */
 static int ext4_mb_release_context(struct ext4_allocation_context *ac)
 {
+	struct inode *inode = ac->ac_inode;
+	struct ext4_inode_info *ei = EXT4_I(inode);
 	struct ext4_sb_info *sbi = EXT4_SB(ac->ac_sb);
 	struct ext4_prealloc_space *pa = ac->ac_pa;
 	if (pa) {
@@ -4461,6 +4498,17 @@ static int ext4_mb_release_context(struct ext4_allocation_context *ac)
 			spin_unlock(pa->pa_obj_lock);
 			ext4_mb_add_n_trim(ac);
 		}
+
+		if (pa->pa_type == MB_INODE_PA) {
+			/*
+			 * treat per-inode prealloc list as a lru list, then try
+			 * to trim the least recently used PA.
+			 */
+			spin_lock(pa->pa_obj_lock);
+			list_move(&ei->i_prealloc_list, &pa->pa_inode_list);
+			spin_unlock(pa->pa_obj_lock);
+		}
+
 		ext4_mb_put_pa(ac, ac->ac_sb, pa);
 	}
 	if (ac->ac_bitmap_page)
@@ -4470,6 +4518,7 @@ static int ext4_mb_release_context(struct ext4_allocation_context *ac)
 	if (ac->ac_flags & EXT4_MB_HINT_GROUP_ALLOC)
 		mutex_unlock(&ac->ac_lg->lg_mutex);
 	ext4_mb_collect_stats(ac);
+	ext4_mb_trim_inode_pa(inode);
 	return 0;
 }
 
