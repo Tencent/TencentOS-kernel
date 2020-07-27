@@ -3343,16 +3343,26 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 	 * higher scheduling class, because otherwise those loose the
 	 * opportunity to pull in more work from other CPUs.
 	 */
+#ifdef CONFIG_BT_SCHED
 	if (likely((prev->sched_class == &idle_sched_class ||
 		    prev->sched_class == &bt_sched_class ||
 		    prev->sched_class == &fair_sched_class) &&
 		   (rq->nr_running - rq->bt_nr_running) == rq->cfs.h_nr_running)) {
+#else
+	if (likely((prev->sched_class == &idle_sched_class ||
+		    prev->sched_class == &fair_sched_class) &&
+		   rq->nr_running == rq->cfs.h_nr_running)) {
+#endif
 
 		p = fair_sched_class.pick_next_task(rq, prev, rf);
 		if (unlikely(p == RETRY_TASK))
 			goto again;
 
-		/* Assumes fair_sched_class->next == idle_sched_class */
+#ifdef CONFIG_BT_SCHED
+		if (!p)
+			p = bt_sched_class.pick_next_task(rq, prev, rf);
+#endif
+
 		if (unlikely(!p))
 			p = idle_sched_class.pick_next_task(rq, prev, rf);
 
