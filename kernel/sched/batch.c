@@ -4685,8 +4685,8 @@ void online_bt_sched_group(struct task_group *tg)
 	for_each_possible_cpu(i) {
 		rq = cpu_rq(i);
 		se = tg->bt[i];
-
 		raw_spin_lock_irq(&rq->lock);
+		update_rq_clock(rq);
 		sync_throttle_bt(tg, i);
 		raw_spin_unlock_irq(&rq->lock);
 	}

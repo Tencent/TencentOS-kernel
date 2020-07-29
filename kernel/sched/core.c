@@ -3485,7 +3485,7 @@ static void __sched notrace __schedule(bool preempt)
 
 #ifdef CONFIG_BT_SCHED
 	if (unlikely(!(rq->nr_running - rq->bt_nr_running))){
-		if(idle_balance(rq, &rf) <= 0){
+		if (idle_balance(rq, &rf) == 0) {
 			if (unlikely(!rq->nr_running && rq->idle_bt_stamp))
 				idle_balance_bt(rq, &rf);
 		}
