@@ -123,6 +123,7 @@ enum bpf_cmd {
 	BPF_LINK_GET_NEXT_ID,
 	BPF_ENABLE_STATS,
 	BPF_ITER_CREATE,
+	BPF_LINK_DETACH,
 };
 
 enum bpf_map_type {
@@ -642,6 +643,10 @@ union bpf_attr {
 		 * BPF_F_REPLACE flag is set in flags */
 		__u32		old_prog_fd;
 	} link_update;
+
+	struct {
+		__u32		link_fd;
+	} link_detach;
 
 	struct { /* struct used by BPF_ENABLE_STATS command */
 		__u32		type;
