@@ -3836,6 +3836,12 @@ static ssize_t ext4_direct_IO_read(struct kiocb *iocb, struct iov_iter *iter)
 	struct inode *inode = iocb->ki_filp->f_mapping->host;
 	ssize_t ret;
 
+	loff_t offset = iocb->ki_pos;
+	loff_t size = i_size_read(inode);
+
+	if (offset >= size)
+		return 0;
+
 	if (ext4_should_dioread_nolock(inode)) {
 		/*
 		 * Nolock dioread optimization may be dynamically disabled
