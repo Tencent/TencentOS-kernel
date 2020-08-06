@@ -210,7 +210,8 @@ cd MLNX_OFED_LINUX-*
 distro=$(cat distro 2>/dev/null)
 echo "This MLNX_OFED was built for distro: ${distro}"
 
-echo "%__os_install_post %{nil}" >> ~/.rpmmacros
+#this will make compile failed in chroot envrionment
+#echo "%__os_install_post %{nil}" >> ~/.rpmmacros
 
 # compile modules against target kernel
 ./mlnxofedinstall \
