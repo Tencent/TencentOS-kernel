@@ -1005,6 +1005,7 @@ static struct inode *ext4_alloc_inode(struct super_block *sb)
 
 	ei->vfs_inode.i_version = 1;
 	spin_lock_init(&ei->i_raw_lock);
+	atomic_set(&ei->i_prealloc_active, 0);
 	INIT_LIST_HEAD(&ei->i_prealloc_list);
 	spin_lock_init(&ei->i_prealloc_lock);
 	ext4_es_init_tree(&ei->i_es_tree);

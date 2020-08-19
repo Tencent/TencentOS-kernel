@@ -1034,6 +1034,7 @@ struct ext4_inode_info {
 	struct timespec i_crtime;
 
 	/* mballoc */
+	atomic_t i_prealloc_active;
 	struct list_head i_prealloc_list;
 	spinlock_t i_prealloc_lock;
 

@@ -3581,6 +3581,26 @@ void ext4_mb_generate_from_pa(struct super_block *sb, void *bitmap,
 	mb_debug(1, "preallocated %u for group %u\n", preallocated, group);
 }
 
+static void ext4_mb_mark_pa_deleted(struct super_block *sb,
+				    struct ext4_prealloc_space *pa)
+{
+	struct ext4_inode_info *ei;
+
+	if (pa->pa_deleted) {
+		ext4_warning(sb, "deleted pa, type:%d, pblk:%llu, lblk:%u, len:%d\n",
+			     pa->pa_type, pa->pa_pstart, pa->pa_lstart,
+			     pa->pa_len);
+		return;
+	}
+
+	pa->pa_deleted = 1;
+
+	if (pa->pa_type == MB_INODE_PA) {
+		ei = EXT4_I(pa->pa_inode);
+		atomic_dec(&ei->i_prealloc_active);
+	}
+}
+
 static void ext4_mb_pa_callback(struct rcu_head *head)
 {
 	struct ext4_prealloc_space *pa;
@@ -3613,7 +3633,7 @@ static void ext4_mb_put_pa(struct ext4_allocation_context *ac,
 		return;
 	}
 
-	pa->pa_deleted = 1;
+	ext4_mb_mark_pa_deleted(sb, pa);
 	spin_unlock(&pa->pa_lock);
 
 	grp_blk = pa->pa_pstart;
@@ -3741,6 +3761,7 @@ ext4_mb_new_inode_pa(struct ext4_allocation_context *ac)
 	spin_lock(pa->pa_obj_lock);
 	list_add_rcu(&pa->pa_inode_list, &ei->i_prealloc_list);
 	spin_unlock(pa->pa_obj_lock);
+	atomic_inc(&ei->i_prealloc_active);
 
 	return 0;
 }
@@ -3962,7 +3983,7 @@ repeat:
 		}
 
 		/* seems this one can be freed ... */
-		pa->pa_deleted = 1;
+		ext4_mb_mark_pa_deleted(sb, pa);
 
 		/* we can trust pa_free ... */
 		free += pa->pa_free;
@@ -4037,7 +4058,8 @@ void ext4_discard_preallocations(struct inode *inode, unsigned int needed)
 	}
 
 	mb_debug(1, "discard preallocation for inode %lu\n", inode->i_ino);
-	trace_ext4_discard_preallocations(inode, needed);
+	trace_ext4_discard_preallocations(inode,
+			atomic_read(&ei->i_prealloc_active), needed);
 
 	INIT_LIST_HEAD(&list);
 
@@ -4065,7 +4087,7 @@ repeat:
 
 		}
 		if (pa->pa_deleted == 0) {
-			pa->pa_deleted = 1;
+			ext4_mb_mark_pa_deleted(sb, pa);
 			spin_unlock(&pa->pa_lock);
 			list_del_rcu(&pa->pa_inode_list);
 			list_add(&pa->u.pa_tmp_list, &list);
@@ -4338,7 +4360,7 @@ ext4_mb_discard_lg_preallocations(struct super_block *sb,
 		BUG_ON(pa->pa_type != MB_GROUP_PA);
 
 		/* seems this one can be freed ... */
-		pa->pa_deleted = 1;
+		ext4_mb_mark_pa_deleted(sb, pa);
 		spin_unlock(&pa->pa_lock);
 
 		list_del_rcu(&pa->pa_inode_list);
@@ -4443,21 +4465,9 @@ ext4_mb_trim_inode_pa(struct inode *inode)
 {
 	struct ext4_inode_info *ei = EXT4_I(inode);
 	struct ext4_sb_info *sbi = EXT4_SB(inode->i_sb);
-	struct ext4_prealloc_space *pa;
-	int count = 0, delta;
+	int count, delta;
 
-	rcu_read_lock();
-	list_for_each_entry_rcu(pa, &ei->i_prealloc_list, pa_inode_list) {
-		spin_lock(&pa->pa_lock);
-		if (pa->pa_deleted) {
-			spin_unlock(&pa->pa_lock);
-			continue;
-		}
-		count++;
-		spin_unlock(&pa->pa_lock);
-	}
-	rcu_read_unlock();
-	
+	count = atomic_read(&ei->i_prealloc_active);
 	delta = (sbi->s_mb_max_inode_prealloc >> 2) + 1;
 	if (count > sbi->s_mb_max_inode_prealloc + delta) {
 		count -= sbi->s_mb_max_inode_prealloc;
@@ -4505,7 +4515,7 @@ static int ext4_mb_release_context(struct ext4_allocation_context *ac)
 			 * to trim the least recently used PA.
 			 */
 			spin_lock(pa->pa_obj_lock);
-			list_move(&ei->i_prealloc_list, &pa->pa_inode_list);
+			list_move(&pa->pa_inode_list, &ei->i_prealloc_list);
 			spin_unlock(pa->pa_obj_lock);
 		}
 

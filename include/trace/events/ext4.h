@@ -725,13 +725,14 @@ TRACE_EVENT(ext4_mb_release_group_pa,
 );
 
 TRACE_EVENT(ext4_discard_preallocations,
-	TP_PROTO(struct inode *inode, unsigned int needed),
+	TP_PROTO(struct inode *inode, unsigned int len, unsigned int needed),
 
-	TP_ARGS(inode, needed),
+	TP_ARGS(inode, len, needed),
 
 	TP_STRUCT__entry(
 		__field(	dev_t,		dev		)
 		__field(	ino_t,		ino		)
+		__field(	unsigned int,	len		)
 		__field(	unsigned int,	needed		)
 
 	),
@@ -739,12 +740,14 @@ TRACE_EVENT(ext4_discard_preallocations,
 	TP_fast_assign(
 		__entry->dev	= inode->i_sb->s_dev;
 		__entry->ino	= inode->i_ino;
+		__entry->len	= len;
 		__entry->needed	= needed;
 	),
 
-	TP_printk("dev %d,%d ino %lu needed %u",
+	TP_printk("dev %d,%d ino %lu len: %u needed %u",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
-		  (unsigned long) __entry->ino, __entry->needed)
+		  (unsigned long) __entry->ino, __entry->len,
+		  __entry->needed)
 );
 
 TRACE_EVENT(ext4_mb_discard_preallocations,
