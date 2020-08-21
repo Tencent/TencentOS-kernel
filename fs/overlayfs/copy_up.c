@@ -55,6 +55,13 @@ static void ovl_do_check_copy_up(struct dentry *dentry)
 		iterate_fd(current->files, 0, ovl_check_fd, dentry);
 }
 
+static bool ovl_must_copy_xattr(const char *name)
+{
+	return !strcmp(name, XATTR_POSIX_ACL_ACCESS) ||
+	       !strcmp(name, XATTR_POSIX_ACL_DEFAULT) ||
+	       !strncmp(name, XATTR_SECURITY_PREFIX, XATTR_SECURITY_PREFIX_LEN);
+}
+
 int ovl_copy_xattr(struct dentry *old, struct dentry *new)
 {
 	ssize_t list_size, size, value_size = 0;
@@ -126,8 +133,13 @@ retry:
 			continue; /* Discard */
 		}
 		error = vfs_setxattr(new, name, value, size, 0);
-		if (error)
-			break;
+		if (error) {
+			if (error != -EOPNOTSUPP || ovl_must_copy_xattr(name))
+				break;
+
+			/* Ignore failure to copy unknown xattrs */
+			error = 0;
+		}
 	}
 	kfree(value);
 out:
