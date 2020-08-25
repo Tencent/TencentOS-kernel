@@ -3463,9 +3463,13 @@ enum {
        BPF_F_SYSCTL_BASE_NAME          = (1ULL << 0),
 };
 
-/* BPF_FUNC_sk_storage_get flags */
+/* BPF_FUNC_<kernel_obj>_storage_get flags */
 enum {
-       BPF_SK_STORAGE_GET_F_CREATE     = (1ULL << 0),
+	BPF_LOCAL_STORAGE_GET_F_CREATE	= (1ULL << 0),
+	/* BPF_SK_STORAGE_GET_F_CREATE is only kept for backward compatibility
+	 * and BPF_LOCAL_STORAGE_GET_F_CREATE must be used instead.
+	 */
+	BPF_SK_STORAGE_GET_F_CREATE  = BPF_LOCAL_STORAGE_GET_F_CREATE,
 };
 
 /* BPF_FUNC_sk_assign flags in bpf_sk_lookup context. */
