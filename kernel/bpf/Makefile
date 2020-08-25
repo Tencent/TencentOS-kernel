@@ -16,6 +16,7 @@ obj-$(CONFIG_BPF_JIT) += dispatcher.o
 ifeq ($(CONFIG_NET),y)
 obj-$(CONFIG_BPF_SYSCALL) += devmap.o
 obj-$(CONFIG_BPF_SYSCALL) += cpumap.o
+obj-$(CONFIG_BPF_SYSCALL) += bpf_local_storage.o
 ifeq ($(CONFIG_XDP_SOCKETS),y)
 obj-$(CONFIG_BPF_SYSCALL) += xskmap.o
 endif
