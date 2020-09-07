@@ -747,11 +747,18 @@ static int ip_route_me_harder2(struct net *net, struct sk_buff *skb,
 static int ip_vs_route_me_harder(struct netns_ipvs *ipvs, int af,
 				 struct sk_buff *skb, unsigned int hooknum)
 {
-	if (!bpf_mode_on && !sysctl_snat_reroute(ipvs))
+	struct net *net;
+
+	if (ipvs_mode != IPVS_BPF_MODE && !sysctl_snat_reroute(ipvs))
 		return 0;
 	/* Reroute replies only to remote clients (FORWARD and LOCAL_OUT) */
 	if (NF_INET_LOCAL_IN == hooknum)
 		return 0;
+
+	net = ipvs->net;
+	if (ipvs_mode == IPVS_SHARE_NS_MODE)
+		net = ip_vs_skb_net(skb);
+
 #ifdef CONFIG_IP_VS_IPV6
 	if (af == AF_INET6) {
 		struct dst_entry *dst = skb_dst(skb);
@@ -761,9 +768,9 @@ static int ip_vs_route_me_harder(struct netns_ipvs *ipvs, int af,
 			return 1;
 	} else
 #endif
-		if (!bpf_mode_on) {
+		if (ipvs_mode != IPVS_BPF_MODE) {
 			if (!(skb_rtable(skb)->rt_flags & RTCF_LOCAL) &&
-			    ip_route_me_harder(ipvs->net, skb, RTN_LOCAL) != 0)
+			    ip_route_me_harder(net, skb, RTN_LOCAL) != 0)
 				return 1;
 		} else {
 			if (ip_route_me_harder2(ipvs->net, skb, RTN_LOCAL) != 0)
@@ -930,12 +937,12 @@ static int handle_response_icmp(int af, struct sk_buff *skb,
 	else
 		ip_vs_update_conntrack(skb, cp, 0);
 
-	if (bpf_mode_on)
+	if (ipvs_mode == IPVS_BPF_MODE)
 		(*(resolve_addrs.ip_finish_output))(cp->ipvs->net, skb->sk,
 						    skb);
 
 ignore_cp:
-	if (bpf_mode_on)
+	if (ipvs_mode == IPVS_BPF_MODE)
 		verdict = NF_STOLEN;
 	else
 		verdict = NF_ACCEPT;
@@ -1354,14 +1361,14 @@ handle_response(int af, struct sk_buff *skb, struct ip_vs_proto_data *pd,
 	else
 		ip_vs_update_conntrack(skb, cp, 0);
 
-	if (bpf_mode_on)
+	if (ipvs_mode == IPVS_BPF_MODE)
 		(*(resolve_addrs.ip_finish_output))(cp->ipvs->net, skb->sk,
 						    skb);
 	ip_vs_conn_put(cp);
 
 	LeaveFunction(11);
 
-	if (bpf_mode_on)
+	if (ipvs_mode == IPVS_BPF_MODE)
 		return NF_STOLEN;
 	else
 		return NF_ACCEPT;
@@ -1370,6 +1377,12 @@ drop:
 	kfree_skb(skb);
 	LeaveFunction(11);
 	return NF_STOLEN;
+}
+
+static void switch_netns(struct netns_ipvs **ipvs, struct sk_buff *skb)
+{
+	if (ipvs_mode == IPVS_SHARE_NS_MODE)
+		*ipvs = net_ipvs(&init_net);
 }
 
 /*
@@ -1388,6 +1401,8 @@ ip_vs_out(struct netns_ipvs *ipvs, unsigned int hooknum, struct sk_buff *skb, in
 
 	EnterFunction(11);
 
+	switch_netns(&ipvs, skb);
+
 	/* Already marked as IPVS request or reply? */
 	if (skb->ipvs_property)
 		return NF_ACCEPT;
@@ -1402,7 +1417,7 @@ ip_vs_out(struct netns_ipvs *ipvs, unsigned int hooknum, struct sk_buff *skb, in
 	}
 
 	/* In bpf mode, this is null */
-	if (!bpf_mode_on && unlikely(!skb_dst(skb)))
+	if (ipvs_mode != IPVS_BPF_MODE && unlikely(!skb_dst(skb)))
 		return NF_ACCEPT;
 
 	if (!ipvs->enable)
@@ -1630,6 +1645,8 @@ ip_vs_in_icmp(struct netns_ipvs *ipvs, struct sk_buff *skb, int *related,
 	struct ip_vs_proto_data *pd;
 	unsigned int offset, offset2, ihl, verdict;
 	bool ipip, new_cp = false;
+
+	switch_netns(&ipvs, skb);
 
 	*related = 1;
 
@@ -1915,6 +1932,8 @@ ip_vs_in(struct netns_ipvs *ipvs, unsigned int hooknum, struct sk_buff *skb, int
 	int conn_reuse_mode;
 	struct sock *sk;
 
+	switch_netns(&ipvs, skb);
+
 	/* Already marked as IPVS request or reply? */
 	if (skb->ipvs_property)
 		return NF_ACCEPT;
@@ -1926,7 +1945,7 @@ ip_vs_in(struct netns_ipvs *ipvs, unsigned int hooknum, struct sk_buff *skb, int
 	 */
 	if (unlikely((skb->pkt_type != PACKET_HOST &&
 		      hooknum != NF_INET_LOCAL_OUT) ||
-		      (!bpf_mode_on && !skb_dst(skb)))) {
+		      (ipvs_mode != IPVS_BPF_MODE && !skb_dst(skb)))) {
 		ip_vs_fill_iph_skb(af, skb, false, &iph);
 		IP_VS_DBG_BUF(12, "packet type=%d proto=%d daddr=%s"
 			      " ignored in hook %u\n",
@@ -1995,7 +2014,9 @@ ip_vs_in(struct netns_ipvs *ipvs, unsigned int hooknum, struct sk_buff *skb, int
 	 * as zero rs may be killed already.
 	 * Only enable in bpf mode currently. Shall promote to IPVS mode later.
 	 */
-	if (no_route_to_host_fix && bpf_mode_on && cp && cp->dest &&
+	if (no_route_to_host_fix &&
+	    ipvs_mode == IPVS_BPF_MODE &&
+	    cp && cp->dest &&
 	    unlikely(!atomic_read(&cp->dest->weight)) &&
 	    is_new_conn(skb, &iph) && !iph.fragoffs &&
 	    conn_reuse_mode == 0) {
@@ -2118,7 +2139,8 @@ ip_vs_remote_request4(void *priv, struct sk_buff *skb,
 	 * the defrag may impact performance greatly! Lukily, this is not the
 	 * case for us!
 	 */
-	if (bpf_mode_on && unlikely(ip_is_fragment(ip_hdr(skb)))) {
+	if (ipvs_mode == IPVS_BPF_MODE &&
+	    unlikely(ip_is_fragment(ip_hdr(skb)))) {
 		if (ip_vs_gather_frags(net_ipvs(state->net), skb,
 				       IP_DEFRAG_VS_IN))
 			/* return 0 will call skb_free in nf_hook */
@@ -2354,6 +2376,113 @@ static const struct nf_hook_ops ip_vs_bpf_ops[] = {
 	 */
 };
 
+static const struct nf_hook_ops ip_vs_ns_ops[] = {
+	/* After packet filtering, change source only for VS/NAT */
+	{
+		.hook		= ip_vs_reply4,
+		.pf		= NFPROTO_IPV4,
+		.hooknum	= NF_INET_LOCAL_IN,
+		.priority	= NF_IP_PRI_NAT_SRC - 2,
+	},
+	{
+		.hook		= ip_vs_remote_request4,
+		.pf		= NFPROTO_IPV4,
+		.hooknum	= NF_INET_LOCAL_IN,
+		.priority	= NF_IP_PRI_NAT_SRC - 1,
+	},
+
+	/* Delete IPVS nf local_out hook to handle response packet.
+	 * Consider following steps:
+	 * 1. curl vip:vport on a vm. packet is (nodeip:tmport->vip:vport)
+	 * 2. Ipvs does DNAT and choose a POD on this vm.
+	 *    packet is (nodeip:tmpport->rsip:rsport)
+	 * 3. The POD replies. packet is (rsip:rsport -> nodeip:tmpport)
+	 *    In nf local-out, ipvs ip_vs_local_reply4
+	 *    does reverse DNAT, and modifies the packet to be
+	 *    (VIP:VPORT->nodeip:tmpport)
+	 * 4. The packet go out of the POD's ENI to the iaas switch.
+	 * 5. Iaas switch will drop the packet as it expects the source
+	 *    to be the ENI's ip.
+	 * Any side effect to delete the hook?
+	 * If a client out of the cluster accesses the service on a cvm,
+	 * and the cvm choose a process runs on default net ns as the target,
+	 * Break!. However, It doesn't matter as we haven't such case.
+	 */
+
+	/* After mangle, schedule and forward local requests */
+	{
+		.hook		= ip_vs_local_request4,
+		.pf		= NFPROTO_IPV4,
+		.hooknum	= NF_INET_LOCAL_OUT,
+		.priority	= NF_IP_PRI_NAT_DST + 2,
+	},
+	/* After packet filtering (but before ip_vs_out_icmp), catch icmp
+	 * destined for 0.0.0.0/0, which is for incoming IPVS connections
+	 */
+	{
+		.hook		= ip_vs_forward_icmp,
+		.pf		= NFPROTO_IPV4,
+		.hooknum	= NF_INET_FORWARD,
+		.priority	= 99,
+	},
+	/* After packet filtering, change source only for VS/NAT */
+	{
+		.hook		= ip_vs_reply4,
+		.pf		= NFPROTO_IPV4,
+		.hooknum	= NF_INET_FORWARD,
+		.priority	= 100,
+	},
+#ifdef CONFIG_IP_VS_IPV6
+	/* After packet filtering, change source only for VS/NAT */
+	{
+		.hook		= ip_vs_reply6,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_LOCAL_IN,
+		.priority	= NF_IP6_PRI_NAT_SRC - 2,
+	},
+	/* After packet filtering, forward packet through VS/DR, VS/TUN,
+	 * or VS/NAT(change destination), so that filtering rules can be
+	 * applied to IPVS
+	 */
+	{
+		.hook		= ip_vs_remote_request6,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_LOCAL_IN,
+		.priority	= NF_IP6_PRI_NAT_SRC - 1,
+	},
+	/* Before ip_vs_in, change source only for VS/NAT */
+	{
+		.hook		= ip_vs_local_reply6,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_LOCAL_OUT,
+		.priority	= NF_IP6_PRI_NAT_DST + 1,
+	},
+	/* After mangle, schedule and forward local requests */
+	{
+		.hook		= ip_vs_local_request6,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_LOCAL_OUT,
+		.priority	= NF_IP6_PRI_NAT_DST + 2,
+	},
+	/* After packet filtering (but before ip_vs_out_icmp), catch icmp
+	 * destined for 0.0.0.0/0, which is for incoming IPVS connections
+	 */
+	{
+		.hook		= ip_vs_forward_icmp_v6,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_FORWARD,
+		.priority	= 99,
+	},
+	/* After packet filtering, change source only for VS/NAT */
+	{
+		.hook		= ip_vs_reply6,
+		.pf		= NFPROTO_IPV6,
+		.hooknum	= NF_INET_FORWARD,
+		.priority	= 100,
+	},
+#endif
+};
+
 /*
  *	Initialize IP Virtual Server netns mem.
  */
@@ -2362,6 +2491,8 @@ static int __net_init __ip_vs_init(struct net *net)
 	struct netns_ipvs *ipvs;
 	int ret;
 
+	if (ipvs_mode >= IPVS_MAX_MODE)
+		return -EINVAL;
 	ipvs = net_generic(net, ip_vs_net_id);
 	if (ipvs == NULL)
 		return -ENOMEM;
@@ -2392,12 +2523,19 @@ static int __net_init __ip_vs_init(struct net *net)
 	if (ip_vs_sync_net_init(ipvs) < 0)
 		goto sync_fail;
 
-	if (!bpf_mode_on) {
+	if (ipvs_mode == IPVS_ORIGIN_MODE) {
 		ret = nf_register_net_hooks(net, ip_vs_ops,
 					    ARRAY_SIZE(ip_vs_ops));
 		if (ret < 0)
 			goto hook_fail;
-	} else {
+	}
+	if (ipvs_mode == IPVS_SHARE_NS_MODE) {
+		ret = nf_register_net_hooks(net, ip_vs_ns_ops,
+					    ARRAY_SIZE(ip_vs_ns_ops));
+		if (ret < 0)
+			goto hook_fail;
+	}
+	if (ipvs_mode == IPVS_BPF_MODE) {
 		ret = nf_register_net_hooks(net, ip_vs_bpf_ops,
 					    ARRAY_SIZE(ip_vs_bpf_ops));
 		if (ret < 0)
@@ -2418,7 +2556,6 @@ static int __net_init __ip_vs_init(struct net *net)
 			goto hook_fail;
 		}
 	}
-
 	return 0;
 /*
  * Error handling
@@ -2445,10 +2582,14 @@ static void __net_exit __ip_vs_cleanup(struct net *net)
 {
 	struct netns_ipvs *ipvs = net_ipvs(net);
 
-	if (!bpf_mode_on)
-		nf_unregister_net_hooks(net, ip_vs_ops,
-					ARRAY_SIZE(ip_vs_ops));
-	else {
+	if (ipvs_mode == IPVS_ORIGIN_MODE)
+		nf_unregister_net_hooks(net, ip_vs_ops, ARRAY_SIZE(ip_vs_ops));
+
+	if (ipvs_mode == IPVS_SHARE_NS_MODE)
+		nf_unregister_net_hooks(net, ip_vs_ns_ops,
+					ARRAY_SIZE(ip_vs_ns_ops));
+
+	if (ipvs_mode == IPVS_BPF_MODE) {
 		nf_unregister_net_hooks(net, ip_vs_bpf_ops,
 					ARRAY_SIZE(ip_vs_bpf_ops));
 		free_percpu(ipvs->bpf_stat);
@@ -2494,7 +2635,8 @@ struct bpf_sym_addrs resolve_addrs;
 static int __init ip_vs_init(void)
 {
 	int ret;
-	if (bpf_mode_on) {
+
+	if (ipvs_mode == IPVS_BPF_MODE) {
 		resolve_addrs.ip_finish_output =
 			(output_t)kallsyms_lookup_name("ip_finish_output");
 		if (!resolve_addrs.ip_finish_output) {
@@ -2530,7 +2672,7 @@ static int __init ip_vs_init(void)
 		}
 	}
 
-	pr_info("bpf_mode_on is %d\n", bpf_mode_on);
+	pr_info("ipvs_mode is %d\n", ipvs_mode);
 	ret = ip_vs_control_init();
 	if (ret < 0) {
 		pr_err("can't setup control.\n");
@@ -2584,7 +2726,7 @@ static void __exit ip_vs_cleanup(void)
 	ip_vs_conn_cleanup();
 	ip_vs_protocol_cleanup();
 	ip_vs_control_cleanup();
-	if (bpf_mode_on)
+	if (ipvs_mode == IPVS_BPF_MODE)
 		ip_vs_bpf_put();
 	pr_info("ipvs unloaded.\n");
 }

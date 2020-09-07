@@ -185,7 +185,7 @@ ip_vs_wrr_schedule(struct ip_vs_service *svc, const struct sk_buff *skb,
 						 n_list) {
 			if (!(dest->flags & IP_VS_DEST_F_OVERLOAD) &&
 			    atomic_read(&dest->weight) >= mark->cw) {
-				if (!bpf_mode_on)
+				if (ipvs_mode != IPVS_BPF_MODE)
 					goto found;
 				else if (dest->addr.ip != iph->saddr.ip)
 					goto found;

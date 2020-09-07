@@ -316,7 +316,13 @@ __ip_vs_get_out_rt(struct netns_ipvs *ipvs, int skb_af, struct sk_buff *skb,
 	int mtu;
 	int local, noref = 1;
 
-	if (dest) {
+	if (ipvs_mode == IPVS_SHARE_NS_MODE)
+		net = ip_vs_skb_net(skb);
+	if (!net)
+		return -1;
+
+	/* when share netns, the cache will error */
+	if (dest && ipvs_mode != IPVS_SHARE_NS_MODE) {
 		dest_dst = __ip_vs_dst_check(dest);
 		if (likely(dest_dst))
 			rt = (struct rtable *) dest_dst->dst_cache;
@@ -365,7 +371,7 @@ __ip_vs_get_out_rt(struct netns_ipvs *ipvs, int skb_af, struct sk_buff *skb,
 	/* In bpf mode, this check always return false.Don't call it to avoid
 	 * access of skb->dst
 	 */
-	if (!bpf_mode_on &&
+	if (ipvs_mode != IPVS_BPF_MODE &&
 	    unlikely(crosses_local_route_boundary(skb_af, skb, rt_mode,
 						  local))) {
 		IP_VS_DBG_RL("We are crossing local and non-local addresses"
@@ -373,7 +379,10 @@ __ip_vs_get_out_rt(struct netns_ipvs *ipvs, int skb_af, struct sk_buff *skb,
 		goto err_put;
 	}
 
-	if (unlikely(local)) {
+	/* traffic to local address shall route to lo dev
+	 * so that traffic from a POD can choose itself as rs.
+	 */
+	if (ipvs_mode != IPVS_SHARE_NS_MODE && unlikely(local)) {
 		/* skb to local stack, preserve old route */
 		if (!noref)
 			ip_rt_put(rt);
@@ -407,7 +416,7 @@ __ip_vs_get_out_rt(struct netns_ipvs *ipvs, int skb_af, struct sk_buff *skb,
 		skb_dst_set(skb, &rt->dst);
 
 	/* In bpf mode, like ip_output, set output dev */
-	if (bpf_mode_on)
+	if (ipvs_mode == IPVS_BPF_MODE)
 		skb->dev = skb_dst(skb)->dev;
 	return local;
 
@@ -618,6 +627,11 @@ static inline int ip_vs_nat_send_or_cont(int pf, struct sk_buff *skb,
 					 struct ip_vs_conn *cp, int local)
 {
 	int ret = NF_STOLEN;
+	struct net *net;
+
+	net = cp->ipvs->net;
+	if (ipvs_mode == IPVS_SHARE_NS_MODE)
+		net = ip_vs_skb_net(skb);
 
 	skb->ipvs_property = 1;
 	if (likely(!(cp->flags & IP_VS_CONN_F_NFCT)))
@@ -634,7 +648,7 @@ static inline int ip_vs_nat_send_or_cont(int pf, struct sk_buff *skb,
 
 	if (!local) {
 		skb_forward_csum(skb);
-		NF_HOOK(pf, NF_INET_LOCAL_OUT, cp->ipvs->net, NULL, skb,
+		NF_HOOK(pf, NF_INET_LOCAL_OUT, net, NULL, skb,
 			NULL, skb_dst(skb)->dev, dst_output);
 	} else
 		ret = NF_ACCEPT;
@@ -647,6 +661,11 @@ static inline int ip_vs_send_or_cont(int pf, struct sk_buff *skb,
 				     struct ip_vs_conn *cp, int local)
 {
 	int ret = NF_STOLEN;
+	struct net *net;
+
+	net = cp->ipvs->net;
+	if (ipvs_mode == IPVS_SHARE_NS_MODE)
+		net = ip_vs_skb_net(skb);
 
 	skb->ipvs_property = 1;
 	if (likely(!(cp->flags & IP_VS_CONN_F_NFCT)))
@@ -654,7 +673,7 @@ static inline int ip_vs_send_or_cont(int pf, struct sk_buff *skb,
 	if (!local) {
 		ip_vs_drop_early_demux_sk(skb);
 		skb_forward_csum(skb);
-		NF_HOOK(pf, NF_INET_LOCAL_OUT, cp->ipvs->net, NULL, skb,
+		NF_HOOK(pf, NF_INET_LOCAL_OUT, net, NULL, skb,
 			NULL, skb_dst(skb)->dev, dst_output);
 	} else
 		ret = NF_ACCEPT;
@@ -760,13 +779,11 @@ ip_vs_nat_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 		IP_VS_DBG(10, "filled cport=%d\n", ntohs(*p));
 	}
 
-	/* In ipvs mode, ip_route_input_slow will set me to 1 for
-	 * local_in pkt from nic! For pkt local-out this is not set!
+	/* originally, this was set in ip_route_input_slow
 	 * In bpf mode, this is not useful since local rs is not allowed
 	 */
-	if (!bpf_mode_on)
-		was_input = rt_is_input_route(skb_rtable(skb));
-	else
+	was_input = rt_is_input_route(skb_rtable(skb));
+	if (ipvs_mode == IPVS_BPF_MODE)
 		was_input = 1;
 	local = __ip_vs_get_out_rt(cp->ipvs, cp->af, skb, cp->dest, cp->daddr.ip,
 				   IP_VS_RT_MODE_LOCAL |
@@ -774,7 +791,7 @@ ip_vs_nat_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 				   IP_VS_RT_MODE_RDR, NULL, ipvsh);
 	if (local < 0)
 		goto tx_error;
-	if (bpf_mode_on && local == 1) {
+	if (ipvs_mode == IPVS_BPF_MODE && local == 1) {
 		pr_err("shall not route to local rs in bpf mode\n");
 		BPF_STAT_INC(cp->ipvs, BPF_XMIT_LOCAL_RS);
 		goto tx_error;
@@ -833,7 +850,7 @@ ip_vs_nat_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 	/* Another hack: avoid icmp_send in ip_fragment */
 	skb->ignore_df = 1;
 
-	if (!bpf_mode_on) {
+	if (ipvs_mode != IPVS_BPF_MODE) {
 		rc = ip_vs_nat_send_or_cont(NFPROTO_IPV4, skb, cp, local);
 	} else {
 		/* used by bpf egress to construct the key!
@@ -1325,7 +1342,7 @@ ip_vs_icmp_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 	/*
 	 * mangle and send the packet here (only for VS/NAT)
 	 */
-	if (!bpf_mode_on)
+	if (ipvs_mode != IPVS_BPF_MODE)
 		was_input = rt_is_input_route(skb_rtable(skb));
 	else
 		was_input = 1;
@@ -1378,7 +1395,7 @@ ip_vs_icmp_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 	/* Another hack: avoid icmp_send in ip_fragment */
 	skb->ignore_df = 1;
 
-	if (!bpf_mode_on) {
+	if (ipvs_mode != IPVS_BPF_MODE) {
 		rc = ip_vs_nat_send_or_cont(NFPROTO_IPV4, skb, cp, local);
 	} else {
 		/* used by bpf egress to construct the key!
