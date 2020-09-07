@@ -359,7 +359,7 @@ static int __init set_sched_bt_on(char *str)
 {
     sched_bt_on = 1;
 
-    return 1;
+    return 0;
 }
 early_param("offline_class", set_sched_bt_on);
 
@@ -1008,7 +1008,9 @@ static int __ref kernel_init(void *unused)
 	int ret;
 
 	kernel_init_freeable();
+#ifdef CONFIG_BT_GROUP_SCHED
 	init_offline_cpu_control();
+#endif
 	/* need to finish all async __init code before freeing the memory */
 	async_synchronize_full();
 	ftrace_free_init_mem();

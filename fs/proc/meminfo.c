@@ -13,6 +13,7 @@
 #include <linux/vmstat.h>
 #include <linux/atomic.h>
 #include <linux/vmalloc.h>
+#include <linux/sched/sysctl.h>
 #ifdef CONFIG_CMA
 #include <linux/cma.h>
 #endif
@@ -43,6 +44,9 @@ static void show_val_kb(struct seq_file *m, const char *s, unsigned long num)
 	seq_write(m, " kB\n", 4);
 }
 
+extern int memcg_meminfo_read(struct seq_file * m,
+		void * v, struct mem_cgroup * memcg);
+
 static int meminfo_proc_show(struct seq_file *m, void *v)
 {
 	struct sysinfo i;
@@ -51,6 +55,11 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 	long available;
 	unsigned long pages[NR_LRU_LISTS];
 	int lru;
+	struct mem_cgroup *memcg = mem_cgroup_from_task(current);
+
+	if (sysctl_cgroup_stats_isolated && memcg && memcg != root_mem_cgroup &&
+	    memcg->stats_isolated)
+		return memcg_meminfo_read(m, v, memcg);
 
 	si_meminfo(&i);
 	si_swapinfo(&i);

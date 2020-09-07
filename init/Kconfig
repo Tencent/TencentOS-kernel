@@ -732,7 +732,7 @@ config FAIR_GROUP_SCHED
 
 config BT_GROUP_SCHED
 	bool "Group scheduling for SCHED_BT"
-	depends on CGROUP_SCHED
+	depends on CGROUP_SCHED && BT_SCHED
 	default CGROUP_SCHED
 
 config CFS_BANDWIDTH

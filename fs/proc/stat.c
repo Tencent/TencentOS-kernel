@@ -79,6 +79,9 @@ u64 get_iowait_time(int cpu)
 
 #endif
 
+extern int cs_cgroup_stat_show(struct seq_file *sf, void *v,
+				struct task_struct *p);
+
 static int show_stat(struct seq_file *p, void *v)
 {
 	int i, j;
@@ -88,6 +91,9 @@ static int show_stat(struct seq_file *p, void *v)
 	u64 sum_softirq = 0;
 	unsigned int per_softirq_sums[NR_SOFTIRQS] = {0};
 	struct timespec64 boottime;
+
+	if (!cs_cgroup_stat_show(p, v, current))
+		return 0;
 
 	user = nice = system = idle = iowait =
 		irq = softirq = steal = 0;

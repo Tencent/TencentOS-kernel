@@ -3985,9 +3985,8 @@ out_kfree:
 	return ret;
 }
 
-static int mem_cgroup_meminfo_read(struct seq_file *m, void *v)
+int memcg_meminfo_read(struct seq_file *m, void *v, struct mem_cgroup *memcg)
 {
-	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
 	u64 mem_limit, mem_usage;
 	u64 mem_swap, mem_swap_usage;
 
@@ -4134,15 +4133,18 @@ static int mem_cgroup_meminfo_read(struct seq_file *m, void *v)
 	return 0;
 }
 
+static int mem_cgroup_meminfo_read(struct seq_file *m, void *v)
+{
+	return memcg_meminfo_read(m, v, mem_cgroup_from_css(seq_css(m)));
+}
+
 #define NR_VM_WRITEBACK_STAT_ITEMS	2
 extern const char * const vmstat_text[];
 extern unsigned int vmstat_text_size;
 
-static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
+void memcg_vmstat_read(void *vv, struct mem_cgroup *memcg)
 {
-	unsigned long *v1, *v;
-	int i, stat_items_size;
-	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
+	unsigned long *v = vv;
 	u64 mem_limit, mem_usage;
 
 	mem_limit = memcg->memory.limit;
@@ -4151,16 +4153,6 @@ static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
 	else
 		mem_limit = mem_limit * PAGE_SIZE;	
 	mem_usage = (u64)mem_cgroup_usage(memcg, false) * PAGE_SIZE;
-
-	stat_items_size = vmstat_text_size * sizeof(unsigned long);
-
-#ifdef CONFIG_VM_EVENT_COUNTERS
-	stat_items_size += sizeof(struct vm_event_state);
-#endif
-
-	v1 = v = kzalloc(stat_items_size, GFP_KERNEL);
-	if (!v)
-		return -ENOMEM;
 
 	v[NR_FREE_PAGES] = (mem_limit - mem_usage) >> PAGE_SHIFT;
 	v[NR_ZONE_INACTIVE_ANON] = mem_cgroup_nr_lru_pages(memcg, BIT(LRU_INACTIVE_ANON));
@@ -4195,15 +4187,47 @@ static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
 	v[PGPGIN] = memcg_sum_events(memcg, memcg1_events[0]) * (PAGE_SIZE / 1024);		/* sectors -> kbytes */
 	v[PGPGOUT] = memcg_sum_events(memcg, memcg1_events[1]) * (PAGE_SIZE / 1024);
 #endif
-	for ( i = 0; i < vmstat_text_size; i++ )
-	{
-		seq_printf(m, "%s %lu\n", vmstat_text[i], v1[i]);
-	}
-	kfree(v1);
+}
+
+static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
+{
+	int i, stat_items_size;
+	unsigned long *v;
+
+	stat_items_size = vmstat_text_size * sizeof(unsigned long);
+
+#ifdef CONFIG_VM_EVENT_COUNTERS
+	stat_items_size += sizeof(struct vm_event_state);
+#endif
+
+	v = kzalloc(stat_items_size, GFP_KERNEL);
+	if (!v)
+		return -ENOMEM;
+
+	memcg_vmstat_read(v, mem_cgroup_from_css(seq_css(m)));
+
+	for (i = 0; i < vmstat_text_size; i++)
+		seq_printf(m, "%s %lu\n", vmstat_text[i], v[i]);
+
+	kfree(v);
+
 	return 0;
 }
 
+static u64 memory_stats_isolated_read(struct cgroup_subsys_state *css,
+			       struct cftype *cft)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	return (u64)(memcg && memcg->stats_isolated);
+}
+
 static struct cftype mem_cgroup_legacy_files[] = {
+	{
+		.name = "stats_isolated",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = memory_stats_isolated_read,
+	},
 	{
 		.name = "usage_in_bytes",
 		.private = MEMFILE_PRIVATE(_MEM, RES_USAGE),
@@ -4540,6 +4564,7 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 		return ERR_PTR(error);
 
 	memcg->high = PAGE_COUNTER_MAX;
+	memcg->stats_isolated = 1;
 	memcg->soft_limit = PAGE_COUNTER_MAX;
 	if (parent) {
 		memcg->swappiness = mem_cgroup_swappiness(parent);
@@ -4670,6 +4695,7 @@ static void mem_cgroup_css_reset(struct cgroup_subsys_state *css)
 	page_counter_limit(&memcg->tcpmem, PAGE_COUNTER_MAX);
 	memcg->low = 0;
 	memcg->high = PAGE_COUNTER_MAX;
+	memcg->stats_isolated = 1;
 	memcg->soft_limit = PAGE_COUNTER_MAX;
 	memcg_wb_domain_size_changed(memcg);
 }

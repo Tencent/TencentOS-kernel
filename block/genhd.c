@@ -883,6 +883,8 @@ void __init printk_all_partitions(void)
 }
 
 #ifdef CONFIG_PROC_FS
+extern int blkcg_diskstats_next(struct task_struct *p);
+
 /* iterator */
 static void *disk_seqf_start(struct seq_file *seqf, loff_t *pos)
 {
@@ -902,14 +904,22 @@ static void *disk_seqf_start(struct seq_file *seqf, loff_t *pos)
 			return NULL;
 	} while (skip--);
 
+	if (*pos && !blkcg_diskstats_next(current))
+		return NULL;
+
 	return dev_to_disk(dev);
 }
+
+extern int blkcg_diskstats_next(struct task_struct *p);
 
 static void *disk_seqf_next(struct seq_file *seqf, void *v, loff_t *pos)
 {
 	struct device *dev;
 
 	(*pos)++;
+	if (!blkcg_diskstats_next(current))
+		return NULL;
+
 	dev = class_dev_iter_next(seqf->private);
 	if (dev)
 		return dev_to_disk(dev);
@@ -1251,6 +1261,9 @@ const struct device_type disk_type = {
 };
 
 #ifdef CONFIG_PROC_FS
+extern int blkcg_diskstats_show(struct seq_file *sf, void *v,
+				struct task_struct *p);
+
 /*
  * aggregate disk stat collector.  Uses the same stats that the sysfs
  * entries do, above, but makes them available through one seq_file.
@@ -1266,6 +1279,9 @@ static int diskstats_show(struct seq_file *seqf, void *v)
 	char buf[BDEVNAME_SIZE];
 	unsigned int inflight[2];
 	int cpu;
+
+	if (!blkcg_diskstats_show(seqf, v, current))
+		return 0;
 
 	/*
 	if (&disk_to_dev(gp)->kobj.entry == block_class.devices.next)

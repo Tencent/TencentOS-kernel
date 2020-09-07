@@ -203,6 +203,24 @@ config SCSI_ENCLOSURE
 	  it has an enclosure device.  Selecting this option will just allow
 	  certain enclosure conditions to be reported and is not required.
 
+config MEGARAID_LEGACY
+	tristate "LSI Logic Legacy MegaRAID Driver"
+	depends on PCI && SCSI
+	help
+	  This driver supports the LSI MegaRAID 418, 428, 438, 466, 762, 490
+	  and 467 SCSI host adapters. This driver also support the all U320
+	  RAID controllers
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called megaraid
+
+config MEGARAID_SAS
+	tristate "LSI Logic New Generation RAID Device Drivers"
+	depends on PCI && SCSI
+	help
+          LSI Logic RAID Device Drivers
+
+
 config SCSI_CONSTANTS
 	bool "Verbose SCSI error reporting (kernel size += 36K)"
 	depends on SCSI
@@ -516,7 +534,6 @@ config SCSI_ARCMSR
 	  module will be called arcmsr (modprobe arcmsr).
 
 source "drivers/scsi/esas2r/Kconfig"
-source "drivers/scsi/megaraid/Kconfig.megaraid"
 source "drivers/scsi/mpt3sas/Kconfig"
 source "drivers/scsi/smartpqi/Kconfig"
 source "drivers/scsi/ufs/Kconfig"

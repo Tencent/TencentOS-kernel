@@ -278,6 +278,7 @@ extern int sysctl_tcp_loss_init_cwnd;
 extern int sysctl_tcp_init_cwnd;
 extern int sysctl_tcp_rto_min;
 extern int sysctl_tcp_rto_max;
+extern int sysctl_tcp_proc_sched;
 
 extern atomic_long_t tcp_memory_allocated;
 extern struct percpu_counter tcp_sockets_allocated;

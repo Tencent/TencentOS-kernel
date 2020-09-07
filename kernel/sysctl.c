@@ -225,6 +225,10 @@ static int proc_dostring_coredump(struct ctl_table *table, int write,
 		void __user *buffer, size_t *lenp, loff_t *ppos);
 #endif
 
+static int proc_stats_isolated(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp, loff_t *ppos);
+static int proc_cpuquota_aware(struct ctl_table *table, int write,
+		void __user *buffer, size_t *lenp, loff_t *ppos);
 #ifdef CONFIG_MAGIC_SYSRQ
 /* Note: sysrq code uses it's own private copy */
 static int __sysrq_enabled = CONFIG_MAGIC_SYSRQ_DEFAULT_ENABLE;
@@ -309,13 +313,6 @@ static int min_extfrag_threshold;
 static int max_extfrag_threshold = 1000;
 #endif
 
-#ifdef CONFIG_INTEL_RDT
-extern unsigned int sysctl_sched_bt_rdt_cache_percent;
-extern int sched_bt_rdt_cache_percent_handler(struct ctl_table *table, int write,
-		void __user *buffer, size_t *lenp,
-		loff_t *ppos);
-#endif
-
 extern unsigned long sysctl_fast_slub_nr_free;
 
 static int sysrq_use_leftctrl_sysctl_handler(struct ctl_table * table ,int write,
@@ -339,7 +336,28 @@ extern int sysctl_clocksource_switch_unstable_cs;
 extern int sysctl_clocksource_unstable_cnt;
 extern unsigned int sysctl_memcg_stat_show_subtree;
 
+unsigned int sysctl_cgroup_stats_isolated = 0;
+
 static struct ctl_table kern_table[] = {
+	{
+		.procname	= "container_cpuquota_aware",
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0222,
+		.proc_handler	= proc_cpuquota_aware,
+	},
+	{
+		.procname	= "container_stats_isolated",
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0222,
+		.proc_handler	= proc_stats_isolated,
+	},
+	{
+		.procname	= "stats_isolated",
+		.data		= &sysctl_cgroup_stats_isolated,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
 	{
 		.procname	= "sched_child_runs_first",
 		.data		= &sysctl_sched_child_runs_first,
@@ -580,17 +598,6 @@ static struct ctl_table kern_table[] = {
 		.extra1         = &zero,
 		.extra2         = &one,
 	},
-#ifdef CONFIG_INTEL_RDT
-	{
-		.procname	= "sched_bt_rdt_cache_percent",
-		.data		= &sysctl_sched_bt_rdt_cache_percent,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= sched_bt_rdt_cache_percent_handler,
-		.extra1		= &one,
-		.extra2		= &one_hundred,
-	},
-#endif
 #endif
 #ifdef CONFIG_PROVE_LOCKING
 	{
@@ -3410,6 +3417,62 @@ int proc_do_large_bitmap(struct ctl_table *table, int write,
 		kfree(tmp_bitmap);
 		return err;
 	}
+}
+
+extern void cpuset_set_stats_isolated(struct task_struct *p,
+				unsigned int val);
+extern void cpuacct_set_stats_isolated(struct task_struct *p,
+				u64 val);
+extern void blkcg_set_stats_isolated(struct task_struct *p,
+				unsigned int val);
+extern void cpu_set_quota_aware(struct task_struct *p, u64 val);
+
+static int proc_cpuquota_aware(struct ctl_table *table, int write,
+		  void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int data = 0;
+	int err;
+
+	table->data = &data;
+	err = proc_dointvec(table, write, buffer, lenp, ppos);
+	if (err)
+		return err;
+
+	if (data)
+		cpu_set_quota_aware(current, 1);
+	else
+		cpu_set_quota_aware(current, 0);
+
+	return 0;
+}
+
+static int proc_stats_isolated(struct ctl_table *table, int write,
+		  void __user *buffer, size_t *lenp, loff_t *ppos)
+{
+	int data = 0;
+	int err;
+	struct mem_cgroup *memcg = mem_cgroup_from_task(current);
+
+	table->data = &data;
+	err = proc_dointvec(table, write, buffer, lenp, ppos);
+	if (err)
+		return err;
+
+	if (data) {
+		if (memcg && memcg != root_mem_cgroup)
+			memcg->stats_isolated = 1;
+		cpuset_set_stats_isolated(current, 1);
+		cpuacct_set_stats_isolated(current, 1);
+		blkcg_set_stats_isolated(current, 1);
+	} else {
+		if (memcg && memcg != root_mem_cgroup)
+			memcg->stats_isolated = 0;
+		cpuset_set_stats_isolated(current, 0);
+		cpuacct_set_stats_isolated(current, 0);
+		blkcg_set_stats_isolated(current, 0);
+	}
+
+	return 0;
 }
 
 #else /* CONFIG_PROC_SYSCTL */

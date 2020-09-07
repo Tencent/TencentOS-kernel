@@ -131,6 +131,8 @@ EXPORT_SYMBOL(sysctl_udp_wmem_min);
 atomic_long_t udp_memory_allocated;
 EXPORT_SYMBOL(udp_memory_allocated);
 
+int sysctl_udp_proc_sched __read_mostly = 1;
+
 #define MAX_UDP_PORTS 65536
 #define PORTS_PER_CHAIN (MAX_UDP_PORTS / UDP_HTABLE_SIZE_MIN)
 
@@ -2621,6 +2623,8 @@ static struct sock *udp_get_first(struct seq_file *seq, int start)
 				goto found;
 		}
 		spin_unlock_bh(&hslot->lock);
+		if (sysctl_udp_proc_sched)
+			cond_resched();
 	}
 	sk = NULL;
 found:

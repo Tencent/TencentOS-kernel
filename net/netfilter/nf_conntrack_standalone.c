@@ -35,6 +35,8 @@
 
 MODULE_LICENSE("GPL");
 
+int sysctl_nf_ct_proc_sched __read_mostly = 1;
+
 #ifdef CONFIG_NF_CONNTRACK_PROCFS
 void
 print_tuple(struct seq_file *s, const struct nf_conntrack_tuple *tuple,
@@ -146,8 +148,11 @@ static struct hlist_nulls_node *ct_get_idx(struct seq_file *seq, loff_t pos)
 	struct hlist_nulls_node *head = ct_get_first(seq);
 
 	if (head)
-		while (pos && (head = ct_get_next(seq, head)))
+		while (pos && (head = ct_get_next(seq, head))) {
 			pos--;
+			if (sysctl_nf_ct_proc_sched)
+				cond_resched_rcu();
+		}
 	return pos ? NULL : head;
 }
 
@@ -606,6 +611,13 @@ static struct ctl_table nf_ct_sysctl_table[] = {
 		.procname	= "nf_conntrack_expect_max",
 		.data		= &nf_ct_expect_max,
 		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "nf_conntrack_proc_sched",
+		.data		= &sysctl_nf_ct_proc_sched,
+		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},

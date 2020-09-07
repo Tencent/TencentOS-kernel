@@ -5390,11 +5390,7 @@ static unsigned long cpu_avg_load_per_task(int cpu)
 	struct rq *rq = cpu_rq(cpu);
 	unsigned long nr_running = READ_ONCE(rq->cfs.h_nr_running);
 	unsigned long load_avg = weighted_cpuload(rq);
-#ifdef	CONFIG_BT_SCHED
-	unsigned long bt_running = READ_ONCE(rq->bt.h_nr_running);
 
-	nr_running -= bt_running;
-#endif
 	if (nr_running)
 		return load_avg / nr_running;
 
@@ -5697,16 +5693,29 @@ find_idlest_cpu(struct sched_group *group, struct task_struct *p, int this_cpu)
 				 * of any idle timestamp.
 				 */
 				min_exit_latency = idle->exit_latency;
+#ifdef CONFIG_BT_SCHED
+				latest_idle_timestamp = rq->idle_bt_stamp;
+#else
 				latest_idle_timestamp = rq->idle_stamp;
+#endif
 				shallowest_idle_cpu = i;
+#ifdef CONFIG_BT_SCHED
+			} else if ((!idle || idle->exit_latency == min_exit_latency) &&
+				   rq->idle_bt_stamp > latest_idle_timestamp) {
+#else
 			} else if ((!idle || idle->exit_latency == min_exit_latency) &&
 				   rq->idle_stamp > latest_idle_timestamp) {
+#endif
 				/*
 				 * If equal or no active idle state, then
 				 * the most recently idled CPU might have
 				 * a warmer cache.
 				 */
+#ifdef CONFIG_BT_SCHED
+				latest_idle_timestamp = rq->idle_bt_stamp;
+#else
 				latest_idle_timestamp = rq->idle_stamp;
+#endif
 				shallowest_idle_cpu = i;
 			}
 		} else if (shallowest_idle_cpu == -1) {
@@ -5876,7 +5885,11 @@ static int select_idle_cpu(struct task_struct *p, struct sched_domain *sd, int t
 	 * Due to large variance we need a large fuzz factor; hackbench in
 	 * particularly is sensitive here.
 	 */
+#ifdef CONFIG_BT_SCHED
+	avg_idle = this_rq()->avg_idle_bt / 512;
+#else
 	avg_idle = this_rq()->avg_idle / 512;
+#endif
 	avg_cost = this_sd->avg_scan_cost + 1;
 
 	if (sched_feat(SIS_AVG_CPU) && avg_idle < avg_cost)
@@ -7614,9 +7627,15 @@ static inline enum fbq_type fbq_classify_group(struct sg_lb_stats *sgs)
 
 static inline enum fbq_type fbq_classify_rq(struct rq *rq)
 {
-	if (rq->nr_running > rq->nr_numa_running)
+
+#ifdef CONFIG_BT_SCHED
+	unsigned int nr_running = rq->nr_running - rq->bt_nr_running;
+#else
+	unsigned int nr_running = rq->nr_running;
+#endif
+	if (nr_running > rq->nr_numa_running)
 		return regular;
-	if (rq->nr_running > rq->nr_preferred_running)
+	if (nr_running > rq->nr_preferred_running)
 		return remote;
 	return all;
 }
@@ -8509,8 +8528,11 @@ int idle_balance(struct rq *this_rq, struct rq_flags *rf)
 
 		if (!(sd->flags & SD_LOAD_BALANCE))
 			continue;
-
+#ifdef CONFIG_BT_SCHED
+		if (this_rq->avg_idle_bt < curr_cost + sd->max_newidle_lb_cost) {
+#else
 		if (this_rq->avg_idle < curr_cost + sd->max_newidle_lb_cost) {
+#endif
 			update_next_balance(sd, &next_balance);
 			break;
 		}
@@ -8535,7 +8557,11 @@ int idle_balance(struct rq *this_rq, struct rq_flags *rf)
 		 * Stop searching for tasks to pull if there are
 		 * now runnable tasks on this rq.
 		 */
+#ifdef CONFIG_BT_SCHED
+		if (pulled_task || this_rq->nr_running - this_rq->bt_nr_running > 0)
+#else
 		if (pulled_task || this_rq->nr_running > 0)
+#endif
 			break;
 	}
 	rcu_read_unlock();
@@ -8559,7 +8585,11 @@ out:
 		this_rq->next_balance = next_balance;
 
 	/* Is there a task of a high priority class? */
+#ifdef CONFIG_BT_SCHED
+	if (this_rq->nr_running - this_rq->bt_nr_running != this_rq->cfs.h_nr_running)
+#else
 	if (this_rq->nr_running != this_rq->cfs.h_nr_running)
+#endif
 		pulled_task = -1;
 
 	if (pulled_task) {

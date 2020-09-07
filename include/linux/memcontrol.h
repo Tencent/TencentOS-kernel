@@ -178,6 +178,8 @@ struct mem_cgroup {
 	unsigned long low;
 	unsigned long high;
 
+	unsigned long stats_isolated;
+
 	/* Range enforcement for interrupt charges */
 	struct work_struct high_work;
 

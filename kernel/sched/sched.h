@@ -372,6 +372,7 @@ struct task_group {
 	struct autogroup *autogroup;
 #endif
 
+	u64 cpuquota_aware;
 	struct cfs_bandwidth cfs_bandwidth;
 
 	unsigned long offline;

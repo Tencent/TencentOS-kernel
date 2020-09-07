@@ -5,7 +5,6 @@
 #include <linux/sched.h>
 #include <linux/kernfs.h>
 #include <linux/jump_label.h>
-#include <uapi/linux/limits.h>
 
 #define IA32_L3_QOS_CFG		0xc81
 #define IA32_L3_CBM_BASE	0xc90
@@ -346,7 +345,6 @@ extern struct mutex rdtgroup_mutex;
 
 extern struct rdt_resource rdt_resources_all[];
 extern struct rdtgroup rdtgroup_default;
-extern char rdt_mount_dir[PATH_MAX];
 DECLARE_STATIC_KEY_FALSE(rdt_alloc_enable_key);
 
 int __init rdtgroup_init(void);
@@ -439,7 +437,5 @@ void cqm_setup_limbo_handler(struct rdt_domain *dom, unsigned long delay_ms);
 void cqm_handle_limbo(struct work_struct *work);
 bool has_busy_rmid(struct rdt_resource *r, struct rdt_domain *d);
 void __check_limbo(struct rdt_domain *d, bool force_free);
-struct kernfs_node *kernfs_get_active(struct kernfs_node *kn);
-void kernfs_put_active(struct kernfs_node *kn);
 
 #endif /* _ASM_X86_INTEL_RDT_H */

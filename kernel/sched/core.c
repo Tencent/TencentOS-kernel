@@ -27,7 +27,6 @@
 #include <linux/profile.h>
 #include <linux/security.h>
 #include <linux/syscalls.h>
-#include <linux/namei.h>
 
 #include <asm/switch_to.h>
 #include <asm/tlb.h>
@@ -42,8 +41,10 @@
 #include "../workqueue_internal.h"
 #include "../smpboot.h"
 
+#ifdef CONFIG_BT_GROUP_SCHED
 extern unsigned int offlinegroup_enabled;
 extern unsigned int sysctl_sched_bt_ignore_cpubind;
+#endif
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
 
@@ -93,11 +94,6 @@ int sysctl_sched_rt_runtime = 950000;
 #ifdef CONFIG_BT_SCHED
 unsigned int sysctl_sched_bt_period = 1000000;
 int sysctl_sched_bt_runtime = -1;
-
-#if defined(CONFIG_BT_SCHED) && defined(CONFIG_INTEL_RDT)
-unsigned int sysctl_sched_bt_rdt_cache_percent = 10;
-__read_mostly bool rdt_offline_schemata_set = false;
-#endif
 #endif
 
 /* CPUs with isolated domains */
@@ -1022,16 +1018,16 @@ struct migration_arg {
 static struct rq *__migrate_task(struct rq *rq, struct rq_flags *rf,
 				 struct task_struct *p, int dest_cpu)
 {
-	bool check_cpumask;
+	bool check_cpumask = true;
 
+#ifdef CONFIG_BT_GROUP_SCHED
 	if (offlinegroup_enabled && sysctl_sched_bt_ignore_cpubind &&
 	    (p->sched_class == &bt_sched_class))
 		check_cpumask = false;
-	else
-		check_cpumask = true;
+#endif
 
 	/* Affinity changed (again). */
-	if (!check_cpumask && !is_cpu_allowed(p, dest_cpu))
+	if (check_cpumask && !is_cpu_allowed(p, dest_cpu))
 		return rq;
 
 	update_rq_clock(rq);
@@ -1615,9 +1611,11 @@ int select_task_rq(struct task_struct *p, int cpu, int sd_flags, int wake_flags)
 	else
 		cpu = cpumask_any(&p->cpus_allowed);
 
+#ifdef CONFIG_BT_GROUP_SCHED
 	if (offlinegroup_enabled && sysctl_sched_bt_ignore_cpubind &&
 	    (p->sched_class == &bt_sched_class))
 		return cpu;
+#endif
 
 	/*
 	 * In order not to call set_task_cpu() on a blocking task we need
@@ -3345,15 +3343,26 @@ pick_next_task(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 	 * higher scheduling class, because otherwise those loose the
 	 * opportunity to pull in more work from other CPUs.
 	 */
+#ifdef CONFIG_BT_SCHED
+	if (likely((prev->sched_class == &idle_sched_class ||
+		    prev->sched_class == &bt_sched_class ||
+		    prev->sched_class == &fair_sched_class) &&
+		   (rq->nr_running - rq->bt_nr_running) == rq->cfs.h_nr_running)) {
+#else
 	if (likely((prev->sched_class == &idle_sched_class ||
 		    prev->sched_class == &fair_sched_class) &&
 		   rq->nr_running == rq->cfs.h_nr_running)) {
+#endif
 
 		p = fair_sched_class.pick_next_task(rq, prev, rf);
 		if (unlikely(p == RETRY_TASK))
 			goto again;
 
-		/* Assumes fair_sched_class->next == idle_sched_class */
+#ifdef CONFIG_BT_SCHED
+		if (!p)
+			p = bt_sched_class.pick_next_task(rq, prev, rf);
+#endif
+
 		if (unlikely(!p))
 			p = idle_sched_class.pick_next_task(rq, prev, rf);
 
@@ -3476,7 +3485,7 @@ static void __sched notrace __schedule(bool preempt)
 
 #ifdef CONFIG_BT_SCHED
 	if (unlikely(!(rq->nr_running - rq->bt_nr_running))){
-		if(idle_balance(rq, &rf) <= 0){
+		if (idle_balance(rq, &rf) == 0) {
 			if (unlikely(!rq->nr_running && rq->idle_bt_stamp))
 				idle_balance_bt(rq, &rf);
 		}
@@ -4170,33 +4179,6 @@ static void __setscheduler_params(struct task_struct *p,
 	set_load_weight(p);
 }
 
-#if defined(CONFIG_BT_SCHED) && defined(CONFIG_INTEL_RDT)
-void rdt_create_schemata(char *schema, int val);
-static int rdt_set_bt_schemata(char *str);
-static int rdt_set_pid(pid_t pid, bool offline);
-
-static void set_rdt(struct task_struct *p, bool offline) {
-	char schema[256];
-
-	if (offline) {
-		rdt_create_schemata(schema, sysctl_sched_bt_rdt_cache_percent);
-		if (rdt_set_bt_schemata(schema) != 0) {
-			printk(KERN_ERR "set bt schemata failed for pid:%d\n", p->pid);
-			return;
-		}
-		if (rdt_set_pid(p->pid, true) < 0) {
-			printk(KERN_ERR "move pid:%d to rdt offline group failed\n", p->pid);
-			return;
-		}
-	} else {
-		if (rdt_set_pid(p->pid, false) < 0) {
-			printk(KERN_ERR "move pid:%d to default rdt group failed\n", p->pid);
-			return;
-		}
-	}
-}
-#endif
-
 /* Actually do priority change: must hold pi & rq lock. */
 static void __setscheduler(struct rq *rq, struct task_struct *p,
 			   const struct sched_attr *attr, bool keep_boost)
@@ -4213,23 +4195,14 @@ static void __setscheduler(struct rq *rq, struct task_struct *p,
 
 	if (dl_prio(p->prio))
 		p->sched_class = &dl_sched_class;
-	else if (rt_prio(p->prio)) {
+	else if (rt_prio(p->prio))
 		p->sched_class = &rt_sched_class;
 #ifdef CONFIG_BT_SCHED
-	 } else if (bt_prio(p->prio)) {
-#ifdef CONFIG_INTEL_RDT
-		if (bt_use_rdt && p->sched_class == &fair_sched_class)
-			set_rdt(p, true);
-#endif
+	else if (bt_prio(p->prio))
 		p->sched_class = &bt_sched_class;
 #endif
-	} else {
-#ifdef CONFIG_INTEL_RDT
-		if (bt_use_rdt && p->sched_class == & bt_sched_class)
-			set_rdt(p, false);
-#endif
+	else
 		p->sched_class = &fair_sched_class;
-	}
 }
 
 /*
@@ -4247,134 +4220,6 @@ static bool check_same_owner(struct task_struct *p)
 	rcu_read_unlock();
 	return match;
 }
-
-#if defined(CONFIG_BT_SCHED) && defined(CONFIG_INTEL_RDT)
-static struct file *file_open(const char *path, int flags, int rights)
-{
-        struct file *filp = NULL;
-        int err = 0;
-	struct path tpath;
-
-	err = kern_path(path, LOOKUP_FOLLOW, &tpath);
-	if (err)
-		printk(KERN_ERR "bt-rdt:path:%s does not exist\n", path);
-
-        filp = filp_open(path, flags, rights);
-        if (IS_ERR(filp)) {
-                err = PTR_ERR(filp);
-		printk(KERN_ERR "file open failed:%d\n", err);
-                return NULL;
-        }
-        return filp;
-}
-
-static void file_close(struct file *file)
-{
-        filp_close(file, NULL);
-}
-
-extern char rdt_mount_dir[PATH_MAX];
-static int rdt_set_pid(pid_t pid, bool offline)
-{
-        struct file *fp;
-        char path[256]; /* should use PATH_MAX here but the stack is 2048 */
-        unsigned char pid_str[64];
-	int len;
-	int r;
-	loff_t pos = 0;
-
-	len = strlen(rdt_mount_dir);
-	if (len <= 0) {
-		printk(KERN_ERR "rdt mount dir:%s is null\n", rdt_mount_dir);
-		return -EINVAL;
-	}
-        strncpy(path, rdt_mount_dir, sizeof(path));
-	path[len]='\0';
-	if (offline)
-		strcat(path, "/rdt_offline/tasks");
-	else
-		strcat(path, "/tasks");
-        sprintf(pid_str, "%d", pid);
-
-        fp = file_open(path, O_RDWR, 0);
-	if (fp == NULL) {
-		printk(KERN_ERR "bt-rdt:open:%s failed\n", path);
-		return -EINVAL;
-	}
-	r = kernel_write(fp, pid_str, strlen(pid_str), &pos);
-	if (r <= 0)
-		printk(KERN_ERR "bt-rdt:set pid:%s failed\n", pid_str);
-        file_close(fp);
-
-	return 0;
-}
-
-static int rdt_set_bt_schemata(char *str)
-{
-        struct file *fp;
-        char path[256], buffer[256];
-	int len, r = 0;
-	loff_t pos = 0;
-
-	sprintf(buffer, "%s\n", str);
-	len = strlen(rdt_mount_dir);
-	if (len <= 0) {
-		printk(KERN_ERR "bt-rdt:rdt_set_bt_schemata failed:rdt mount dir:%s empty len:%d\n", rdt_mount_dir, len);
-		return -EINVAL;
-	}
-        strncpy(path, rdt_mount_dir, sizeof(path));
-	path[len]='\0';
-        strcat(path, "/rdt_offline/schemata");
-
-        fp = file_open(path, O_RDWR, 0);
-	 if (fp == NULL) {
-		printk(KERN_ERR "rdt_set_bt_schemata failed:file open failed:%s\n", path);
-                return -EINVAL;
-        }
-	len = strlen(buffer);
-	r = kernel_write(fp, buffer, len, &pos);
-	if (r <= 0)
-		printk(KERN_ERR "bt-rdt:write schemata:[%s] failed:%d\n", buffer, r);
-
-        file_close(fp);
-	return 0;
-}
-
-int sched_bt_rdt_cache_percent_handler(struct ctl_table *table, int write,
-                void __user *buffer, size_t *lenp,
-                loff_t *ppos)
-{
-	int old_val = sysctl_sched_bt_rdt_cache_percent;
-        int ret = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
-	char schema[256];
-
-	if (!bt_use_rdt) {
-		printk(KERN_ERR "bt rdt is not enabled, add offline_rdt to cmdline to enable it.\n");
-		return -ENODEV;
-	}
-
-	if (ret != 0) {
-		printk(KERN_ERR "set bt rdt cache percent failed invalid value\n");
-		return -EINVAL;
-	}
-	if (old_val == sysctl_sched_bt_rdt_cache_percent)
-		return 0;
-
-	ret = -EINVAL;
-
-	rdt_create_schemata(schema, sysctl_sched_bt_rdt_cache_percent);
-	if (rdt_set_bt_schemata(schema) != 0) {
-		printk(KERN_ERR "set bt rdt cache percent failed schema:%s\n", schema);
-		goto out;
-	}
-
-	return 0;
-out:
-	sysctl_sched_bt_rdt_cache_percent = old_val;
-
-	return ret;
-}
-#endif
 
 static int __sched_setscheduler(struct task_struct *p,
 				const struct sched_attr *attr,
@@ -4689,7 +4534,6 @@ do_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
 	struct sched_param lparam;
 	struct task_struct *p;
 	int retval;
-	struct task_group *tg;
 
 	if (!param || pid < 0)
 		return -EINVAL;
@@ -4700,20 +4544,27 @@ do_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
 	retval = -ESRCH;
 	p = find_process_by_pid(pid);
 	if (p != NULL) {
+#ifdef CONFIG_BT_GROUP_SCHED
+		struct task_group *tg;
+
 		if (offlinegroup_enabled) {
 			tg = container_of(task_css_check(p, cpu_cgrp_id, false),
 					  struct task_group, css);
 			if (tg->parent && tg->offline && policy != SCHED_BT &&
-			    policy != SCHED_RR && policy != SCHED_FIFO)
-				goto out;
+			    policy != SCHED_RR && policy != SCHED_FIFO) {
+				rcu_read_unlock();
+				return retval;
+			}
 
-			if (tg->parent && !tg->offline && policy == SCHED_BT)
-				goto out;
+			if (tg->parent && !tg->offline && policy == SCHED_BT) {
+				rcu_read_unlock();
+				return retval;
+			}
 		}
+#endif
 		retval = sched_setscheduler(p, policy, &lparam);
 	}
 
-out:
 	rcu_read_unlock();
 
 	return retval;
@@ -6638,7 +6489,7 @@ void sched_online_group(struct task_group *tg, struct task_group *parent)
 	spin_unlock_irqrestore(&task_group_lock, flags);
 
 	online_fair_sched_group(tg);
-#ifdef CONFIG_BT_SCHED
+#ifdef CONFIG_BT_GROUP_SCHED
 	online_bt_sched_group(tg);
 #endif
 }
@@ -6675,7 +6526,6 @@ void sched_offline_group(struct task_group *tg)
 static void sched_change_group(struct task_struct *tsk, int type)
 {
 	struct task_group *tg;
-	struct rq *rq = task_rq(tsk);
 
 	/*
 	 * All callers are synchronized by task_rq_lock(); we do not use RCU
@@ -6687,9 +6537,11 @@ static void sched_change_group(struct task_struct *tsk, int type)
 	tg = autogroup_task_group(tsk, tg);
 	tsk->sched_task_group = tg;
 
+#ifdef CONFIG_BT_GROUP_SCHED
 	/* No need to re-setcheduler when fork or exit a task */
 	if (offlinegroup_enabled && !rt_task(tsk) &&
 	    !(tsk->flags & PF_EXITING) && (type != TASK_SET_GROUP)) {
+		struct rq *rq = task_rq(tsk);
 		struct sched_attr attr = {
 			.sched_priority = 0,
 		};
@@ -6714,6 +6566,7 @@ static void sched_change_group(struct task_struct *tsk, int type)
 		 */
 		__setscheduler(rq, tsk, &attr, 0);
 	}
+#endif
 
 #if defined(CONFIG_FAIR_GROUP_SCHED) || defined (CONFIG_BT_GROUP_SCHED)
 	if (tsk->sched_class->task_change_group)
@@ -6763,6 +6616,36 @@ static inline struct task_group *css_tg(struct cgroup_subsys_state *css)
 	return css ? container_of(css, struct task_group, css) : NULL;
 }
 
+void cpu_set_quota_aware(struct task_struct *p, u64 val)
+{
+	struct task_group *tg = task_group(p);
+
+	if (tg && tg != &root_task_group)
+		tg->cpuquota_aware = val;
+}
+
+#define cpu_quota_aware_enabled(tg) \
+    (sysctl_cgroup_stats_isolated && tg && \
+		tg != &root_task_group && tg->cpuquota_aware)
+
+int cpu_get_max_cpus(struct task_struct *p)
+{
+	int max_cpus = INT_MAX;
+	struct task_group *tg = task_group(p);
+
+	if (!cpu_quota_aware_enabled(tg))
+		return max_cpus;
+
+	if (tg->cfs_bandwidth.quota == RUNTIME_INF)
+		return max_cpus;
+
+	max_cpus = tg->cfs_bandwidth.quota / tg->cfs_bandwidth.period;
+	if (tg->cfs_bandwidth.quota % tg->cfs_bandwidth.period)
+		max_cpus++;
+
+	return max_cpus;
+}
+
 static struct cgroup_subsys_state *
 cpu_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 {
@@ -6778,8 +6661,12 @@ cpu_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 	if (IS_ERR(tg))
 		return ERR_PTR(-ENOMEM);
 
+#ifdef CONFIG_BT_GROUP_SCHED
 	if (offlinegroup_enabled)
 		tg->offline = parent->offline;
+#endif
+
+	tg->cpuquota_aware = 1;
 
 	return &tg->css;
 }
@@ -7228,8 +7115,23 @@ static u64 cpu_rt_period_read_uint(struct cgroup_subsys_state *css,
 }
 #endif /* CONFIG_RT_GROUP_SCHED */
 
+#ifdef CONFIG_FAIR_GROUP_SCHED
+static u64 cpu_quota_aware_read_u64(struct cgroup_subsys_state *css,
+			       struct cftype *cft)
+{
+	struct task_group *tg = css_tg(css);
+
+	return tg->cpuquota_aware;
+}
+#endif
+
 static struct cftype cpu_files[] = {
 #ifdef CONFIG_FAIR_GROUP_SCHED
+	{
+		.name = "quota_aware",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = cpu_quota_aware_read_u64,
+	},
 	{
 		.name = "shares",
 		.read_u64 = cpu_shares_read_u64,
