@@ -6625,8 +6625,8 @@ void cpu_set_quota_aware(struct task_struct *p, u64 val)
 }
 
 #define cpu_quota_aware_enabled(tg) \
-    sysctl_cgroup_stats_isolated && tg && \
-		tg != &root_task_group && tg->cpuquota_aware
+    (sysctl_cgroup_stats_isolated && tg && \
+		tg != &root_task_group && tg->cpuquota_aware)
 
 int cpu_get_max_cpus(struct task_struct *p)
 {
