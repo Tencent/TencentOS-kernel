@@ -1,4 +1,4 @@
- ![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/tencentos-logo.png) 
+ ![img](images/tencentos-logo.png) 
 
 
 # TencentOS Server kernel
@@ -130,17 +130,17 @@ TencentOS server的内核和用户态包的更新也会持续同步至腾讯软�
 
 隔离方案如图所示
 
-​    ![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/docker-isolation.jpg)
+​    ![img](images/docker-isolation.jpg)
 
 tlinux内核在cgroup的memory，cpuset等子系统中分别添加对应的文件输出，然后由用户通过mount bind操作，将同名文件绑定到container的proc中。Mount bind操作可以在docker启动container的流程中添加。
 
 例如：在memeory子系统对应的container目录中添加meminfo和vmstat文件。
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/docker_isolation_img1.jpg)
+![img](images/docker_isolation_img1.jpg)
 
 在cpu子系统对应的container下实现cpuinfo，stat文件。
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/docker_isolation_img2.jpg)
+![img](images/docker_isolation_img2.jpg)
 
 **3.**    **文件接口说明**
 
@@ -180,7 +180,7 @@ tlinux内核在cgroup的memory，cpuset等子系统中分别添加对应的文�
 
 - blkio.diskstats的通过blkcg_diskstats对象统计当前blkcg对特定设备的io量，由于单个blkcg可以访问多个设备，因此blkcg会维护一个blkcg_diskstats队列。由于实际blkcg_diskstats队列长度较短同时为了提高blkcg_diskstats搜索效率，我们设置了一个cache点用于缓存最近命中的blkcg_diskstats对象的地址。Io统计的基本流程是，io提交阶段我们会将bio与blkcg进行绑定，因为end_of_io函数的运行上下文非提交io进程的上下文，因此我们需要通过bio确定相应的blkcg。如果当前bio可以与plug队列，设备dispatch队列或者io调度器内部队列的request合并，此时进行io_merged的统计，Io完成的时候我们对io_sectors，io_serviced, io_wait_time的统计。in_flight，io_ticks, time_in_queue这三个字段与物理设备的处理能力相关，因此我们不单独进行统计，全部填0，然后追加了两个字段将母机侧的io_ticks, time_in_queue的值透传到容器里面。值得注意的是，blkio.diskstats入口默认是关闭的，用户需要通过echo 1 > blkio.diskstats打开方可获取当前cgroup的io统计。基本框架如下所示：
 
- ![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/docker_blkcg_img1.jpg)
+ ![img](images/docker_blkcg_img1.jpg)
 
 
 
@@ -302,7 +302,7 @@ NSsid:  1       11126
 
 - page cache在系统中的大致位置，如下图所示：
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/page_cache_img1.png)
+![img](images/page_cache_img1.png)
 
 
 
@@ -389,7 +389,7 @@ NSsid:  1       11126
 
 内核热补丁技术是一种无需重启服务器，即可实现修改内核运行时代码的技术。基于该技术，可以在不影响业务正常运行的情况下，修复内核bug或者安全漏洞，以提高运营效率、底层平台的稳定性和可用性，并使得业务运营体验有效提升。
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/hot_patch_img1.png)
+![img](images/hot_patch_img1.png)
 
 
 
@@ -407,12 +407,12 @@ arm64热补丁功能实现包括内核、编译器、用户态工具几部分。
 
 kpatch在内核中是基于ftrace实现内核函数的替换，类似于ftrace的动态探测点，不过不是统计某些运行数据，而是修改函数的运行序列：在函数运行某些额外的代码之后，略过旧函数代码，并跳转至新函数。框架如下图所示：
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/hot_patch_img2.png)
+![img](images/hot_patch_img2.png)
 
 
 针对arm64架构，整个流程可以细化为下图所示：
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/hot_patch_img3.png)
+![img](images/hot_patch_img3.png)
 
 
 
@@ -420,7 +420,7 @@ kpatch在内核中是基于ftrace实现内核函数的替换，类似于ftrace�
 
 
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/hot_patch_img4.png)
+![img](images/hot_patch_img4.png)
 
 
 
@@ -436,18 +436,18 @@ kpatch在内核中是基于ftrace实现内核函数的替换，类似于ftrace�
 
 **x86机器上：**
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/hot_patch_img5.png)
+![img](images/hot_patch_img5.png)
 
 
 x86机器上，如果使用-mfentry，elf文件中ftrace跳转指令位于prologue前面，在由旧函数跳转到新函数后，执行指令流程不会出错。如果使用mcount，则在新函数前需要添加stub函数，用于处理栈信息等。**arm64机器上：**
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/hot_patch_img6.png)
+![img](images/hot_patch_img6.png)
 
 
 
 Arm64只支持mcount功能，但是arm64 prologue会对寄存器做修改，所以无法使用stub函数来适配。所以采用gcc patchable-function-entry来实现类似于mfentry的功能。使用了GCC 8.2.1版本来编译内核，rpm包链接地址：https://tlinux-mirror.tencent-cloud.com/tlinux/2.4/arm64/tlinux-sclo/aarch64/tl/devtoolset-8/devtoolset-8-gcc-8.2.1-3.tl2.aarch64.rpm 。
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/hot_patch_img7.png)
+![img](images/hot_patch_img7.png)
 
 
 
@@ -455,7 +455,7 @@ Arm64只支持mcount功能，但是arm64 prologue会对寄存器做修改，所�
 
 热补丁中涉及到修改regs参数，所以在ftrace跳转时需要将寄存器入栈，所以针对arm64，实现了ftrace with regs功能，为热补丁功能做准备。x0 ~ x30入栈操作如下：
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/hot_patch_img8.png)
+![img](images/hot_patch_img8.png)
 
 
 
@@ -464,7 +464,7 @@ Arm64只支持mcount功能，但是arm64 prologue会对寄存器做修改，所�
 包括ftrace_ops注册删除、模块载入时数据重定位等功能。
 重定位简要代码如下：
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/hot_patch_img9.png)
+![img](images/hot_patch_img9.png)
 
 
 
@@ -548,7 +548,7 @@ filling_function 在不同的架构下规则不同，在arm64架构中，主要�
 首先需要载入kpatch模块，然后载入用户态工具生成的新函数模块。通过lsmod查看模块是否载入成功。同时kpatch提供了sysfs接口，可以查看载入新函数模块的信息，包括新旧函数地址等。可以通过`/sys/kernel/kpatch/xxx/enabled`来卸载模块，恢复执行原函数。
 简要操作流程如下：
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/hot_patch_img10.png)
+![img](images/hot_patch_img10.png)
 
 
 
@@ -668,9 +668,9 @@ int main()
 为此，好的混部方案就是将离在线业务彻底分开，所以在调度算法这一层次就要做区分。基于这种考虑，开发了针对离线业务的新调度算法bt，该算法可以保证在线业务优先运行。新调度算法的基本算法借鉴于CFS，但在CPU选择、抢占、负载均衡、时延处理、CPU带宽控制等多个方面都有自己的特点和要求，有特有的处理方式。特别是配有特有的负载均衡策略、CPU带宽控制策略等。
 整个的运行机制如下图:
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/bt_sched_img01.png)
+![img](images/bt_sched_img01.png)
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/bt_sched_img02.png)
+![img](images/bt_sched_img02.png)
 
 其中：蓝色代表使用新离线调度算法bt的离线业务；橙色代表在线业务；CPU的颜色代表哪种业务在运行。通过运行切换图可以看到：1、只有离线业务时，如同CFS一样可以均匀的分散到CPU上；2、在线业务需要运行时，可以及时的抢占离线业务占用的CPU，且将离线业务排挤到其它离线业务占用的CPU上，这样在线业务及时得到运行且离线也会占用剩余CPU，存在个别离线业务无法运行的情况；3、在线业务较多时，可以均衡合理的占用所有CPU，此时离线业务抢不到CPU；4、在线业务休眠时，离线业务可以及时的占用在线业务释放的CPU。
 ### 业务场景效果
@@ -678,18 +678,18 @@ int main()
 
 - 场景A
 	如下图所示，在A测试场景中，模块a一个用于统计频率的模块，对时延非常敏感。此业务不能混部，整机CPU利用率只有15%左右，业务尝试过使用cgroup方案来混部，但是cgroup方案混部之后，对在线模块a影响太大，导致错误次数陡增，因此此模块一直不能混部。使用我们提供的方案之后，可以发现，CPU提升至60%，并且错误次数基本没有变化。
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/bt_sched_img03.png)
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/bt_sched_img04.png)
+![img](images/bt_sched_img03.png)
+![img](images/bt_sched_img04.png)
 
 
 - 场景B
    在B测试场景中（模块b是一个翻译模块，对时延很敏感），原本b模块是不能混部的，业务尝试过混部，但是因为离线混部上去之后对模块b的影响很大，时延变长，所以一直不能混部。使用我们的方案的效果如下图所示，整机CPU利用率从20%提升至50%，并且对模块没有影响，时延基本上没有变化
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/bt_sched_img05.png)
+![img](images/bt_sched_img05.png)
 
 
 - 场景C
    模块C对时延不像场景A，B那么敏感，所以在使用我们提供的方案之前，利用cgroup方案进行混部，CPU最高可以达到40%。但是平台不再敢往上压，因为再往上压就会影响到在线c业务。如下图所示，使用我们的方案之后，平台不断往机器上添加离线业务，将机器CPU压至90%的情况下，c业务的各项指标还是正常，并没有受到影响。
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/bt_sched_img06.png)
+![img](images/bt_sched_img06.png)
 
 上面列的是腾讯内部使用BT调度算法的效果。有兴趣的同学可以在自己的业务场景中进行适用，真实的去体验腾讯离在线混部方案的效果。具体使用方法详见下面的使用指南。
 
@@ -697,27 +697,27 @@ int main()
 我们提供了一个启动参数offline_class来支持用户程序使用离线调度。
 设置offline_class即使能了离线调度，用户可以通过sched_setscheduler函数把一个进程设置成离线调度：
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/bt_sched_img07.png)
+![img](images/bt_sched_img07.png)
 
 其中7表示离线调度。
 设置成功后，我们可以用top比较下设置前后进程的优先级变化，
 设置前：
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/bt_sched_img08.png)
+![img](images/bt_sched_img08.png)
 
 设置成离线调度后：
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/bt_sched_img09.png)
+![img](images/bt_sched_img09.png)
 
 通过设置kernel.sched_bt_period_us和kernel.sched_bt_runtime_us这两个内核参数，我们可以控制离线进程占用的cpu比例。
 默认情况下kernel.sched_bt_period_us=1000000，kernel.sched_bt_runtime_us=-1，表示控制周期是1s，离线进程占用cpu不受限制，比如，我们设置kernel.sched_bt_runtime_us=100000，即离线占用10%的cpu：
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/bt_sched_img10.png)
+![img](images/bt_sched_img10.png)
 
 
 __统计离线进程所占cpu比例__
 通过查看/proc/bt_stat文件，可以查看系统中离线进程所占用的cpu比例：
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/bt_sched_img11.png)
+![img](images/bt_sched_img11.png)
 
 该文件的结构和/proc/stat类似，只是在每个cpu的最后又增加了一列，表示该cpu上离线进程运行的时间。
 
@@ -727,7 +727,7 @@ __离线调度对docker的支持__
 为了更好的支持docker，离线调度在cgroup的cpu目录下会新增几个和离线调度相关的文件：
 
 
-![img](https://github.com/Tencent/TencentOS-kernel/blob/master/images/bt_sched_img12.png)
+![img](images/bt_sched_img12.png)
 
 cpu.bt_shares：同cpu.shares，表示该task group的share比例。
 cpuacct.bt_stat,cpuacct.bt_usage,cpuacct.bt_usage_percpu_sys,
