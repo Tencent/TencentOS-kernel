@@ -2790,7 +2790,7 @@ static struct task_struct *pick_next_task_bt(struct rq *rq, struct task_struct *
 		se = pick_next_bt_entity(bt_rq);
 		set_next_bt_entity(bt_rq, se);
 		bt_rq = group_bt_rq(se);
-	}while(bt_rq && bt_rq->nr_running);
+	}while(bt_rq);
 
 	p = bt_task_of(se);
 
