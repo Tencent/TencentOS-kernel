@@ -375,7 +375,10 @@ struct task_group {
 	u64 cpuquota_aware;
 	struct cfs_bandwidth cfs_bandwidth;
 
+#ifdef CONFIG_BT_GROUP_SCHED
 	unsigned long offline;
+	struct mutex offline_mutex;
+#endif
 };
 
 #ifdef CONFIG_FAIR_GROUP_SCHED

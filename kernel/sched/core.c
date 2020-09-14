@@ -2481,9 +2481,17 @@ int sched_fork(unsigned long clone_flags, struct task_struct *p)
 		p->sched_class = &rt_sched_class;
 #ifdef	CONFIG_BT_SCHED
 	} else if(bt_prio(p->prio)){
+		p->normal_prio = p->static_prio = p->prio;
+		p->policy = SCHED_BT;
 		p->sched_class = &bt_sched_class;
+		set_bt_load_weight(p);
 #endif
 	} else {
+#ifdef	CONFIG_BT_SCHED
+		p->normal_prio = p->static_prio = p->prio;
+		p->policy = SCHED_NORMAL;
+		set_load_weight(p);
+#endif
 		p->sched_class = &fair_sched_class;
 	}
 
@@ -6466,6 +6474,8 @@ struct task_group *sched_create_group(struct task_group *parent)
 	if (!alloc_rt_sched_group(tg, parent))
 		goto err;
 
+	mutex_init(&tg->offline_mutex);
+
 	return tg;
 
 err:
@@ -6539,8 +6549,7 @@ static void sched_change_group(struct task_struct *tsk, int type)
 
 #ifdef CONFIG_BT_GROUP_SCHED
 	/* No need to re-setcheduler when fork or exit a task */
-	if (offlinegroup_enabled && !rt_task(tsk) &&
-	    !(tsk->flags & PF_EXITING) && (type != TASK_SET_GROUP)) {
+	if (offlinegroup_enabled && !rt_task(tsk) && !(tsk->flags & PF_EXITING) ) {
 		struct rq *rq = task_rq(tsk);
 		struct sched_attr attr = {
 			.sched_priority = 0,
@@ -7055,15 +7064,16 @@ static int cpu_offline_write_uint(struct cgroup_subsys_state *css,
 	if (!tg->se[0])
 		return -EINVAL;
 
+	mutex_lock(&tg->offline_mutex);
 	if (tg->offline == !!offline_input)
-		return 0;
+		goto done;
 
 	if (!tg->offline && offline_input) {
 		sched_class = SCHED_BT;
 	} else if (tg->offline && !offline_input) {
 		sched_class = SCHED_NORMAL;
 	} else
-		return 0;
+		goto done;
 
 	tg->offline = !!offline_input;
 
@@ -7077,6 +7087,9 @@ static int cpu_offline_write_uint(struct cgroup_subsys_state *css,
 		}
 	}
 	css_task_iter_end(&it);
+
+done:
+	mutex_unlock(&tg->offline_mutex);
 	return 0;
 }
 
