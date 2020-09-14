@@ -6474,7 +6474,9 @@ struct task_group *sched_create_group(struct task_group *parent)
 	if (!alloc_rt_sched_group(tg, parent))
 		goto err;
 
+#ifdef CONFIG_BT_GROUP_SCHED
 	mutex_init(&tg->offline_mutex);
+#endif
 
 	return tg;
 
