@@ -4939,6 +4939,8 @@ static ssize_t offline_proc_write(struct file *file, const char __user *ubuf,
 	struct bt_rq *bt_rq;
 	unsigned long tmp;
 	int cpn;
+	struct rq *rq;
+	unsigned long flags;
 
 	cpn = min((int)OFFLINE_NUMBUF, (int)cnt);
 	if (copy_from_user(buffer, ubuf, cpn))
@@ -4949,11 +4951,14 @@ static ssize_t offline_proc_write(struct file *file, const char __user *ubuf,
 		return -EINVAL;
 
 	*to = tmp;
-	bt_rq = &cpu_rq(cpu)->bt;
+	rq = cpu_rq(cpu);
 
+	bt_rq = &rq->bt;
+	raw_spin_lock_irqsave(&rq->lock, flags);
 	raw_spin_lock(&bt_rq->bt_runtime_lock);
 	bt_rq->bt_runtime = (u64)sysctl_sched_bt_period * NSEC_PER_USEC * tmp / 100;
 	raw_spin_unlock(&bt_rq->bt_runtime_lock);
+	raw_spin_unlock_irqrestore(&rq->lock, flags);
 
 	return cnt;
 }
