@@ -32,7 +32,7 @@
 #include <net/netfilter/nf_conntrack.h>
 #endif
 #include <net/net_namespace.h>		/* Netw namespace */
-
+#include <linux/netdevice.h>
 #define IP_VS_HDR_INVERSE	1
 #define IP_VS_HDR_ICMP		2
 
@@ -1712,6 +1712,15 @@ struct bpf_sym_addrs {
 	const struct file_operations *bpf_prog_fops;
 };
 
+struct net *ip_vs_skb_net(struct sk_buff *skb);
+enum {
+	IPVS_ORIGIN_MODE,
+	IPVS_BPF_MODE,
+	IPVS_SHARE_NS_MODE,
+	IPVS_MAX_MODE
+};
+extern unsigned int ipvs_mode;
+extern struct net init_net;
 extern struct bpf_sym_addrs resolve_addrs;
 extern struct bpf_map *conntrack_map;
 extern bool bpf_mode_on;
@@ -1738,5 +1747,4 @@ extern struct cidrs __rcu *non_masq_cidrs;
 #define IP_VS_SVC_TAB_BITS 8
 #define IP_VS_SVC_TAB_SIZE (1 << IP_VS_SVC_TAB_BITS)
 extern struct hlist_head ip_vs_svc_table[IP_VS_SVC_TAB_SIZE];
-
 #endif	/* _NET_IP_VS_H */

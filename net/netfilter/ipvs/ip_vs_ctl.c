@@ -1191,7 +1191,7 @@ ip_vs_add_service(struct netns_ipvs *ipvs, struct ip_vs_service_user_kern *u,
 	ip_vs_use_count_inc();
 
 	/* in bpf mode, avoid loopback traffic */
-	if (bpf_mode_on && strcmp(u->sched_name, "wrr") != 0 &&
+	if (ipvs_mode == IPVS_BPF_MODE && strcmp(u->sched_name, "wrr") != 0 &&
 	    strcmp(u->sched_name, "rr") != 0 &&
 	    strcmp(u->sched_name, "lc") != 0 &&
 	    strcmp(u->sched_name, "wlc") != 0) {

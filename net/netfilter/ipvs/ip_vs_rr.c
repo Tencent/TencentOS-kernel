@@ -76,7 +76,7 @@ ip_vs_rr_schedule(struct ip_vs_service *svc, const struct sk_buff *skb,
 			if (!(dest->flags & IP_VS_DEST_F_OVERLOAD) &&
 			    atomic_read(&dest->weight) > 0) {
 				/* HIT */
-				if (!bpf_mode_on)
+				if (ipvs_mode != IPVS_BPF_MODE)
 					goto out;
 				else if (dest->addr.ip != iph->saddr.ip)
 					goto out;

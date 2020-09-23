@@ -54,14 +54,25 @@ static int ip_vs_conn_tab_bits = CONFIG_IP_VS_TAB_BITS;
 module_param_named(conn_tab_bits, ip_vs_conn_tab_bits, int, 0444);
 MODULE_PARM_DESC(conn_tab_bits, "Set connections' hash size");
 
-bool bpf_mode_on;
-module_param_named(mode, bpf_mode_on, bool, 0444);
-MODULE_PARM_DESC(mode, "set bpf mode in IPVS");
-EXPORT_SYMBOL_GPL(bpf_mode_on);
+unsigned int ipvs_mode;
+module_param_named(mode, ipvs_mode, uint, 0444);
+MODULE_PARM_DESC(mode, "set mode in IPVS");
+EXPORT_SYMBOL_GPL(ipvs_mode);
 
 /* size and mask values */
 int ip_vs_conn_tab_size __read_mostly;
 static int ip_vs_conn_tab_mask __read_mostly;
+
+/* retrieve origin net in skb for xmit
+ * local-out: ip_queue_xmit->skb_dst_set_noref
+ * local-in:  ip_route_input_slow set it
+ */
+struct net *ip_vs_skb_net(struct sk_buff *skb)
+{
+	if (skb_dst(skb))
+		return dev_net(skb_dst(skb)->dev);
+	return NULL;
+}
 
 /*
  *  Connection hash table: for input and output packets lookups of IPVS
@@ -241,7 +252,7 @@ static void ip_vs_unlink_bpf(struct ip_vs_conn *cp)
 	struct bpf_map *map;
 	int err = 0;
 
-	if (!bpf_mode_on)
+	if (ipvs_mode != IPVS_BPF_MODE)
 		return;
 
 	k.sip = cp->caddr.ip;
@@ -319,7 +330,7 @@ static inline bool ip_vs_conn_unlink(struct ip_vs_conn *cp)
 			hlist_del_rcu(&cp->c_list);
 			cp->flags &= ~IP_VS_CONN_F_HASHED;
 			ret = true;
-			if (bpf_mode_on)
+			if (ipvs_mode == IPVS_BPF_MODE)
 				ip_vs_unlink_bpf(cp);
 		}
 	} else
@@ -1113,7 +1124,7 @@ static bool ip_vs_conn_new_bpf(struct ip_vs_dest *dest,
 
 	BUILD_BUG_ON(sizeof(atomic_t) != 4);
 
-	if (!bpf_mode_on)
+	if (ipvs_mode != IPVS_BPF_MODE)
 		return true;
 
 	svc = rcu_dereference(dest->svc);
@@ -1251,7 +1262,7 @@ ip_vs_conn_new(const struct ip_vs_conn_param *p, int dest_af,
 							   p->protocol);
 	int skip = 0;
 
-	if (bpf_mode_on) {
+	if (ipvs_mode == IPVS_BPF_MODE) {
 		if (!ip_vs_conn_new_bpf(dest, flags, p, &skip))
 			return NULL;
 	}
@@ -1270,7 +1281,7 @@ ip_vs_conn_new(const struct ip_vs_conn_param *p, int dest_af,
 	cp->protocol	   = p->protocol;
 	ip_vs_addr_set(p->af, &cp->caddr, p->caddr);
 	cp->cport	   = p->cport;
-	if (bpf_mode_on)
+	if (ipvs_mode == IPVS_BPF_MODE)
 		cp->skip_bpf = skip;
 	/* proto should only be IPPROTO_IP if p->vaddr is a fwmark */
 	ip_vs_addr_set(p->protocol == IPPROTO_IP ? AF_UNSPEC : p->af,
@@ -1795,7 +1806,7 @@ int __init ip_vs_conn_init(void)
 		spin_lock_init(&__ip_vs_conntbl_lock_array[idx].l);
 	}
 
-	if (bpf_mode_on) {
+	if (ipvs_mode == IPVS_BPF_MODE) {
 		for (idx = 0; idx < BPF_CONN_LOCKS; idx++)
 			spin_lock_init(&bpf_conntrack_locks[idx]);
 	}
