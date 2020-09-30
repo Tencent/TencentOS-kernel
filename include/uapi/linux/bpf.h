@@ -3372,6 +3372,15 @@ union bpf_attr {
  *		**-EINVAL** if *timer* was not initialized with bpf_timer_init() earlier.
  *		**-EDEADLK** if callback_fn tried to call bpf_timer_cancel() on its
  *		own timer which would have led to a deadlock otherwise.
+ *
+ * u64 bpf_skb_cgroup_classid(struct sk_buff *skb)
+ * 	Description
+ * 		See **bpf_get_cgroup_classid**\ () for the main description.
+ * 		This helper differs from **bpf_get_cgroup_classid**\ () in that
+ * 		the cgroup v1 net_cls class is retrieved only from the *skb*'s
+ * 		associated socket instead of the current process.
+ * 	Return
+ * 		The id is returned or 0 in case the id could not be retrieved.
  */
 #define __BPF_FUNC_MAPPER(FN)		\
 	FN(unspec),			\
