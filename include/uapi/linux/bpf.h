@@ -429,6 +429,9 @@ enum {
 
 /* Enable memory-mapping BPF map */
        BPF_F_MMAPABLE          = (1U << 10),
+
+/* Create a map that is suitable to be an inner map with dynamic max entries */
+	BPF_F_INNER_MAP		= (1U << 12),
 };
 
 /* flags for BPF_PROG_QUERY */
