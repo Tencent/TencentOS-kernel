@@ -2775,7 +2775,8 @@ static void tree_events(struct mem_cgroup *memcg, unsigned long *events)
 	}
 }
 
-static unsigned long mem_cgroup_usage(struct mem_cgroup *memcg, bool swap)
+static unsigned long mem_cgroup_usage_atomic(struct mem_cgroup *memcg,
+					     bool swap, bool atomic)
 {
 	unsigned long val = 0;
 
@@ -2787,6 +2788,8 @@ static unsigned long mem_cgroup_usage(struct mem_cgroup *memcg, bool swap)
 			val += memcg_page_state(iter, MEMCG_RSS);
 			if (swap)
 				val += memcg_page_state(iter, MEMCG_SWAP);
+			if (!atomic)
+				cond_resched();
 		}
 	} else {
 		if (!swap)
@@ -2796,6 +2799,16 @@ static unsigned long mem_cgroup_usage(struct mem_cgroup *memcg, bool swap)
 	}
 	return val;
 }
+
+__read_mostly unsigned int sysctl_memcg_usage_show_sched;
+static unsigned long mem_cgroup_usage(struct mem_cgroup *memcg, bool swap)
+{
+	if (sysctl_memcg_usage_show_sched)
+		return mem_cgroup_usage_atomic(memcg, swap, 0);
+	else
+		return mem_cgroup_usage_atomic(memcg, swap, 1);
+}
+
 
 enum {
 	RES_USAGE,
@@ -3333,7 +3346,7 @@ static void __mem_cgroup_threshold(struct mem_cgroup *memcg, bool swap)
 	if (!t)
 		goto unlock;
 
-	usage = mem_cgroup_usage(memcg, swap);
+	usage = mem_cgroup_usage_atomic(memcg, swap, 1);
 
 	/*
 	 * current_threshold points to threshold just below or equal to usage.
