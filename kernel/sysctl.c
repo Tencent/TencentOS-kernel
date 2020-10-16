@@ -334,6 +334,10 @@ static int sysrq_use_leftctrl_sysctl_handler(struct ctl_table * table ,int write
 extern int sysctl_min_epoll_wait_time;
 extern int sysctl_clocksource_switch_unstable_cs;
 extern int sysctl_clocksource_unstable_cnt;
+extern unsigned int sysctl_softirq_accel_target;
+extern int sysctl_softirq_accel_mask;
+extern int min_softirq_accel_mask;
+extern int max_softirq_accel_mask;
 extern unsigned int sysctl_memcg_stat_show_subtree;
 
 unsigned int sysctl_cgroup_stats_isolated = 0;
@@ -364,6 +368,22 @@ static struct ctl_table kern_table[] = {
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "softirq_accel_target_us",
+		.data		= &sysctl_softirq_accel_target,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "softirq_accel_mask",
+		.data		= &sysctl_softirq_accel_mask,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= &min_softirq_accel_mask,
+		.extra2		= &max_softirq_accel_mask,
 	},
 	{
 		.procname	= "memcg_stat_show_subtree",

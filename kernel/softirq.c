@@ -26,6 +26,8 @@
 #include <linux/smpboot.h>
 #include <linux/tick.h>
 #include <linux/irq.h>
+#include <linux/sched/stat.h>
+#include <linux/sched/clock.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/irq.h>
@@ -77,6 +79,32 @@ static void wakeup_softirqd(void)
 		wake_up_process(tsk);
 }
 
+unsigned int sysctl_softirq_accel_target = 2 * 1000 * 1000; //2ms
+int sysctl_softirq_accel_mask;
+int min_softirq_accel_mask;
+int max_softirq_accel_mask = (1 << NR_SOFTIRQS) - 1;
+static bool need_softirq_accel(struct task_struct *tsk, unsigned long pending)
+{
+#ifdef CONFIG_SCHED_INFO
+	if (tsk && tsk->state == TASK_RUNNING &&
+	    (pending & sysctl_softirq_accel_mask)) {
+		u64 delta = sched_clock_cpu(smp_processor_id());
+
+		if (!sched_info_on() || current == tsk ||
+		    !tsk->sched_info.last_queued ||
+		    delta <= tsk->sched_info.last_queued)
+			return false;
+
+		delta -= tsk->sched_info.last_queued;
+		if (delta >= sysctl_softirq_accel_target) {
+			tsk->sched_info.last_queued += delta;
+			return true;
+		}
+	}
+#endif
+	return false;
+}
+
 /*
  * If ksoftirqd is scheduled, we do not want to process pending softirqs
  * right now. Let ksoftirqd handle this at its own rate, to get fairness,
@@ -88,6 +116,8 @@ static bool ksoftirqd_running(unsigned long pending)
 	struct task_struct *tsk = __this_cpu_read(ksoftirqd);
 
 	if (pending & SOFTIRQ_NOW_MASK)
+		return false;
+	if (sysctl_softirq_accel_mask && need_softirq_accel(tsk, pending))
 		return false;
 	return tsk && (tsk->state == TASK_RUNNING);
 }
