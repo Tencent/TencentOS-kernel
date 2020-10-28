@@ -782,9 +782,10 @@ ip_vs_nat_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 	/* originally, this was set in ip_route_input_slow
 	 * In bpf mode, this is not useful since local rs is not allowed
 	 */
-	was_input = rt_is_input_route(skb_rtable(skb));
 	if (ipvs_mode == IPVS_BPF_MODE)
 		was_input = 1;
+	else
+		was_input = rt_is_input_route(skb_rtable(skb));
 	local = __ip_vs_get_out_rt(cp->ipvs, cp->af, skb, cp->dest, cp->daddr.ip,
 				   IP_VS_RT_MODE_LOCAL |
 				   IP_VS_RT_MODE_NON_LOCAL |
