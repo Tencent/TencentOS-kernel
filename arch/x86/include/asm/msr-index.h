@@ -567,6 +567,13 @@
 #define MSR_IA32_TSC_ADJUST             0x0000003b
 #define MSR_IA32_BNDCFGS		0x00000d90
 
+/* Referred to as IA32_FEATURE_CONTROL in Intel's SDM. */
+#define MSR_IA32_FEAT_CTL       0x0000003a
+#define FEAT_CTL_LOCKED             BIT(0)
+#define FEAT_CTL_VMX_ENABLED_INSIDE_SMX     BIT(1)
+#define FEAT_CTL_VMX_ENABLED_OUTSIDE_SMX    BIT(2)
+#define FEAT_CTL_LMCE_ENABLED           BIT(20)
+
 #define MSR_IA32_BNDCFGS_RSVD		0x00000ffc
 
 #define MSR_IA32_XSS			0x00000da0
