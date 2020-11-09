@@ -6550,8 +6550,13 @@ static void sched_change_group(struct task_struct *tsk, int type)
 	tsk->sched_task_group = tg;
 
 #ifdef CONFIG_BT_GROUP_SCHED
-	/* No need to re-setcheduler when fork or exit a task */
-	if (offlinegroup_enabled && !rt_task(tsk) && !(tsk->flags & PF_EXITING) ) {
+	/*
+	 * No need to re-setcheduler when a task is exiting or the task
+	 * is in an autogroup.
+	 */
+	if (offlinegroup_enabled && !rt_task(tsk)
+	    && !(tsk->flags & PF_EXITING)
+	    && !task_group_is_autogroup(tg)) {
 		struct rq *rq = task_rq(tsk);
 		struct sched_attr attr = {
 			.sched_priority = 0,
@@ -6565,16 +6570,6 @@ static void sched_change_group(struct task_struct *tsk, int type)
 			attr.sched_policy = SCHED_NORMAL;
 		}
 
-		/*
-		 * FIXME: __setscheduler before task_change_group would
-		 * lead to missing prev cfs_rq/bt_rq stats updating.
-		 * Otherwise, putting __setscheduler after task_change_group
-		 * is not right either, which would miss next cfs_rq/bt_rq
-		 * stats updating.
-		 * In fact, __setscheduler should be right before set_task_rq
-		 * in task_change_group callback, but if so, the code would be
-		 * messed up.
-		 */
 		__setscheduler(rq, tsk, &attr, 0);
 	}
 #endif
