@@ -118,7 +118,7 @@ static int show_bt_stat(struct seq_file *p, void *v)
 	seq_printf(p,
 		"\nctxt %llu\n"
 		"btime %lu\n"
-		"processes %d\n"
+		"processes %lu\n"
 		"procs_running %lu\n"
 		"procs_blocked %lu\n",
 		nr_context_switches(),
