@@ -133,10 +133,10 @@ int lockdep_tasklist_lock_is_held(void)
 EXPORT_SYMBOL_GPL(lockdep_tasklist_lock_is_held);
 #endif /* #ifdef CONFIG_PROVE_RCU */
 
-int nr_forks(void)
+unsigned long nr_forks(void)
 {
 	int cpu;
-	int total = 0;
+	unsigned long total = 0;
 
 	for_each_possible_cpu(cpu)
 		total += per_cpu(total_forks, cpu);
