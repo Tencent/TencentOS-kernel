@@ -160,6 +160,7 @@ enum {
  *   bit 3 ==				1: use of reserved bit detected
  *   bit 4 ==				1: fault was an instruction fetch
  *   bit 5 ==				1: protection keys block access
+ *   bit 15 ==             1: SGX MMU page-fault
  */
 enum x86_pf_error_code {
 	X86_PF_PROT	=		1 << 0,
