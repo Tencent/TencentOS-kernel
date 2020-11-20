@@ -24,6 +24,7 @@ VDSO32-$(CONFIG_IA32_EMULATION)	:= y
 
 # files to link into the vdso
 vobjs-y := vdso-note.o vclock_gettime.o vgetcpu.o
+vobjs-$(CONFIG_X86_SGX)		+= vsgx.o
 
 # files to link into kernel
 obj-y				+= vma.o extable.o
@@ -92,6 +93,7 @@ CFLAGS_REMOVE_vclock_gettime.o = -pg
 CFLAGS_REMOVE_vdso32/vclock_gettime.o = -pg
 CFLAGS_REMOVE_vgetcpu.o = -pg
 CFLAGS_REMOVE_vvar.o = -pg
+CFLAGS_REMOVE_vsgx.o = -pg
 
 #
 # X32 processes use x32 vDSO to access 64bit kernel data.
