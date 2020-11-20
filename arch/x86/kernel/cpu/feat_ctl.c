@@ -5,15 +5,32 @@
 #include <asm/msr-index.h>
 #include <asm/processor.h>
 
+static void clear_sgx_caps(void)
+{
+	setup_clear_cpu_cap(X86_FEATURE_SGX);
+	setup_clear_cpu_cap(X86_FEATURE_SGX_LC);
+}
+
 void init_ia32_feat_ctl(struct cpuinfo_x86 *c)
 {
+	bool enable_sgx;
 	u64 msr;
 
-	if (rdmsrl_safe(MSR_IA32_FEAT_CTL, &msr))
+	if (rdmsrl_safe(MSR_IA32_FEAT_CTL, &msr)) {
+		clear_sgx_caps();
 		return;
+	}
+
+	/*
+	 * Enable SGX if and only if the kernel supports SGX and Launch Control
+	 * is supported, i.e. disable SGX if the LE hash MSRs can't be written.
+	 */
+	enable_sgx = cpu_has(c, X86_FEATURE_SGX) &&
+		     cpu_has(c, X86_FEATURE_SGX_LC) &&
+		     IS_ENABLED(CONFIG_X86_SGX);
 
 	if (msr & FEAT_CTL_LOCKED)
-		return;
+		goto update_sgx;
 
 	/*
 	 * Ignore whatever value BIOS left in the MSR to avoid enabling random
@@ -33,5 +50,16 @@ void init_ia32_feat_ctl(struct cpuinfo_x86 *c)
 			msr |= FEAT_CTL_VMX_ENABLED_INSIDE_SMX;
 	}
 
+	if (enable_sgx)
+		msr |= FEAT_CTL_SGX_ENABLED | FEAT_CTL_SGX_LC_ENABLED;
+
 	wrmsrl(MSR_IA32_FEAT_CTL, msr);
+
+update_sgx:
+	if (!(msr & FEAT_CTL_SGX_ENABLED) ||
+	    !(msr & FEAT_CTL_SGX_LC_ENABLED) || !enable_sgx) {
+		if (enable_sgx)
+			pr_err_once("SGX disabled by BIOS\n");
+		clear_sgx_caps();
+	}
 }
