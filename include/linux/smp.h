@@ -94,6 +94,16 @@ extern int __cpu_up(unsigned int cpunum, struct task_struct *tidle);
  */
 extern void smp_cpus_done(unsigned int max_cpus);
 
+#define smp_call_function_many_async_begin(cpumask) \
+    preempt_disable();
+
+int smp_call_function_many_async(int cpu, call_single_data_t *csd, struct cpumask *mask);
+
+#define smp_call_function_many_async_end(cpumask) \
+    arch_send_call_function_ipi_mask(cpumask); \
+    preempt_enable();
+
+
 /*
  * Call a function on all other processors
  */
@@ -135,6 +145,10 @@ static inline int get_boot_cpu_id(void)
 #else /* !SMP */
 
 static inline void smp_send_stop(void) { }
+
+#define smp_call_function_many_async_begin(cpumask)
+#define smp_call_function_many_async(cpu, csd, mask) smp_call_function_single_async(cpu, csd)
+#define smp_call_function_many_async_end(cpumask)
 
 /*
  *	These macros fold the SMP functionality into a single CPU system
