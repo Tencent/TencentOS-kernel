@@ -1886,6 +1886,12 @@ static struct ctl_table vs_vars[] = {
 		.proc_handler	= proc_dointvec,
 	},
 	{
+		.procname	= "conn_reuse_old_conntrack",
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
 		.procname	= "schedule_icmp",
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
