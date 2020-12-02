@@ -139,7 +139,7 @@ static DEFINE_PER_CPU_SHARED_ALIGNED(call_single_data_t, csd_data);
  * ->func, ->info, and ->flags set.
  */
 static int generic_exec_single(int cpu, call_single_data_t *csd,
-			       smp_call_func_t func, void *info)
+			       smp_call_func_t func, void *info, struct cpumask *mask)
 {
 	if (cpu == smp_processor_id()) {
 		unsigned long flags;
@@ -176,7 +176,8 @@ static int generic_exec_single(int cpu, call_single_data_t *csd,
 	 * equipped to do the right thing...
 	 */
 	if (llist_add(&csd->llist, &per_cpu(call_single_queue, cpu)))
-		arch_send_call_function_single_ipi(cpu);
+		if (!mask) arch_send_call_function_single_ipi(cpu);
+		else __cpumask_set_cpu(cpu, mask);
 
 	return 0;
 }
@@ -296,7 +297,7 @@ int smp_call_function_single(int cpu, smp_call_func_t func, void *info,
 		csd_lock(csd);
 	}
 
-	err = generic_exec_single(cpu, csd, func, info);
+	err = generic_exec_single(cpu, csd, func, info, NULL);
 
 	if (wait)
 		csd_lock_wait(csd);
@@ -336,12 +337,49 @@ int smp_call_function_single_async(int cpu, call_single_data_t *csd)
 	csd->flags = CSD_FLAG_LOCK;
 	smp_wmb();
 
-	err = generic_exec_single(cpu, csd, csd->func, csd->info);
+	err = generic_exec_single(cpu, csd, csd->func, csd->info, NULL);
 	preempt_enable();
 
 	return err;
 }
 EXPORT_SYMBOL_GPL(smp_call_function_single_async);
+
+/**
+ * smp_call_function_many_async(): Run an asynchronous function on a
+ * 			         specific CPU.
+ * @cpu: The CPU to run on.
+ * @csd: Pre-allocated and setup data structure
+ *
+ * Like smp_call_function_single(), but the call is asynchonous and
+ * can thus be done from contexts with disabled interrupts.
+ *
+ * The caller passes his own pre-allocated data structure
+ * (ie: embedded in an object) and is responsible for synchronizing it
+ * such that the IPIs performed on the @csd are strictly serialized.
+ *
+ * NOTE: Be careful, there is unfortunately no current debugging facility to
+ * validate the correctness of this serialization.
+ */
+int smp_call_function_many_async(int cpu, call_single_data_t *csd, struct cpumask *mask)
+{
+	int err = 0;
+
+	preempt_disable();
+
+	/* We could deadlock if we have to wait here with interrupts disabled! */
+	if (WARN_ON_ONCE(csd->flags & CSD_FLAG_LOCK))
+		csd_lock_wait(csd);
+
+	csd->flags = CSD_FLAG_LOCK;
+	smp_wmb();
+
+	err = generic_exec_single(cpu, csd, csd->func, csd->info, mask);
+	preempt_enable();
+
+	return err;
+}
+EXPORT_SYMBOL_GPL(smp_call_function_many_async);
+
 
 /*
  * smp_call_function_any - Run a function on any of the given cpus

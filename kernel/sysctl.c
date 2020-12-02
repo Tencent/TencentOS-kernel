@@ -340,6 +340,9 @@ extern int min_softirq_accel_mask;
 extern int max_softirq_accel_mask;
 extern unsigned int sysctl_memcg_stat_show_subtree;
 extern unsigned int sysctl_memcg_usage_show_sched;
+#ifdef CONFIG_RPS
+extern unsigned int sysctl_rps_using_pvipi;
+#endif
 
 unsigned int sysctl_cgroup_stats_isolated = 0;
 
@@ -400,6 +403,15 @@ static struct ctl_table kern_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},
+#ifdef CONFIG_RPS
+	{
+		.procname	= "rps_using_pvipi",
+		.data		= &sysctl_rps_using_pvipi,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+#endif
 #ifdef CONFIG_PID_NS
 	{
 		.procname       = "watch_host_pid",
