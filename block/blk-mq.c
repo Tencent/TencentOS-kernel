@@ -105,7 +105,7 @@ static bool blk_mq_check_inflight(struct blk_mq_hw_ctx *hctx,
 	/*
 	 * index[0] counts the specific partition that was asked for.
 	 */
-	if (rq->part == mi->part)
+	if (!mi->part->partno || rq->part == mi->part)
 		mi->inflight[0]++;
 
 	return true;
