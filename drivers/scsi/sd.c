@@ -568,7 +568,6 @@ static struct scsi_driver sd_template = {
 		.name		= "sd",
 		.owner		= THIS_MODULE,
 		.probe		= sd_probe,
-		.probe_type	= PROBE_PREFER_ASYNCHRONOUS,
 		.remove		= sd_remove,
 		.shutdown	= sd_shutdown,
 		.pm		= &sd_pm_ops,
