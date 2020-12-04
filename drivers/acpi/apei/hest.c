@@ -141,8 +141,10 @@ static int __init hest_parse_ghes_count(struct acpi_hest_header *hest_hdr, void 
 {
 	int *count = data;
 
-	if (hest_hdr->type == ACPI_HEST_TYPE_GENERIC_ERROR ||
-	    hest_hdr->type == ACPI_HEST_TYPE_GENERIC_ERROR_V2)
+	if ((hest_hdr->type == ACPI_HEST_TYPE_GENERIC_ERROR ||
+	     hest_hdr->type == ACPI_HEST_TYPE_GENERIC_ERROR_V2) &&
+	    (boot_cpu_data.x86_vendor != X86_VENDOR_AMD ||
+	     !(hest_hdr->source_id &0xF000)))
 		(*count)++;
 	return 0;
 }
@@ -153,8 +155,10 @@ static int __init hest_parse_ghes(struct acpi_hest_header *hest_hdr, void *data)
 	struct ghes_arr *ghes_arr = data;
 	int rc, i;
 
-	if (hest_hdr->type != ACPI_HEST_TYPE_GENERIC_ERROR &&
-	    hest_hdr->type != ACPI_HEST_TYPE_GENERIC_ERROR_V2)
+	if ((hest_hdr->type != ACPI_HEST_TYPE_GENERIC_ERROR &&
+	     hest_hdr->type != ACPI_HEST_TYPE_GENERIC_ERROR_V2) ||
+	    ((hest_hdr->source_id & 0xF000) &&
+	     boot_cpu_data.x86_vendor == X86_VENDOR_AMD))
 		return 0;
 
 	if (!((struct acpi_hest_generic *)hest_hdr)->enabled)
