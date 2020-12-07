@@ -81,7 +81,7 @@
 - 通过以下步骤编译内核rpm
 	```
 	git tag 4.14.105-19-0008.beta10
-	cd package/defeault
+	cd package/default
 	./generate-rpms.sh -j  jobs_num
 	```
 	
