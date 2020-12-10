@@ -5,6 +5,7 @@
  * Copyright (C) 1995  Linus Torvalds
  * Copyright (C) 1995-2004 Russell King
  * Copyright (C) 2012 ARM Ltd.
+ * Copyright (C) 2020 Ampere Computing LLC
  */
 
 #include <linux/acpi.h>
@@ -635,9 +636,752 @@ static int __kprobes do_translation_fault(unsigned long addr,
 	return 0;
 }
 
+static int copy_from_user_io(void *to, const void __user *from, unsigned long n)
+{
+	const u8 __user *src = from;
+	u8 *dest = to;
+
+	for (; n; n--)
+		if (get_user(*dest++, src++))
+			break;
+	return n;
+}
+
+static int copy_to_user_io(void __user *to, const void *from, unsigned long n)
+{
+	const u8 *src = from;
+	u8 __user *dest = to;
+
+	for (; n; n--)
+		if (put_user(*src++, dest++))
+			break;
+	return n;
+}
+
+static int align_load(unsigned long addr, int sz, u64 *out)
+{
+	union {
+		u8 d8;
+		u16 d16;
+		u32 d32;
+		u64 d64;
+		char c[8];
+	} data;
+
+	if (sz != 1 && sz != 2 && sz != 4 && sz != 8)
+		return 1;
+	if (is_ttbr0_addr(addr)) {
+		if (copy_from_user_io(data.c, (const void __user *)addr, sz))
+			return 1;
+	} else
+		memcpy_fromio(data.c, (const void __iomem *)addr, sz);
+	switch (sz) {
+	case 1:
+		*out = data.d8;
+		break;
+	case 2:
+		*out = data.d16;
+		break;
+	case 4:
+		*out = data.d32;
+		break;
+	case 8:
+		*out = data.d64;
+		break;
+	default:
+		return 1;
+	}
+	return 0;
+}
+
+static int align_store(unsigned long addr, int sz, u64 val)
+{
+	union {
+		u8 d8;
+		u16 d16;
+		u32 d32;
+		u64 d64;
+		char c[8];
+	} data;
+
+	switch (sz) {
+	case 1:
+		data.d8 = val;
+		break;
+	case 2:
+		data.d16 = val;
+		break;
+	case 4:
+		data.d32 = val;
+		break;
+	case 8:
+		data.d64 = val;
+		break;
+	default:
+		return 1;
+	}
+	if (is_ttbr0_addr(addr)) {
+		if (copy_to_user_io((void __user *)addr, data.c, sz))
+			return 1;
+	} else
+		memcpy_toio((void __iomem *)addr, data.c, sz);
+	return 0;
+}
+
+static int align_dc_zva(unsigned long addr, struct pt_regs *regs)
+{
+	int bs = read_cpuid(DCZID_EL0) & 0xf;
+	int sz = 1 << (bs + 2);
+
+	addr &= ~(sz - 1);
+	if (is_ttbr0_addr(addr)) {
+		for (; sz; sz--) {
+			if (align_store(addr, 1, 0))
+				return 1;
+		}
+	} else
+		memset_io((void *)addr, 0, sz);
+	return 0;
+}
+
+static u64 get_vn_dt(int n, int t) {
+	u64 res;
+
+	switch (n) {
+#define V(n)						\
+	case n:						\
+		asm("cbnz %w1, 1f\n\t"			\
+		    "mov %0, v"#n".d[0]\n\t"		\
+		    "b 2f\n\t"				\
+		    "1: mov %0, v"#n".d[1]\n\t"		\
+		    "2:" : "=r" (res) : "r" (t));	\
+		break
+	V( 0); V( 1); V( 2); V( 3); V( 4); V( 5); V( 6); V( 7);
+	V( 8); V( 9); V(10); V(11); V(12); V(13); V(14); V(15);
+	V(16); V(17); V(18); V(19); V(20); V(21); V(22); V(23);
+	V(24); V(25); V(26); V(27); V(28); V(29); V(30); V(31);
+#undef V
+	default:
+		res = 0;
+		break;
+	}
+	return res;
+}
+
+static void set_vn_dt(int n, int t, u64 val) {
+	switch (n) {
+#define V(n)						\
+	case n:						\
+		asm("cbnz %w1, 1f\n\t"			\
+		    "mov v"#n".d[0], %0\n\t"		\
+		    "b 2f\n\t"				\
+		    "1: mov v"#n".d[1], %0\n\t"		\
+		    "2:" :: "r" (val), "r" (t));	\
+		break
+	V( 0); V( 1); V( 2); V( 3); V( 4); V( 5); V( 6); V( 7);
+	V( 8); V( 9); V(10); V(11); V(12); V(13); V(14); V(15);
+	V(16); V(17); V(18); V(19); V(20); V(21); V(22); V(23);
+	V(24); V(25); V(26); V(27); V(28); V(29); V(30); V(31);
+#undef Q
+	default:
+		break;
+	}
+}
+
+static int align_ldst_pair(u32 insn, struct pt_regs *regs)
+{
+	const u32 OPC = GENMASK(31, 30);
+	const u32 L_MASK = BIT(22);
+
+	int opc = FIELD_GET(OPC, insn);
+	int L = FIELD_GET(L_MASK, insn);
+
+	bool wback = !!(insn & BIT(23));
+	bool postindex = !(insn & BIT(24));
+
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	int t2 = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT2, insn);
+	bool is_store = !L;
+	bool is_signed = !!(opc & 1);
+	int scale = 2 + (opc >> 1);
+	int datasize = 8 << scale;
+	u64 uoffset = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_7, insn);
+	s64 offset = sign_extend64(uoffset, 6) << scale;
+	u64 address;
+	u64 data1, data2;
+	u64 dbytes;
+
+	if ((is_store && (opc & 1)) || opc == 3)
+		return 1;
+
+	if (wback && (t == n || t2 == n) && n != 31)
+		return 1;
+
+	if (!is_store && t == t2)
+		return 1;
+
+	dbytes = datasize / 8;
+
+	address = regs_get_register(regs, n << 3);
+
+	if (!postindex)
+		address += offset;
+
+	if (is_store) {
+		data1 = pt_regs_read_reg(regs, t);
+		data2 = pt_regs_read_reg(regs, t2);
+		if (align_store(address, dbytes, data1) ||
+		    align_store(address + dbytes, dbytes, data2))
+			return 1;
+	} else {
+		if (align_load(address, dbytes, &data1) ||
+		    align_load(address + dbytes, dbytes, &data2))
+			return 1;
+		if (is_signed) {
+			data1 = sign_extend64(data1, datasize - 1);
+			data2 = sign_extend64(data2, datasize - 1);
+		}
+		pt_regs_write_reg(regs, t, data1);
+		pt_regs_write_reg(regs, t2, data2);
+	}
+
+	if (wback) {
+		if (postindex)
+			address += offset;
+		if (n == 31)
+			regs->sp = address;
+		else
+			pt_regs_write_reg(regs, n, address);
+	}
+
+	return 0;
+}
+
+static int align_ldst_pair_simdfp(u32 insn, struct pt_regs *regs)
+{
+	const u32 OPC = GENMASK(31, 30);
+	const u32 L_MASK = BIT(22);
+
+	int opc = FIELD_GET(OPC, insn);
+	int L = FIELD_GET(L_MASK, insn);
+
+	bool wback = !!(insn & BIT(23));
+	bool postindex = !(insn & BIT(24));
+
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	int t2 = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT2, insn);
+	bool is_store = !L;
+	int scale = 2 + opc;
+	int datasize = 8 << scale;
+	u64 uoffset = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_7, insn);
+	s64 offset = sign_extend64(uoffset, 6) << scale;
+	u64 address;
+	u64 data1_d0, data1_d1, data2_d0, data2_d1;
+	u64 dbytes;
+
+	if (opc == 0x3)
+		return 1;
+
+	if (!is_store && t == t2)
+		return 1;
+
+	dbytes = datasize / 8;
+
+	address = regs_get_register(regs, n << 3);
+
+	if (!postindex)
+		address += offset;
+
+	if (is_store) {
+		data1_d0 = get_vn_dt(t, 0);
+		data2_d0 = get_vn_dt(t2, 0);
+		if (datasize == 128) {
+			data1_d1 = get_vn_dt(t, 1);
+			data2_d1 = get_vn_dt(t2, 1);
+			if (align_store(address, 8, data1_d0) ||
+			    align_store(address + 8, 8, data1_d1) ||
+			    align_store(address + 16, 8, data2_d0) ||
+			    align_store(address + 24, 8, data2_d1))
+				return 1;
+		} else {
+			if (align_store(address, dbytes, data1_d0) ||
+			    align_store(address + dbytes, dbytes, data2_d0))
+				return 1;
+		}
+	} else {
+		if (datasize == 128) {
+			if (align_load(address, 8, &data1_d0) ||
+			    align_load(address + 8, 8, &data1_d1) ||
+			    align_load(address + 16, 8, &data2_d0) ||
+			    align_load(address + 24, 8, &data2_d1))
+				return 1;
+		} else {
+			if (align_load(address, dbytes, &data1_d0) ||
+			    align_load(address + dbytes, dbytes, &data2_d0))
+				return 1;
+			data1_d1 = data2_d1 = 0;
+		}
+		set_vn_dt(t, 0, data1_d0);
+		set_vn_dt(t, 1, data1_d1);
+		set_vn_dt(t2, 0, data2_d0);
+		set_vn_dt(t2, 1, data2_d1);
+	}
+
+	if (wback) {
+		if (postindex)
+			address += offset;
+		if (n == 31)
+			regs->sp = address;
+		else
+			pt_regs_write_reg(regs, n, address);
+	}
+
+	return 0;
+}
+
+static int align_ldst_regoff(u32 insn, struct pt_regs *regs)
+{
+	const u32 SIZE = GENMASK(31, 30);
+	const u32 OPC = GENMASK(23, 22);
+	const u32 OPTION = GENMASK(15, 13);
+	const u32 S = BIT(12);
+
+	u32 size = FIELD_GET(SIZE, insn);
+	u32 opc = FIELD_GET(OPC, insn);
+	u32 option = FIELD_GET(OPTION, insn);
+	u32 s = FIELD_GET(S, insn);
+	int scale = size;
+	int extend_len = (option & 0x1) ? 64 : 32;
+	bool extend_unsigned = !(option & 0x4);
+	int shift = s ? scale : 0;
+
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	int m = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RM, insn);
+	bool is_store;
+	bool is_signed;
+	int regsize;
+	int datasize;
+	u64 offset;
+	u64 address;
+	u64 data;
+
+	if ((opc & 0x2) == 0) {
+		/* store or zero-extending load */
+		is_store = !(opc & 0x1);
+		regsize = size == 0x3 ? 64 : 32;
+		is_signed = false;
+	} else {
+		if (size == 0x3) {
+			if ((opc & 0x1) == 0) {
+				/* prefetch */
+				return 0;
+			} else {
+				/* undefined */
+				return 1;
+			}
+		} else {
+			/* sign-extending load */
+			is_store = false;
+			if (size == 0x2 && (opc & 0x1) == 0x1) {
+				/* undefined */
+				return 1;
+			}
+			regsize = (opc & 0x1) == 0x1 ? 32 : 64;
+			is_signed = true;
+		}
+	}
+
+	datasize = 8 << scale;
+
+	if (n == t && n != 31)
+		return 1;
+
+	offset = pt_regs_read_reg(regs, m);
+	if (extend_len == 32) {
+		offset &= (u32)~0;
+		if (!extend_unsigned)
+			sign_extend64(offset, 31);
+	}
+	offset <<= shift;
+
+	address = regs_get_register(regs, n << 3) + offset;
+
+	if (is_store) {
+		data = pt_regs_read_reg(regs, t);
+		if (align_store(address, datasize / 8, data))
+			return 1;
+	} else {
+		if (align_load(address, datasize / 8, &data))
+			return 1;
+		if (is_signed) {
+			if (regsize == 32)
+				data = sign_extend32(data, datasize - 1);
+			else
+				data = sign_extend64(data, datasize - 1);
+		}
+	}
+
+	return 0;
+}
+
+static int align_ldst_regoff_simdfp(u32 insn, struct pt_regs *regs)
+{
+	const u32 SIZE = GENMASK(31, 30);
+	const u32 OPC = GENMASK(23, 22);
+	const u32 OPTION = GENMASK(15, 13);
+	const u32 S = BIT(12);
+
+	u32 size = FIELD_GET(SIZE, insn);
+	u32 opc = FIELD_GET(OPC, insn);
+	u32 option = FIELD_GET(OPTION, insn);
+	u32 s = FIELD_GET(S, insn);
+	int scale = (opc & 0x2) << 1 | size;
+	int extend_len = (option & 0x1) ? 64 : 32;
+	bool extend_unsigned = !(option & 0x4);
+	int shift = s ? scale : 0;
+
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	int m = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RM, insn);
+	bool is_store = !(opc & BIT(0));
+	int datasize;
+	u64 offset;
+	u64 address;
+	u64 data_d0, data_d1;
+
+	if ((opc & 0x2) == 0)
+		return 1;
+
+	datasize = 8 << scale;
+
+	if (n == t && n != 31)
+		return 1;
+
+	offset = pt_regs_read_reg(regs, m);
+	if (extend_len == 32) {
+		offset &= (u32)~0;
+		if (!extend_unsigned)
+			sign_extend64(offset, 31);
+	}
+	offset <<= shift;
+
+	address = regs_get_register(regs, n << 3) + offset;
+
+	if (is_store) {
+		data_d0 = get_vn_dt(t, 0);
+		if (datasize == 128) {
+			data_d1 = get_vn_dt(t, 1);
+			if (align_store(address, 8, data_d0) ||
+			    align_store(address + 8, 8, data_d1))
+				return 1;
+		} else {
+			if (align_store(address, datasize / 8, data_d0))
+				return 1;
+		}
+	} else {
+		if (datasize == 128) {
+			if (align_load(address, 8, &data_d0) ||
+			    align_load(address + 8, 8, &data_d1))
+				return 1;
+		} else {
+			if (align_load(address, datasize / 8, &data_d0))
+				return 1;
+			data_d1 = 0;
+		}
+		set_vn_dt(t, 0, data_d0);
+		set_vn_dt(t, 1, data_d1);
+	}
+
+	return 0;
+}
+
+static int align_ldst_imm(u32 insn, struct pt_regs *regs)
+{
+	const u32 SIZE = GENMASK(31, 30);
+	const u32 OPC = GENMASK(23, 22);
+
+	u32 size = FIELD_GET(SIZE, insn);
+	u32 opc = FIELD_GET(OPC, insn);
+	bool wback = !(insn & BIT(24)) && !!(insn & BIT(10));
+	bool postindex = wback && !(insn & BIT(11));
+	int scale = size;
+	u64 offset;
+
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	bool is_store;
+	bool is_signed;
+	int regsize;
+	int datasize;
+	u64 address;
+	u64 data;
+
+	if (!(insn & BIT(24))) {
+		u64 uoffset =
+			aarch64_insn_decode_immediate(AARCH64_INSN_IMM_9, insn);
+		offset = sign_extend64(uoffset, 8);
+	} else {
+		offset = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_12, insn);
+		offset <<= scale;
+	}
+
+	if ((opc & 0x2) == 0) {
+		/* store or zero-extending load */
+		is_store = !(opc & 0x1);
+		regsize = size == 0x3 ? 64 : 32;
+		is_signed = false;
+	} else {
+		if (size == 0x3) {
+			if (FIELD_GET(GENMASK(11, 10), insn) == 0 && (opc & 0x1) == 0) {
+				/* prefetch */
+				return 0;
+			} else {
+				/* undefined */
+				return 1;
+			}
+		} else {
+			/* sign-extending load */
+			is_store = false;
+			if (size == 0x2 && (opc & 0x1) == 0x1) {
+				/* undefined */
+				return 1;
+			}
+			regsize = (opc & 0x1) == 0x1 ? 32 : 64;
+			is_signed = true;
+		}
+	}
+
+	datasize = 8 << scale;
+
+	if (n == t && n != 31)
+		return 1;
+
+	address = regs_get_register(regs, n << 3);
+
+	if (!postindex)
+		address += offset;
+
+	if (is_store) {
+		data = pt_regs_read_reg(regs, t);
+		if (align_store(address, datasize / 8, data))
+			return 1;
+	} else {
+		if (align_load(address, datasize / 8, &data))
+			return 1;
+		if (is_signed) {
+			if (regsize == 32)
+				data = sign_extend32(data, datasize - 1);
+			else
+				data = sign_extend64(data, datasize - 1);
+		}
+		pt_regs_write_reg(regs, t, data);
+	}
+
+	if (wback) {
+		if (postindex)
+			address += offset;
+		if (n == 31)
+			regs->sp = address;
+		else
+			pt_regs_write_reg(regs, n, address);
+	}
+
+	return 0;
+}
+
+static int align_ldst_imm_simdfp(u32 insn, struct pt_regs *regs)
+{
+	const u32 SIZE = GENMASK(31, 30);
+	const u32 OPC = GENMASK(23, 22);
+
+	u32 size = FIELD_GET(SIZE, insn);
+	u32 opc = FIELD_GET(OPC, insn);
+	bool wback = !(insn & BIT(24)) && !!(insn & BIT(10));
+	bool postindex = wback && !(insn & BIT(11));
+	int scale = (opc & 0x2) << 1 | size;
+	u64 offset;
+
+	int n = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	int t = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	bool is_store = !(opc & BIT(0)) ;
+	int datasize;
+	u64 address;
+	u64 data_d0, data_d1;
+
+	if (scale > 4)
+		return 1;
+
+	if (!(insn & BIT(24))) {
+		u64 uoffset =
+			aarch64_insn_decode_immediate(AARCH64_INSN_IMM_9, insn);
+		offset = sign_extend64(uoffset, 8);
+	} else {
+		offset = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_12, insn);
+		offset <<= scale;
+	}
+
+	datasize = 8 << scale;
+
+	address = regs_get_register(regs, n << 3);
+
+	if (!postindex)
+		address += offset;
+
+	if (is_store) {
+		data_d0 = get_vn_dt(t, 0);
+		if (datasize == 128) {
+			data_d1 = get_vn_dt(t, 1);
+			if (align_store(address, 8, data_d0) ||
+			    align_store(address + 8, 8, data_d1))
+				return 1;
+		} else {
+			if (align_store(address, datasize / 8, data_d0))
+				return 1;
+		}
+	} else {
+		if (datasize == 128) {
+			if (align_load(address, 8, &data_d0) ||
+			    align_load(address + 8, 8, &data_d1))
+				return 1;
+		} else {
+			if (align_load(address, datasize / 8, &data_d0))
+				return 1;
+			data_d1 = 0;
+		}
+		set_vn_dt(t, 0, data_d0);
+		set_vn_dt(t, 1, data_d1);
+	}
+
+	if (wback) {
+		if (postindex)
+			address += offset;
+		if (n == 31)
+			regs->sp = address;
+		else
+			pt_regs_write_reg(regs, n, address);
+	}
+
+	return 0;
+}
+
+static int align_ldst(u32 insn, struct pt_regs *regs)
+{
+	const u32 op0 = FIELD_GET(GENMASK(31, 28), insn);
+	const u32 op1 = FIELD_GET(BIT(26), insn);
+	const u32 op2 = FIELD_GET(GENMASK(24, 23), insn);
+	const u32 op3 = FIELD_GET(GENMASK(21, 16), insn);
+	const u32 op4 = FIELD_GET(GENMASK(11, 10), insn);
+
+	if ((op0 & 0x3) == 0x2) {
+		/*
+		 * |------+-----+-----+-----+-----+-----------------------------------------|
+		 * | op0  | op1 | op2 | op3 | op4 | Decode group                            |
+		 * |------+-----+-----+-----+-----+-----------------------------------------|
+		 * | xx10 | -   |  00 | -   | -   | Load/store no-allocate pair (offset)    |
+		 * | xx10 | -   |  01 | -   | -   | Load/store register pair (post-indexed) |
+		 * | xx10 | -   |  10 | -   | -   | Load/store register pair (offset)       |
+		 * | xx10 | -   |  11 | -   | -   | Load/store register pair (pre-indexed)  |
+		 * |------+-----+-----+-----+-----+-----------------------------------------|
+		 */
+
+		if (op1 == 0) { /* V == 0 */
+			/* general */
+			return align_ldst_pair(insn, regs);
+		} else {
+			/* simdfp */
+			return align_ldst_pair_simdfp(insn, regs);
+		}
+	} else if ((op0 & 0x3) == 0x3 &&
+		   (((op2 & 0x2) == 0 && (op3 & 0x20) == 0 && op4 != 0x2) ||
+		    ((op2 & 0x2) == 0x2))) {
+		/*
+		 * |------+-----+-----+--------+-----+----------------------------------------------|
+		 * | op0  | op1 | op2 |    op3 | op4 | Decode group                                 |
+		 * |------+-----+-----+--------+-----+----------------------------------------------|
+		 * | xx11 | -   |  0x | 0xxxxx |  00 | Load/store register (unscaled immediate)     |
+		 * | xx11 | -   |  0x | 0xxxxx |  01 | Load/store register (immediate post-indexed) |
+		 * | xx11 | -   |  0x | 0xxxxx |  11 | Load/store register (immediate pre-indexed)  |
+		 * | xx11 | -   |  1x |      - |   - | Load/store register (unsigned immediate)     |
+		 * |------+-----+-----+--------+-----+----------------------------------------------|
+		 */
+
+		if (op1 == 0) {  /* V == 0 */
+			/* general */
+			return align_ldst_imm(insn, regs);
+		} else {
+			/* simdfp */
+			return align_ldst_imm_simdfp(insn, regs);
+		}
+	} else if ((op0 & 0x3) == 0x3 && (op2 & 0x2) == 0 &&
+		   (op3 & 0x20) == 0x20 && op4 == 0x2) {
+		/*
+		 * |------+-----+-----+--------+-----+---------------------------------------|
+		 * | op0  | op1 | op2 |    op3 | op4 |                                       |
+		 * |------+-----+-----+--------+-----+---------------------------------------|
+		 * | xx11 | -   |  0x | 1xxxxx |  10 | Load/store register (register offset) |
+		 * |------+-----+-----+--------+-----+---------------------------------------|
+		 */
+		if (op1 == 0) { /* V == 0 */
+			/* general */
+			return align_ldst_regoff(insn, regs);
+		} else {
+			/* simdfp */
+			return align_ldst_regoff_simdfp(insn, regs);
+		}
+	} else
+		return 1;
+}
+
+static int fixup_alignment(unsigned long addr, unsigned int esr,
+			   struct pt_regs *regs)
+{
+	u32 insn;
+	int res;
+
+	if (user_mode(regs)) {
+		__le32 insn_le;
+
+		if (!is_ttbr0_addr(addr))
+			return 1;
+
+		if (get_user(insn_le,
+			     (__le32 __user *)instruction_pointer(regs)))
+			return 1;
+		insn = le32_to_cpu(insn_le);
+	} else {
+		if (aarch64_insn_read((void *)instruction_pointer(regs), &insn))
+			return 1;
+	}
+
+	switch (aarch64_get_insn_class(insn)) {
+	case AARCH64_INSN_CLS_BR_SYS:
+		if (aarch64_insn_is_dc_zva(insn))
+			res = align_dc_zva(addr, regs);
+		else
+			res = 1;
+		break;
+	case AARCH64_INSN_CLS_LDST:
+		res = align_ldst(insn, regs);
+		break;
+	default:
+		res = 1;
+	}
+	if (!res) {
+		instruction_pointer_set(regs, instruction_pointer(regs) + 4);
+	}
+	return res;
+}
+
 static int do_alignment_fault(unsigned long addr, unsigned int esr,
 			      struct pt_regs *regs)
 {
+#ifdef CONFIG_ALTRA_ERRATUM_82288
+	if (!fixup_alignment(addr, esr, regs))
+		return 0;
+#endif
 	do_bad_area(addr, esr, regs);
 	return 0;
 }
