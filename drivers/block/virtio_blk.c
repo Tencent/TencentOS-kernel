@@ -601,6 +601,16 @@ static void virtblk_initialize_rq(struct request *req)
 	scsi_req_init(&vbr->sreq);
 }
 #endif
+static enum blk_eh_timer_return virtblk_timeout(struct request *req,
+								bool reserved)
+{
+	printk_ratelimited(KERN_ERR "%s: timeout error, dev %s, sector %llu\n",
+			__func__, req->rq_disk ?
+			req->rq_disk->disk_name : "?",
+			(unsigned long long)blk_rq_pos(req));
+
+	return BLK_EH_RESET_TIMER;
+}
 
 static const struct blk_mq_ops virtio_mq_ops = {
 	.queue_rq	= virtio_queue_rq,
@@ -610,6 +620,7 @@ static const struct blk_mq_ops virtio_mq_ops = {
 	.initialize_rq_fn = virtblk_initialize_rq,
 #endif
 	.map_queues	= virtblk_map_queues,
+	.timeout = virtblk_timeout,
 };
 
 static unsigned int virtblk_queue_depth;
