@@ -55,6 +55,8 @@ enum ctattr_type {
 	CTA_LABELS,
 	CTA_LABELS_MASK,
 	CTA_SYNPROXY,
+	CTA_VPCID,
+	CTA_VMIP,
 	__CTA_MAX
 };
 #define CTA_MAX (__CTA_MAX - 1)
