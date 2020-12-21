@@ -2744,6 +2744,7 @@ static int __net_init tcp_sk_init(struct net *net)
 	net->ipv4.sysctl_tcp_invalid_ratelimit = HZ/2;
 	net->ipv4.sysctl_tcp_pacing_ss_ratio = 200;
 	net->ipv4.sysctl_tcp_pacing_ca_ratio = 120;
+	net->ipv4.sysctl_tw_timeout = TCP_TIMEWAIT_LEN;
 	if (net != &init_net) {
 		net->ipv4.sysctl_tcp_max_orphans = NR_FILE;
 		memcpy(net->ipv4.sysctl_tcp_rmem,

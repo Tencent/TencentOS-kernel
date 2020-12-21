@@ -112,9 +112,11 @@ static int tcp_out_of_resources(struct sock *sk, bool do_reset)
 		shift++;
 
 	if (tcp_check_oom(sk, shift)) {
+		int tw_timeout = sock_net(sk)->ipv4.sysctl_tw_timeout;
+
 		/* Catch exceptional cases, when connection requires reset.
 		 *      1. Last segment was sent recently. */
-		if ((s32)(tcp_jiffies32 - tp->lsndtime) <= TCP_TIMEWAIT_LEN ||
+		if ((s32)(tcp_jiffies32 - tp->lsndtime) <= tw_timeout ||
 		    /*  2. Window is closed. */
 		    (!tp->snd_wnd && !tp->packets_out))
 			do_reset = true;
@@ -686,7 +688,8 @@ static void tcp_keepalive_timer (struct timer_list *t)
 	tcp_mstamp_refresh(tp);
 	if (sk->sk_state == TCP_FIN_WAIT2 && sock_flag(sk, SOCK_DEAD)) {
 		if (tp->linger2 >= 0) {
-			const int tmo = tcp_fin_time(sk) - TCP_TIMEWAIT_LEN;
+			int tw_timeout = sock_net(sk)->ipv4.sysctl_tw_timeout;
+			const int tmo = tcp_fin_time(sk) - tw_timeout;
 
 			if (tmo > 0) {
 				tcp_time_wait(sk, TCP_FIN_WAIT2, tmo);

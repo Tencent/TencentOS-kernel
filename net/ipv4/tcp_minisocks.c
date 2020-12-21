@@ -97,6 +97,8 @@ tcp_timewait_state_process(struct inet_timewait_sock *tw, struct sk_buff *skb,
 	struct tcp_options_received tmp_opt;
 	struct tcp_timewait_sock *tcptw = tcp_twsk((struct sock *)tw);
 	bool paws_reject = false;
+	struct net *net = sock_net((struct sock *)tw);
+	int tw_timeout = net->ipv4.sysctl_tw_timeout;
 
 	tmp_opt.saw_tstamp = 0;
 	if (th->doff > (sizeof(*th) >> 2) && tcptw->tw_ts_recent_stamp) {
@@ -151,7 +153,7 @@ tcp_timewait_state_process(struct inet_timewait_sock *tw, struct sk_buff *skb,
 			tcptw->tw_ts_recent	  = tmp_opt.rcv_tsval;
 		}
 
-		inet_twsk_reschedule(tw, TCP_TIMEWAIT_LEN);
+		inet_twsk_reschedule(tw, tw_timeout);
 		return TCP_TW_ACK;
 	}
 
@@ -188,7 +190,7 @@ kill:
 				return TCP_TW_SUCCESS;
 			}
 		} else {
-			inet_twsk_reschedule(tw, TCP_TIMEWAIT_LEN);
+			inet_twsk_reschedule(tw, tw_timeout);
 		}
 
 		if (tmp_opt.saw_tstamp) {
@@ -239,7 +241,7 @@ kill:
 		 * Do not reschedule in the last case.
 		 */
 		if (paws_reject || th->ack)
-			inet_twsk_reschedule(tw, TCP_TIMEWAIT_LEN);
+			inet_twsk_reschedule(tw, tw_timeout);
 
 		return tcp_timewait_check_oow_rate_limit(
 			tw, skb, LINUX_MIB_TCPACKSKIPPEDTIMEWAIT);
@@ -257,7 +259,8 @@ void tcp_time_wait(struct sock *sk, int state, int timeo)
 	const struct inet_connection_sock *icsk = inet_csk(sk);
 	const struct tcp_sock *tp = tcp_sk(sk);
 	struct inet_timewait_sock *tw;
-	struct inet_timewait_death_row *tcp_death_row = &sock_net(sk)->ipv4.tcp_death_row;
+	struct net *net = sock_net(sk);
+	struct inet_timewait_death_row *tcp_death_row = &net->ipv4.tcp_death_row;
 
 	tw = inet_twsk_alloc(sk, tcp_death_row, state);
 
@@ -265,6 +268,7 @@ void tcp_time_wait(struct sock *sk, int state, int timeo)
 		struct tcp_timewait_sock *tcptw = tcp_twsk((struct sock *)tw);
 		const int rto = (icsk->icsk_rto << 2) - (icsk->icsk_rto >> 1);
 		struct inet_sock *inet = inet_sk(sk);
+		int tw_timeout = net->ipv4.sysctl_tw_timeout;
 
 		tw->tw_transparent	= inet->transparent;
 		tw->tw_mark		= sk->sk_mark;
@@ -317,7 +321,7 @@ void tcp_time_wait(struct sock *sk, int state, int timeo)
 			timeo = rto;
 
 		if (state == TCP_TIME_WAIT)
-			timeo = TCP_TIMEWAIT_LEN;
+			timeo = tw_timeout;
 
 		/* tw_timer is pinned, so we need to make sure BH are disabled
 		 * in following section, otherwise timer handler could run before

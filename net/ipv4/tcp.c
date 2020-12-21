@@ -2475,10 +2475,10 @@ adjudge_to_death:
 					LINUX_MIB_TCPABORTONLINGER);
 		} else {
 			const int tmo = tcp_fin_time(sk);
-
-			if (tmo > TCP_TIMEWAIT_LEN) {
+			int tw_timeout = sock_net(sk)->ipv4.sysctl_tw_timeout;
+			if (tmo > tw_timeout) {
 				inet_csk_reset_keepalive_timer(sk,
-						tmo - TCP_TIMEWAIT_LEN);
+						tmo - tw_timeout);
 			} else {
 				tcp_time_wait(sk, TCP_FIN_WAIT2, tmo);
 				goto out;

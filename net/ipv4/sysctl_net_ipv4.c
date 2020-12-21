@@ -50,6 +50,8 @@ static int ip_ping_group_range_max[] = { GID_T_MAX, GID_T_MAX };
 static int comp_sack_nr_max = 255;
 static u32 u32_max_div_HZ = UINT_MAX / HZ;
 static int one_day_secs = 24 * 3600;
+static int tw_timeout_min = 10;
+static int tw_timeout_max = 60;
 
 /* obsolete */
 static int sysctl_tcp_low_latency __read_mostly;
@@ -468,6 +470,39 @@ static int proc_fib_multipath_hash_policy(struct ctl_table *table, int write,
 	return ret;
 }
 #endif
+
+static int proc_tcp_tw_timeout(struct ctl_table *table, int write,
+			       void __user *buffer,
+			       size_t *lenp, loff_t *ppos)
+{
+	int val, ret;
+	struct ctl_table tmp = {
+		.data = &val,
+		.maxlen = sizeof(val),
+		.extra1		= &tw_timeout_min,
+		.extra2		= &tw_timeout_max
+	};
+
+	if (!write) {
+		int tw_timeout = *((int *)table->data) / HZ;
+		tmp.data = &tw_timeout;
+
+		return proc_dointvec_minmax(&tmp, write, buffer, lenp, ppos);
+	}
+
+	ret = proc_dointvec_minmax(&tmp, write, buffer, lenp, ppos);
+	if (write && ret == 0) {
+		int old_val;
+		struct net *net;
+
+		net = container_of(table->data, struct net,
+				   ipv4.sysctl_tw_timeout);
+		old_val = net->ipv4.sysctl_tw_timeout;
+		net->ipv4.sysctl_tw_timeout = val * HZ;
+	}
+
+	return ret;
+}
 
 static struct ctl_table ipv4_table[] = {
 	{
@@ -1395,6 +1430,15 @@ static struct ctl_table ipv4_net_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
 		.extra1 	= &four
+	},
+	{
+		.procname	= "tcp_tw_timeout",
+		.data		= &init_net.ipv4.sysctl_tw_timeout,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_tcp_tw_timeout,
+		.extra1		= &tw_timeout_min,
+		.extra2		= &tw_timeout_max
 	},
 	{ }
 };

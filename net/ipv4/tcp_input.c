@@ -6310,7 +6310,7 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 		break;
 
 	case TCP_FIN_WAIT1: {
-		int tmo;
+		int tmo, tw_timeout;;
 
 		if (req)
 			tcp_rcv_synrecv_state_fastopen(sk);
@@ -6345,8 +6345,10 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 		}
 
 		tmo = tcp_fin_time(sk);
-		if (tmo > TCP_TIMEWAIT_LEN) {
-			inet_csk_reset_keepalive_timer(sk, tmo - TCP_TIMEWAIT_LEN);
+		tw_timeout = sock_net(sk)->ipv4.sysctl_tw_timeout;
+
+		if (tmo > tw_timeout) {
+			inet_csk_reset_keepalive_timer(sk, tmo - tw_timeout);
 		} else if (th->fin || sock_owned_by_user(sk)) {
 			/* Bad case. We could lose such FIN otherwise.
 			 * It is not a big problem, but it looks confusing

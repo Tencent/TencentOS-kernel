@@ -213,6 +213,7 @@ struct netns_ipv4 {
 	int sysctl_fib_multipath_hash_policy;
 #endif
 
+	int sysctl_tw_timeout;
 	int sysctl_tcp_max_orphans;
 
 	struct fib_notifier_ops	*notifier_ops;

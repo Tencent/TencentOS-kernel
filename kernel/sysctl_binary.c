@@ -359,6 +359,7 @@ static const struct bin_table bin_net_ipv4_table[] = {
 	{ CTL_INT,	NET_IPV4_TCP_RETRIES1,			"tcp_retries1" },
 	{ CTL_INT,	NET_IPV4_TCP_RETRIES2,			"tcp_retries2" },
 	{ CTL_INT,	NET_IPV4_TCP_FIN_TIMEOUT,		"tcp_fin_timeout" },
+	{ CTL_INT,	NET_IPV4_TCP_TW_TIMEOUT,		"tcp_tw_timeout" },
 	{ CTL_INT,	NET_TCP_SYNCOOKIES,			"tcp_syncookies" },
 	{ CTL_INT,	NET_TCP_TW_RECYCLE,			"tcp_tw_recycle" },
 	{ CTL_INT,	NET_TCP_ABORT_ON_OVERFLOW,		"tcp_abort_on_overflow" },
