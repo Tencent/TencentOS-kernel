@@ -372,6 +372,9 @@ struct pci_dev {
 	bool match_driver;		/* Skip attaching driver */
 	/* These fields are used by common fixups */
 	unsigned int	transparent:1;	/* Subtractive decode PCI bridge */
+	unsigned int	io_window:1;		/* Bridge has I/O window */
+	unsigned int	pref_window:1;		/* Bridge has pref mem window */
+	unsigned int	pref_64_window:1;	/* Pref mem window is 64-bit */
 	unsigned int	multifunction:1;/* Part of multi-function device */
 	/* keep track of device state */
 	unsigned int	is_added:1;
