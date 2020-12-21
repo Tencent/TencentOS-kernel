@@ -22,6 +22,7 @@
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
+#include <linux/interrupt.h>
 #include <linux/uio_driver.h>
 
 #define DRIVER_VERSION	"0.01.0"
@@ -97,6 +98,11 @@ static int probe(struct pci_dev *pdev,
 	gdev->info.release = release;
 	gdev->pdev = pdev;
 	if (pdev->irq) {
+#ifdef CONFIG_X86
+		gdev->info.irq = pdev->irq == IRQ_NOTCONNECTED ? 0 : pdev->irq;
+#else
+ 		gdev->info.irq = pdev->irq;
+#endif
 		gdev->info.irq = pdev->irq;
 		gdev->info.irq_flags = IRQF_SHARED;
 		gdev->info.handler = irqhandler;
