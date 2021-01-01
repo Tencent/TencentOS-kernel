@@ -2883,7 +2883,7 @@ int can_migrate_bt_task(struct task_struct *p, struct lb_env *env)
 	if (check_cpumask && !cpumask_test_cpu(env->dst_cpu, tsk_cpus_allowed(p))) {
 		int cpu;
 
-		schedstat_inc(p->se.bt_statistics->nr_failed_migrations_affine);
+		schedstat_inc(p->bt.bt_statistics->nr_failed_migrations_affine);
 
 		/*
 		 * Remember if this task can be migrated to any other cpu in
@@ -2912,7 +2912,7 @@ int can_migrate_bt_task(struct task_struct *p, struct lb_env *env)
 	env->flags &= ~LBF_ALL_PINNED;
 
 	if (task_running(env->src_rq, p)) {
-		schedstat_inc(p->se.bt_statistics->nr_failed_migrations_running);
+		schedstat_inc(p->bt.bt_statistics->nr_failed_migrations_running);
 		return 0;
 	}
 
