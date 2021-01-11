@@ -146,4 +146,5 @@ struct virtio_scsi_inhdr {
 #define VIRTIO_BLK_S_OK		0
 #define VIRTIO_BLK_S_IOERR	1
 #define VIRTIO_BLK_S_UNSUPP	2
+#define VIRTIO_BLK_S_TIMEOUT	3
 #endif /* _LINUX_VIRTIO_BLK_H */
