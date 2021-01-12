@@ -190,12 +190,13 @@ static void bond_info_show_slave(struct seq_file *seq,
 		   slave->dev->addr_len, slave->perm_hwaddr);
 	seq_printf(seq, "Slave queue ID: %d\n", slave->queue_id);
 	seq_printf(seq, "Slave active: %d\n", !slave->backup);
-	seq_printf(seq, "Slave sm_vars: 0x%x\n",
-		   SLAVE_AD_INFO(slave)->port.sm_vars);
 
 	if (BOND_MODE(bond) == BOND_MODE_8023AD) {
 		const struct port *port = &SLAVE_AD_INFO(slave)->port;
 		const struct aggregator *agg = port->aggregator;
+
+		seq_printf(seq, "Slave sm_vars: 0x%x\n",
+			   port->sm_vars);
 
 		if (agg) {
 			seq_printf(seq, "Aggregator ID: %d\n",
