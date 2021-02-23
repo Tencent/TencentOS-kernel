@@ -21,6 +21,7 @@
 #include <linux/workqueue.h>
 #include <linux/bpf-cgroup.h>
 #include <linux/psi_types.h>
+#include <linux/mbuf.h>
 
 #ifdef CONFIG_CGROUPS
 
@@ -486,6 +487,9 @@ struct cgroup {
 
 	/* Used to store internal freezer state */
 	struct cgroup_freezer_state freezer;
+
+	/* cgroup log subsys*/
+	struct mbuf_slot *mbuf;
 
 	/* ids of the ancestors at each level including self */
 	int ancestor_ids[];

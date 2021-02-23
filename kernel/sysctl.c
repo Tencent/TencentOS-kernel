@@ -121,6 +121,7 @@ extern unsigned int sysctl_nr_open_min, sysctl_nr_open_max;
 extern int sysctl_nr_trim_pages;
 #endif
 
+extern int sysctl_qos_mbuf_enable;
 extern int sysctl_min_epoll_wait_time;
 extern unsigned int sysctl_softirq_accel_target;
 extern int sysctl_softirq_accel_mask;
@@ -1447,6 +1448,15 @@ static struct ctl_table kern_table[] = {
 		.proc_handler   = proc_dointvec_minmax,
 		.extra1         = SYSCTL_ZERO,
 		.extra2         = SYSCTL_ONE,
+	},
+	{
+		.procname	= "qos_mbuf_enable",
+		.data		= &sysctl_qos_mbuf_enable,
+		.maxlen		= sizeof(int),
+		.mode		= 0600,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
 	},
 	{ }
 };
