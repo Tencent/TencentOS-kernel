@@ -58,6 +58,7 @@
 #include <linux/sched/cputime.h>
 #include <linux/psi.h>
 #include <net/sock.h>
+#include <linux/mbuf.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/cgroup.h>
@@ -179,6 +180,8 @@ static u16 cgrp_dfl_threaded_ss_mask;
 /* The list of hierarchy roots */
 LIST_HEAD(cgroup_roots);
 static int cgroup_root_count;
+
+int sysctl_qos_mbuf_enable = 0;
 
 /* hierarchy ID allocation and mapping, protected by cgroup_mutex */
 static DEFINE_IDR(cgroup_hierarchy_idr);
@@ -3683,6 +3686,107 @@ static void cgroup_pressure_release(struct kernfs_open_file *of)
 }
 #endif /* CONFIG_PSI */
 
+static void *mbuf_start(struct seq_file *s, loff_t *pos)
+{
+	struct cgroup *cgrp = seq_css(s)->cgroup;
+	struct mbuf_slot *mb = cgrp->mbuf;
+	u32 index;
+
+	if (!mb)
+		return NULL;
+
+	index = *pos;
+	/* If already reach end, just return */
+	if (index && index == mb->mring->next_idx)
+		return NULL;
+
+	if (!mb->udesc) {
+		mb->udesc = kmalloc(sizeof(struct mbuf_user_desc), GFP_KERNEL);
+
+		if (!mb->udesc)
+			goto out;
+
+		mb->udesc->user_idx = mb->mring->first_idx;
+		mb->udesc->user_seq = mb->mring->first_seq;
+	}
+
+	/* Maybe reach end or empty */
+	if (mb->udesc->user_idx == mb->mring->next_idx)
+		return NULL;
+
+out:
+	return mb->udesc;
+}
+
+static void *mbuf_next(struct seq_file *s, void *v, loff_t *pos)
+{
+	struct mbuf_user_desc *udesc = (struct mbuf_user_desc *)v;
+	struct cgroup *cgrp = seq_css(s)->cgroup;
+	struct mbuf_slot *mb = cgrp->mbuf;
+
+	udesc->user_idx = mb->ops->next(mb->mring, udesc->user_idx);
+	*pos = udesc->user_idx;
+
+	if (udesc->user_idx == mb->mring->next_idx)
+		return NULL;
+
+	return udesc;
+}
+
+static void mbuf_stop(struct seq_file *s, void *v)
+{
+	struct cgroup *cgrp = seq_css(s)->cgroup;
+	struct mbuf_user_desc *desc;
+
+	if (cgrp->mbuf) {
+		desc = cgrp->mbuf->udesc;
+		if(desc && desc->user_idx == cgrp->mbuf->mring->next_idx) {
+			kfree(cgrp->mbuf->udesc);
+			cgrp->mbuf->udesc = NULL;
+		}
+	}
+}
+
+static int mbuf_show(struct seq_file *s, void *v)
+{
+	ssize_t ret;
+	struct mbuf_user_desc *udesc = (struct mbuf_user_desc *)v;
+	struct cgroup *cgrp = seq_css(s)->cgroup;
+	struct mbuf_slot *mb = cgrp->mbuf;
+
+	memset(udesc->buf, 0, sizeof(udesc->buf));
+	ret = mb->ops->read(mb, udesc);
+
+	if (ret > 0)
+		seq_printf(s, "%s", udesc->buf);
+
+	return 0;
+}
+
+ssize_t mbuf_print(struct cgroup *cgrp, const char *fmt, ...)
+{
+	struct mbuf_slot *mb;
+	va_list args;
+
+	mb = cgrp->mbuf;
+	if(!sysctl_qos_mbuf_enable || !mb)
+		goto out;
+
+	if(!__ratelimit(&mb->ratelimit)) {
+		goto out;
+	}
+
+	if (mb->ops) {
+		va_start(args, fmt);
+		mb->ops->write(cgrp, fmt, args);
+		va_end(args);
+	}
+
+out:
+	return 0;
+}
+EXPORT_SYMBOL(mbuf_print);
+
 static int cgroup_freeze_show(struct seq_file *seq, void *v)
 {
 	struct cgroup *cgrp = seq_css(seq)->cgroup;
@@ -4941,6 +5045,14 @@ static struct cftype cgroup_base_files[] = {
 		.release = cgroup_pressure_release,
 	},
 #endif /* CONFIG_PSI */
+	{
+		.name = "mbuf",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = mbuf_show,
+		.seq_start = mbuf_start,
+		.seq_next = mbuf_next,
+		.seq_stop = mbuf_stop,
+	},
 	{ }	/* terminate */
 };
 
@@ -5258,6 +5370,7 @@ static struct cgroup *cgroup_create(struct cgroup *parent)
 	cgrp->self.parent = &parent->self;
 	cgrp->root = root;
 	cgrp->level = level;
+    cgrp->mbuf = NULL;
 
 	ret = psi_cgroup_alloc(cgrp);
 	if (ret)
@@ -5368,6 +5481,33 @@ fail:
 	return ret;
 }
 
+/* mbuf only support cpu/memory/io/net cgroup */
+static inline bool cgroup_need_mbuf(struct cgroup *cgrp)
+{
+#if IS_ENABLED(CONFIG_CGROUP_SCHED)
+	if (cgroup_css(cgrp, cgroup_subsys[cpu_cgrp_id]))
+		return true;
+#endif
+
+#if IS_ENABLED(CONFIG_BLK_CGROUP)
+	if (cgroup_css(cgrp, cgroup_subsys[io_cgrp_id]))
+		return true;
+#endif
+
+#if IS_ENABLED(CONFIG_MEMCG)
+	if (cgroup_css(cgrp, cgroup_subsys[memory_cgrp_id]))
+		return true;
+#endif
+
+#if IS_ENABLED(CONFIG_CGROUP_NET_CLASSID)
+	if (cgroup_css(cgrp, cgroup_subsys[net_cls_cgrp_id]))
+		return true;
+#endif
+
+	return false;
+}
+
+
 int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
 {
 	struct cgroup *parent, *cgrp;
@@ -5406,7 +5546,6 @@ int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
 	 * that @cgrp->kn is always accessible.
 	 */
 	kernfs_get(kn);
-
 	ret = cgroup_kn_set_ugid(kn);
 	if (ret)
 		goto out_destroy;
@@ -5418,6 +5557,9 @@ int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
 	ret = cgroup_apply_control_enable(cgrp);
 	if (ret)
 		goto out_destroy;
+
+	if(sysctl_qos_mbuf_enable && cgroup_on_dfl(cgrp) && cgroup_need_mbuf(cgrp))
+		cgrp->mbuf = mbuf_slot_alloc(cgrp);
 
 	TRACE_CGROUP_PATH(mkdir, cgrp);
 
@@ -5600,6 +5742,9 @@ static int cgroup_destroy_locked(struct cgroup *cgrp)
 	cgroup1_check_for_release(parent);
 
 	cgroup_bpf_offline(cgrp);
+
+	if (cgrp->mbuf)
+		mbuf_free(cgrp);
 
 	/* put the base reference */
 	percpu_ref_kill(&cgrp->self.refcnt);

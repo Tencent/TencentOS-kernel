@@ -15,7 +15,6 @@
 #include <linux/pid_namespace.h>
 #include <linux/cgroupstats.h>
 #include <linux/fs_parser.h>
-
 #include <trace/events/cgroup.h>
 
 #define cg_invalf(fc, fmt, ...) invalf(fc, fmt, ## __VA_ARGS__)
