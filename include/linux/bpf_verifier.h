@@ -57,6 +57,8 @@ struct bpf_reg_state {
 
 		/* Max size from any of the above. */
 		unsigned long raw;
+
+		u32 subprogno; /* for PTR_TO_FUNC */
 	};
 	/* Fixed part of pointer offset, pointer types only */
 	s32 off;
@@ -191,6 +193,7 @@ struct bpf_func_state {
 	int acquired_refs;
 	struct bpf_reference_state *refs;
 	int allocated_stack;
+	bool in_callback_fn;
 	struct bpf_stack_state *stack;
 };
 
