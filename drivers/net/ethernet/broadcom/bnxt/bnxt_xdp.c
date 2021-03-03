@@ -12,13 +12,20 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/if_vlan.h>
+#ifdef HAVE_NDO_XDP
 #include <linux/bpf.h>
+#ifdef HAVE_BPF_TRACE
 #include <linux/bpf_trace.h>
+#endif
 #include <linux/filter.h>
-#include <net/page_pool.h>
+#endif
+#include "bnxt_compat.h"
 #include "bnxt_hsi.h"
 #include "bnxt.h"
 #include "bnxt_xdp.h"
+#ifdef CONFIG_PAGE_POOL
+#include <net/page_pool.h>
+#endif
 
 struct bnxt_sw_tx_bd *bnxt_xmit_bd(struct bnxt *bp,
 				   struct bnxt_tx_ring_info *txr,
@@ -30,7 +37,7 @@ struct bnxt_sw_tx_bd *bnxt_xmit_bd(struct bnxt *bp,
 	u16 prod;
 
 	prod = txr->tx_prod;
-	tx_buf = &txr->tx_buf_ring[prod];
+	tx_buf = &txr->tx_buf_ring[RING_TX(prod)];
 
 	txbd = &txr->tx_desc_ring[TX_RING(prod)][TX_IDX(prod)];
 	flags = (len << TX_BD_LEN_SHIFT) | (1 << TX_BD_FLAGS_BD_CNT_SHIFT) |
@@ -44,6 +51,7 @@ struct bnxt_sw_tx_bd *bnxt_xmit_bd(struct bnxt *bp,
 	return tx_buf;
 }
 
+#ifdef HAVE_NDO_XDP
 static void __bnxt_xmit_xdp(struct bnxt *bp, struct bnxt_tx_ring_info *txr,
 			    dma_addr_t mapping, u32 len, u16 rx_prod)
 {
@@ -54,6 +62,7 @@ static void __bnxt_xmit_xdp(struct bnxt *bp, struct bnxt_tx_ring_info *txr,
 	tx_buf->action = XDP_TX;
 }
 
+#ifdef HAVE_XDP_FRAME
 static void __bnxt_xmit_xdp_redirect(struct bnxt *bp,
 				     struct bnxt_tx_ring_info *txr,
 				     dma_addr_t mapping, u32 len,
@@ -67,6 +76,7 @@ static void __bnxt_xmit_xdp_redirect(struct bnxt *bp,
 	dma_unmap_addr_set(tx_buf, mapping, mapping);
 	dma_unmap_len_set(tx_buf, len, 0);
 }
+#endif
 
 void bnxt_tx_int_xdp(struct bnxt *bp, struct bnxt_napi *bnapi, int nr_pkts)
 {
@@ -79,16 +89,18 @@ void bnxt_tx_int_xdp(struct bnxt *bp, struct bnxt_napi *bnapi, int nr_pkts)
 	int i;
 
 	for (i = 0; i < nr_pkts; i++) {
-		tx_buf = &txr->tx_buf_ring[tx_cons];
+		tx_buf = &txr->tx_buf_ring[RING_TX(tx_cons)];
 
 		if (tx_buf->action == XDP_REDIRECT) {
 			struct pci_dev *pdev = bp->pdev;
 
 			dma_unmap_single(&pdev->dev,
-					 dma_unmap_addr(tx_buf, mapping),
-					 dma_unmap_len(tx_buf, len),
-					 PCI_DMA_TODEVICE);
+					dma_unmap_addr(tx_buf, mapping),
+					dma_unmap_len(tx_buf, len),
+					PCI_DMA_TODEVICE);
+#ifdef HAVE_XDP_FRAME
 			xdp_return_frame(tx_buf->xdpf);
+#endif
 			tx_buf->action = 0;
 			tx_buf->xdpf = NULL;
 		} else if (tx_buf->action == XDP_TX) {
@@ -99,7 +111,7 @@ void bnxt_tx_int_xdp(struct bnxt *bp, struct bnxt_napi *bnapi, int nr_pkts)
 	}
 	txr->tx_cons = tx_cons;
 	if (rx_doorbell_needed) {
-		tx_buf = &txr->tx_buf_ring[last_tx_cons];
+		tx_buf = &txr->tx_buf_ring[RING_TX(last_tx_cons)];
 		bnxt_db_write(bp, &rxr->rx_db, tx_buf->rx_prod);
 	}
 }
@@ -133,11 +145,18 @@ bool bnxt_rx_xdp(struct bnxt *bp, struct bnxt_rx_ring_info *rxr, u16 cons,
 	dma_sync_single_for_cpu(&pdev->dev, mapping + offset, *len, bp->rx_dir);
 
 	txr = rxr->bnapi->tx_ring;
+#if XDP_PACKET_HEADROOM
 	xdp.data_hard_start = *data_ptr - offset;
+#endif
 	xdp.data = *data_ptr;
 	xdp_set_data_meta_invalid(&xdp);
 	xdp.data_end = *data_ptr + *len;
+#ifdef HAVE_XDP_RXQ_INFO
 	xdp.rxq = &rxr->xdp_rxq;
+#endif
+#ifdef HAVE_XDP_FRAME_SZ
+	xdp.frame_sz = PAGE_SIZE; /* BNXT_RX_PAGE_MODE(bp) when XDP enabled */
+#endif
 	orig_data = xdp.data;
 
 	rcu_read_lock();
@@ -151,10 +170,14 @@ bool bnxt_rx_xdp(struct bnxt *bp, struct bnxt_rx_ring_info *rxr, u16 cons,
 	if (tx_avail != bp->tx_ring_size)
 		*event &= ~BNXT_RX_EVENT;
 
+#if XDP_PACKET_HEADROOM
 	*len = xdp.data_end - xdp.data;
+#endif
 	if (orig_data != xdp.data) {
+#if XDP_PACKET_HEADROOM
 		offset = xdp.data - xdp.data_hard_start;
 		*data_ptr = xdp.data_hard_start + offset;
+#endif
 	}
 	switch (act) {
 	case XDP_PASS:
@@ -171,7 +194,7 @@ bool bnxt_rx_xdp(struct bnxt *bp, struct bnxt_rx_ring_info *rxr, u16 cons,
 		dma_sync_single_for_device(&pdev->dev, mapping + offset, *len,
 					   bp->rx_dir);
 		__bnxt_xmit_xdp(bp, txr, mapping + offset, *len,
-				NEXT_RX(rxr->rx_prod));
+			      NEXT_RX(rxr->rx_prod));
 		bnxt_reuse_rx_data(rxr, cons, page);
 		return true;
 	case XDP_REDIRECT:
@@ -192,7 +215,11 @@ bool bnxt_rx_xdp(struct bnxt *bp, struct bnxt_rx_ring_info *rxr, u16 cons,
 
 		if (xdp_do_redirect(bp->dev, &xdp, xdp_prog)) {
 			trace_xdp_exception(bp->dev, xdp_prog, act);
+#ifndef CONFIG_PAGE_POOL
+			__free_page(page);
+#else
 			page_pool_recycle_direct(rxr->page_pool, page);
+#endif
 			return true;
 		}
 
@@ -211,6 +238,7 @@ bool bnxt_rx_xdp(struct bnxt *bp, struct bnxt_rx_ring_info *rxr, u16 cons,
 	return true;
 }
 
+#ifdef HAVE_XDP_FRAME
 int bnxt_xdp_xmit(struct net_device *dev, int num_frames,
 		  struct xdp_frame **frames, u32 flags)
 {
@@ -260,7 +288,7 @@ int bnxt_xdp_xmit(struct net_device *dev, int num_frames,
 
 	return num_frames - drops;
 }
-
+#endif
 /* Under rtnl_lock */
 static int bnxt_xdp_set(struct bnxt *bp, struct bpf_prog *prog)
 {
@@ -330,7 +358,12 @@ int bnxt_xdp(struct net_device *dev, struct netdev_bpf *xdp)
 		rc = bnxt_xdp_set(bp, xdp->prog);
 		break;
 	case XDP_QUERY_PROG:
+#ifdef HAVE_PROG_ATTACHED
+		xdp->prog_attached = !!bp->xdp_prog;
+#endif
+#ifdef HAVE_IFLA_XDP_PROG_ID
 		xdp->prog_id = bp->xdp_prog ? bp->xdp_prog->aux->id : 0;
+#endif
 		rc = 0;
 		break;
 	default:
@@ -339,3 +372,14 @@ int bnxt_xdp(struct net_device *dev, struct netdev_bpf *xdp)
 	}
 	return rc;
 }
+#else
+void bnxt_tx_int_xdp(struct bnxt *bp, struct bnxt_napi *bnapi, int nr_pkts)
+{
+}
+
+bool bnxt_rx_xdp(struct bnxt *bp, struct bnxt_rx_ring_info *rxr, u16 cons,
+		 void *page, u8 **data_ptr, unsigned int *len, u8 *event)
+{
+	return false;
+}
+#endif

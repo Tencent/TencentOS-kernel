@@ -62,6 +62,12 @@ struct bnxt_tc_tunnel_key {
 	__be32			id;
 };
 
+#define bnxt_eth_addr_key_mask_invalid(eth_addr, eth_addr_mask)		\
+	((is_wildcard(&(eth_addr)[0], ETH_ALEN) &&			\
+	 is_wildcard(&(eth_addr)[ETH_ALEN / 2], ETH_ALEN)) ||		\
+	(is_wildcard(&(eth_addr_mask)[0], ETH_ALEN) &&			\
+	 is_wildcard(&(eth_addr_mask)[ETH_ALEN / 2], ETH_ALEN)))
+
 struct bnxt_tc_actions {
 	u32				flags;
 #define BNXT_TC_ACTION_FLAG_FWD			BIT(0)
@@ -71,6 +77,8 @@ struct bnxt_tc_actions {
 #define BNXT_TC_ACTION_FLAG_DROP		BIT(5)
 #define BNXT_TC_ACTION_FLAG_TUNNEL_ENCAP	BIT(6)
 #define BNXT_TC_ACTION_FLAG_TUNNEL_DECAP	BIT(7)
+#define BNXT_TC_ACTION_FLAG_L2_REWRITE		BIT(8)
+#define BNXT_TC_ACTION_FLAG_NAT_XLATE		BIT(9)
 
 	u16				dst_fid;
 	struct net_device		*dst_dev;
@@ -79,6 +87,18 @@ struct bnxt_tc_actions {
 
 	/* tunnel encap */
 	struct ip_tunnel_key		tun_encap_key;
+#define	PEDIT_OFFSET_SMAC_LAST_4_BYTES		0x8
+	__be16				l2_rewrite_dmac[3];
+	__be16				l2_rewrite_smac[3];
+	struct {
+		bool src_xlate;  /* true => translate src,
+				  * false => translate dst
+				  * Mutually exclusive, i.e cannot set both
+				  */
+		bool l3_is_ipv4; /* false means L3 is ipv6 */
+		struct bnxt_tc_l3_key l3;
+		struct bnxt_tc_l4_key l4;
+	} nat;
 };
 
 struct bnxt_tc_flow {
@@ -123,7 +143,8 @@ struct bnxt_tc_flow {
 	spinlock_t			stats_lock;
 };
 
-/* Tunnel encap/decap hash table
+/*
+ * Tunnel encap/decap hash table
  * This table is used to maintain a list of flows that use
  * the same tunnel encap/decap params (ip_daddrs, vni, udp_dport)
  * and the FW returned handle.
@@ -144,7 +165,8 @@ struct bnxt_tc_tunnel_node {
 	struct rcu_head			rcu;
 };
 
-/* L2 hash table
+/*
+ * L2 hash table
  * The same data-struct is used for L2-flow table and L2-tunnel table.
  * The L2 part of a flow or tunnel is stored in a hash table.
  * A flow that shares the same L2 key/mask with an
@@ -166,6 +188,12 @@ struct bnxt_tc_l2_node {
 	struct rcu_head		rcu;
 };
 
+/* Track if the TC offload API is invoked on an ingress or egress device. */
+enum {
+	BNXT_TC_DEV_INGRESS = 1,
+	BNXT_TC_DEV_EGRESS = 2
+};
+
 struct bnxt_tc_flow_node {
 	/* hash key: provided by TC */
 	unsigned long			cookie;
@@ -176,6 +204,7 @@ struct bnxt_tc_flow_node {
 	__le64				ext_flow_handle;
 	__le16				flow_handle;
 	__le32				flow_id;
+	int				tc_dev_dir;
 
 	/* L2 node in l2 hashtable that shares flow's l2 key */
 	struct bnxt_tc_l2_node		*l2_node;
@@ -195,11 +224,23 @@ struct bnxt_tc_flow_node {
 	struct rcu_head			rcu;
 };
 
+#ifdef HAVE_TC_CB_EGDEV
+int bnxt_tc_setup_flower(struct bnxt *bp, u16 src_fid,
+			 struct flow_cls_offload *cls_flower,
+			 int tc_dev_dir);
+#else
 int bnxt_tc_setup_flower(struct bnxt *bp, u16 src_fid,
 			 struct flow_cls_offload *cls_flower);
+#endif
+
 int bnxt_init_tc(struct bnxt *bp);
 void bnxt_shutdown_tc(struct bnxt *bp);
 void bnxt_tc_flow_stats_work(struct bnxt *bp);
+#if defined(HAVE_TC_MATCHALL_FLOW_RULE) && defined(HAVE_FLOW_ACTION_POLICE)
+int bnxt_tc_setup_matchall(struct bnxt *bp, u16 src_fid,
+			   struct tc_cls_matchall_offload *cls_matchall);
+#endif
+
 
 static inline bool bnxt_tc_flower_enabled(struct bnxt *bp)
 {
@@ -207,12 +248,6 @@ static inline bool bnxt_tc_flower_enabled(struct bnxt *bp)
 }
 
 #else /* CONFIG_BNXT_FLOWER_OFFLOAD */
-
-static inline int bnxt_tc_setup_flower(struct bnxt *bp, u16 src_fid,
-				       struct flow_cls_offload *cls_flower)
-{
-	return -EOPNOTSUPP;
-}
 
 static inline int bnxt_init_tc(struct bnxt *bp)
 {
@@ -232,4 +267,5 @@ static inline bool bnxt_tc_flower_enabled(struct bnxt *bp)
 	return false;
 }
 #endif /* CONFIG_BNXT_FLOWER_OFFLOAD */
+
 #endif /* BNXT_TC_H */

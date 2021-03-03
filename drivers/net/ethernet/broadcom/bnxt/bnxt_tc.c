@@ -10,19 +10,29 @@
 #include <linux/netdevice.h>
 #include <linux/inetdevice.h>
 #include <linux/if_vlan.h>
+#if defined(HAVE_TC_FLOW_CLS_OFFLOAD) || defined(HAVE_TC_CLS_FLOWER_OFFLOAD)
 #include <net/flow_dissector.h>
 #include <net/pkt_cls.h>
 #include <net/tc_act/tc_gact.h>
 #include <net/tc_act/tc_skbedit.h>
 #include <net/tc_act/tc_mirred.h>
 #include <net/tc_act/tc_vlan.h>
+#include <net/tc_act/tc_pedit.h>
+#ifdef HAVE_TCF_TUNNEL
 #include <net/tc_act/tc_tunnel_key.h>
+#endif
+#include <net/vxlan.h>
+#endif /* HAVE_TC_FLOW_CLS_OFFLOAD || HAVE_TC_CLS_FLOWER_OFFLOAD */
 
+#include "bnxt_compat.h"
 #include "bnxt_hsi.h"
 #include "bnxt.h"
+#include "bnxt_hwrm.h"
 #include "bnxt_sriov.h"
 #include "bnxt_tc.h"
 #include "bnxt_vfr.h"
+
+#ifdef CONFIG_BNXT_FLOWER_OFFLOAD
 
 #define BNXT_FID_INVALID			0xffff
 #define VLAN_TCI(vid, prio)	((vid) | ((prio) << VLAN_PRIO_SHIFT))
@@ -36,6 +46,8 @@
 #define is_vid_exactmatch(vlan_tci_mask)	\
 	((ntohs(vlan_tci_mask) & VLAN_VID_MASK) == VLAN_VID_MASK)
 
+static bool is_wildcard(void *mask, int len);
+static bool is_exactmatch(void *mask, int len);
 /* Return the dst fid of the func for flow forwarding
  * For PFs: src_fid is the fid of the PF
  * For VF-reps: src_fid the fid of the VF
@@ -46,19 +58,22 @@ static u16 bnxt_flow_get_dst_fid(struct bnxt *pf_bp, struct net_device *dev)
 
 	/* check if dev belongs to the same switch */
 	if (!netdev_port_same_parent_id(pf_bp->dev, dev)) {
-		netdev_info(pf_bp->dev, "dev(ifindex=%d) not on same switch",
+		netdev_info(pf_bp->dev, "dev(ifindex=%d) not on same switch\n",
 			    dev->ifindex);
 		return BNXT_FID_INVALID;
 	}
 
+#ifdef CONFIG_VF_REPS
 	/* Is dev a VF-rep? */
 	if (bnxt_dev_is_vf_rep(dev))
 		return bnxt_vf_rep_get_fid(dev);
+#endif
 
 	bp = netdev_priv(dev);
 	return bp->pf.fw_fid;
 }
 
+#ifdef HAVE_FLOW_OFFLOAD_H
 static int bnxt_tc_parse_redir(struct bnxt *bp,
 			       struct bnxt_tc_actions *actions,
 			       const struct flow_action_entry *act)
@@ -66,7 +81,7 @@ static int bnxt_tc_parse_redir(struct bnxt *bp,
 	struct net_device *dev = act->dev;
 
 	if (!dev) {
-		netdev_info(bp->dev, "no dev in mirred action");
+		netdev_info(bp->dev, "no dev in mirred action\n");
 		return -EINVAL;
 	}
 
@@ -75,6 +90,37 @@ static int bnxt_tc_parse_redir(struct bnxt *bp,
 	return 0;
 }
 
+#else
+
+static int bnxt_tc_parse_redir(struct bnxt *bp,
+			       struct bnxt_tc_actions *actions,
+			       const struct tc_action *tc_act)
+{
+#ifdef HAVE_TCF_MIRRED_DEV
+	struct net_device *dev = tcf_mirred_dev(tc_act);
+
+	if (!dev) {
+		netdev_info(bp->dev, "no dev in mirred action");
+		return -EINVAL;
+	}
+#else
+	int ifindex = tcf_mirred_ifindex(tc_act);
+	struct net_device *dev;
+
+	dev = __dev_get_by_index(dev_net(bp->dev), ifindex);
+	if (!dev) {
+		netdev_info(bp->dev, "no dev for ifindex=%d", ifindex);
+		return -EINVAL;
+	}
+#endif
+
+	actions->flags |= BNXT_TC_ACTION_FLAG_FWD;
+	actions->dst_dev = dev;
+	return 0;
+}
+#endif
+
+#ifdef HAVE_FLOW_OFFLOAD_H
 static int bnxt_tc_parse_vlan(struct bnxt *bp,
 			      struct bnxt_tc_actions *actions,
 			      const struct flow_action_entry *act)
@@ -94,6 +140,29 @@ static int bnxt_tc_parse_vlan(struct bnxt *bp,
 	return 0;
 }
 
+#else
+
+static int bnxt_tc_parse_vlan(struct bnxt *bp,
+			      struct bnxt_tc_actions *actions,
+			      const struct tc_action *tc_act)
+{
+	switch (tcf_vlan_action(tc_act)) {
+	case TCA_VLAN_ACT_POP:
+		actions->flags |= BNXT_TC_ACTION_FLAG_POP_VLAN;
+		break;
+	case TCA_VLAN_ACT_PUSH:
+		actions->flags |= BNXT_TC_ACTION_FLAG_PUSH_VLAN;
+		actions->push_vlan_tci = htons(tcf_vlan_push_vid(tc_act));
+		actions->push_vlan_tpid = tcf_vlan_push_proto(tc_act);
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+	return 0;
+}
+#endif
+
+#ifdef HAVE_FLOW_OFFLOAD_H
 static int bnxt_tc_parse_tunnel_set(struct bnxt *bp,
 				    struct bnxt_tc_actions *actions,
 				    const struct flow_action_entry *act)
@@ -101,8 +170,17 @@ static int bnxt_tc_parse_tunnel_set(struct bnxt *bp,
 	const struct ip_tunnel_info *tun_info = act->tunnel;
 	const struct ip_tunnel_key *tun_key = &tun_info->key;
 
+#else
+static int bnxt_tc_parse_tunnel_set(struct bnxt *bp,
+				    struct bnxt_tc_actions *actions,
+				    const struct tc_action *tc_act)
+{
+	struct ip_tunnel_info *tun_info = tcf_tunnel_info(tc_act);
+	struct ip_tunnel_key *tun_key = &tun_info->key;
+#endif
+
 	if (ip_tunnel_info_af(tun_info) != AF_INET) {
-		netdev_info(bp->dev, "only IPv4 tunnel-encap is supported");
+		netdev_info(bp->dev, "only IPv4 tunnel-encap is supported\n");
 		return -EOPNOTSUPP;
 	}
 
@@ -111,17 +189,196 @@ static int bnxt_tc_parse_tunnel_set(struct bnxt *bp,
 	return 0;
 }
 
+
+/* Key & Mask from the stack comes unaligned in multiple iterations of 4 bytes
+ * each(u32).
+ * This routine consolidates such multiple unaligned values into one
+ * field each for Key & Mask (for src and dst macs separately)
+ * For example,
+ *			Mask/Key	Offset	Iteration
+ *			==========	======	=========
+ *	dst mac		0xffffffff	0	1
+ *	dst mac		0x0000ffff	4	2
+ *
+ *	src mac		0xffff0000	4	1
+ *	src mac		0xffffffff	8	2
+ *
+ * The above combination coming from the stack will be consolidated as
+ *			Mask/Key
+ *			==============
+ *	src mac:	0xffffffffffff
+ *	dst mac:	0xffffffffffff
+ */
+static void bnxt_set_l2_key_mask(u32 part_key, u32 part_mask,
+				 u8 *actual_key, u8 *actual_mask)
+{
+	u32 key = get_unaligned((u32 *)actual_key);
+	u32 mask = get_unaligned((u32 *)actual_mask);
+
+	part_key &= part_mask;
+	part_key |= key & ~part_mask;
+
+	put_unaligned(mask | part_mask, (u32 *)actual_mask);
+	put_unaligned(part_key, (u32 *)actual_key);
+}
+
+static int
+bnxt_fill_l2_rewrite_fields(struct bnxt_tc_actions *actions,
+			    u16 *eth_addr, u16 *eth_addr_mask)
+{
+	u16 *p;
+	int j;
+
+	if (unlikely(bnxt_eth_addr_key_mask_invalid(eth_addr, eth_addr_mask)))
+		return -EINVAL;
+
+	if (!is_wildcard(&eth_addr_mask[0], ETH_ALEN)) {
+		if (!is_exactmatch(&eth_addr_mask[0], ETH_ALEN))
+			return -EINVAL;
+		/* FW expects dmac to be in u16 array format */
+		p = eth_addr;
+		for (j = 0; j < 3; j++)
+			actions->l2_rewrite_dmac[j] = cpu_to_be16(*(p + j));
+	}
+
+	if (!is_wildcard(&eth_addr_mask[ETH_ALEN / 2], ETH_ALEN)) {
+		if (!is_exactmatch(&eth_addr_mask[ETH_ALEN / 2], ETH_ALEN))
+			return -EINVAL;
+		/* FW expects smac to be in u16 array format */
+		p = &eth_addr[ETH_ALEN / 2];
+		for (j = 0; j < 3; j++)
+			actions->l2_rewrite_smac[j] = cpu_to_be16(*(p + j));
+	}
+
+	return 0;
+}
+
+#ifdef HAVE_FLOW_OFFLOAD_H
+static int
+bnxt_tc_parse_pedit(struct bnxt *bp, struct bnxt_tc_actions *actions,
+		    struct flow_action_entry *act, int act_idx, u8 *eth_addr,
+		    u8 *eth_addr_mask)
+{
+	size_t offset_of_ip6_daddr = offsetof(struct ipv6hdr, daddr);
+	size_t offset_of_ip6_saddr = offsetof(struct ipv6hdr, saddr);
+	u32 mask, val, offset, idx;
+	u8 htype;
+
+	offset = act->mangle.offset;
+	htype = act->mangle.htype;
+	mask = ~act->mangle.mask;
+	val = act->mangle.val;
+
+	switch (htype) {
+	case FLOW_ACT_MANGLE_HDR_TYPE_ETH:
+		if (offset > PEDIT_OFFSET_SMAC_LAST_4_BYTES) {
+			netdev_err(bp->dev,
+				   "%s: eth_hdr: Invalid pedit field\n",
+				   __func__);
+			return -EINVAL;
+		}
+		actions->flags |= BNXT_TC_ACTION_FLAG_L2_REWRITE;
+
+		bnxt_set_l2_key_mask(val, mask, &eth_addr[offset],
+				     &eth_addr_mask[offset]);
+		break;
+	case FLOW_ACT_MANGLE_HDR_TYPE_IP4:
+		actions->flags |= BNXT_TC_ACTION_FLAG_NAT_XLATE;
+		actions->nat.l3_is_ipv4 = true;
+		if (offset ==  offsetof(struct iphdr, saddr)) {
+			actions->nat.src_xlate = true;
+			actions->nat.l3.ipv4.saddr.s_addr = htonl(val);
+		}
+		else if (offset ==  offsetof(struct iphdr, daddr)) {
+			actions->nat.src_xlate = false;
+			actions->nat.l3.ipv4.daddr.s_addr = htonl(val);
+		} else {
+			netdev_err(bp->dev,
+				   "%s: IPv4_hdr: Invalid pedit field\n",
+				   __func__);
+			return -EINVAL;
+		}
+
+		netdev_dbg(bp->dev, "nat.src_xlate = %d src IP: %pI4 dst ip : %pI4\n",
+			   actions->nat.src_xlate, &actions->nat.l3.ipv4.saddr,
+			   &actions->nat.l3.ipv4.daddr);
+		break;
+
+	case FLOW_ACT_MANGLE_HDR_TYPE_IP6:
+		actions->flags |= BNXT_TC_ACTION_FLAG_NAT_XLATE;
+		actions->nat.l3_is_ipv4 = false;
+		if (offset >= offsetof(struct ipv6hdr, saddr) &&
+		    offset < offset_of_ip6_daddr) {
+			/* 16 byte IPv6 address comes in 4 iterations of
+			 * 4byte chunks each
+			 */
+			actions->nat.src_xlate = true;
+			idx = (offset - offset_of_ip6_saddr) / 4;
+			/* First 4bytes will be copied to idx 0 and so on */
+			actions->nat.l3.ipv6.saddr.s6_addr32[idx] = htonl(val);
+		} else if (offset >= offset_of_ip6_daddr &&
+			   offset < offset_of_ip6_daddr + 16) {
+			actions->nat.src_xlate = false;
+			idx = (offset - offset_of_ip6_daddr) / 4;
+			actions->nat.l3.ipv6.saddr.s6_addr32[idx] = htonl(val);
+		} else {
+			netdev_err(bp->dev,
+				   "%s: IPv6_hdr: Invalid pedit field\n",
+				   __func__);
+			return -EINVAL;
+		}
+		break;
+	case FLOW_ACT_MANGLE_HDR_TYPE_TCP:
+	case FLOW_ACT_MANGLE_HDR_TYPE_UDP:
+		/* HW does not support L4 rewrite alone without L3
+		 * rewrite
+		 */
+		if (!(actions->flags & BNXT_TC_ACTION_FLAG_NAT_XLATE)) {
+			netdev_err(bp->dev,
+				   "Need to specify L3 rewrite as well\n");
+			return -EINVAL;
+		}
+		if (actions->nat.src_xlate)
+			actions->nat.l4.ports.sport = htons(val);
+		else
+			actions->nat.l4.ports.dport = htons(val);
+		netdev_dbg(bp->dev, "actions->nat.sport = %d dport = %d\n",
+			   actions->nat.l4.ports.sport,
+			   actions->nat.l4.ports.dport);
+		break;
+	default:
+		netdev_err(bp->dev, "%s: Unsupported pedit hdr type\n",
+			   __func__);
+		return -EINVAL;
+	}
+	return 0;
+}
+
 static int bnxt_tc_parse_actions(struct bnxt *bp,
 				 struct bnxt_tc_actions *actions,
-				 struct flow_action *flow_action)
+				 struct flow_action *flow_action,
+				 struct netlink_ext_ack *extack)
 {
+	/* Used to store the L2 rewrite mask for dmac (6 bytes) followed by
+	 * smac (6 bytes) if rewrite of both is specified, otherwise either
+	 * dmac or smac
+	 */
+	u16 eth_addr_mask[ETH_ALEN] = { 0 };
+	/* Used to store the L2 rewrite key for dmac (6 bytes) followed by
+	 * smac (6 bytes) if rewrite of both is specified, otherwise either
+	 * dmac or smac
+	 */
+	u16 eth_addr[ETH_ALEN] = { 0 };
 	struct flow_action_entry *act;
 	int i, rc;
 
 	if (!flow_action_has_entries(flow_action)) {
-		netdev_info(bp->dev, "no actions");
+		netdev_info(bp->dev, "no actions\n");
 		return -EINVAL;
 	}
+
+	if (!flow_action_basic_hw_stats_check(flow_action, extack))
+		return -EOPNOTSUPP;
 
 	flow_action_for_each(i, act, flow_action) {
 		switch (act->id) {
@@ -148,9 +405,24 @@ static int bnxt_tc_parse_actions(struct bnxt *bp,
 		case FLOW_ACTION_TUNNEL_DECAP:
 			actions->flags |= BNXT_TC_ACTION_FLAG_TUNNEL_DECAP;
 			break;
+		/* Packet edit: L2 rewrite, NAT, NAPT */
+		case FLOW_ACTION_MANGLE:
+			rc = bnxt_tc_parse_pedit(bp, actions, act, i,
+						 (u8 *)eth_addr,
+						 (u8 *)eth_addr_mask);
+			if (rc)
+				return rc;
+			break;
 		default:
 			break;
 		}
+	}
+
+	if (actions->flags & BNXT_TC_ACTION_FLAG_L2_REWRITE) {
+		rc = bnxt_fill_l2_rewrite_fields(actions, eth_addr,
+						 eth_addr_mask);
+		if (rc)
+			return rc;
 	}
 
 	if (actions->flags & BNXT_TC_ACTION_FLAG_FWD) {
@@ -169,6 +441,220 @@ static int bnxt_tc_parse_actions(struct bnxt *bp,
 	return 0;
 }
 
+#else
+
+static int
+bnxt_tc_parse_pedit(struct bnxt *bp, const struct tc_action *tc_act,
+		    struct bnxt_tc_actions *actions,
+		    u8 *eth_addr, u8 *eth_addr_mask)
+{
+	size_t offset_of_ip6_daddr = offsetof(struct ipv6hdr, daddr);
+	size_t offset_of_ip6_saddr = offsetof(struct ipv6hdr, saddr);
+	u32 mask, val, offset, idx;
+	u8 cmd, htype;
+	int nkeys, j;
+
+	nkeys = tcf_pedit_nkeys(tc_act);
+	for (j = 0 ; j < nkeys; j++) {
+		cmd = tcf_pedit_cmd(tc_act, j);
+		/* L2 rewrite comes as TCA_PEDIT_KEY_EX_CMD_SET type from TC.
+		 * Return error, if the TC pedit cmd is not of this type.
+		 */
+		if (cmd != TCA_PEDIT_KEY_EX_CMD_SET) {
+			netdev_err(bp->dev, "%s: pedit cmd not supported\n",
+				   __func__);
+			return -EINVAL;
+		}
+
+		offset = tcf_pedit_offset(tc_act, j);
+		htype = tcf_pedit_htype(tc_act, j);
+		mask = ~tcf_pedit_mask(tc_act, j);
+		val = tcf_pedit_val(tc_act, j);
+
+		switch (htype) {
+		case TCA_PEDIT_KEY_EX_HDR_TYPE_ETH:
+			if (offset > PEDIT_OFFSET_SMAC_LAST_4_BYTES) {
+				netdev_err(bp->dev,
+					   "%s: eth_hdr: Invalid pedit field\n",
+					   __func__);
+				return -EINVAL;
+			}
+			actions->flags |=
+				BNXT_TC_ACTION_FLAG_L2_REWRITE;
+
+			bnxt_set_l2_key_mask(val, mask,
+					     &eth_addr[offset],
+					     &eth_addr_mask[offset]);
+			break;
+
+		case TCA_PEDIT_KEY_EX_HDR_TYPE_IP4:
+			actions->flags |= BNXT_TC_ACTION_FLAG_NAT_XLATE;
+			actions->nat.l3_is_ipv4 = true;
+			if (offset == offsetof(struct iphdr, saddr)) {
+				actions->nat.src_xlate = true;
+				actions->nat.l3.ipv4.saddr.s_addr = htonl(val);
+			} else if (offset == offsetof(struct iphdr, daddr)) {
+				actions->nat.src_xlate = false;
+				actions->nat.l3.ipv4.daddr.s_addr = htonl(val);
+			} else {
+				netdev_err(bp->dev,
+					   "%s: IPv4_hdr: Invalid pedit field\n",
+					   __func__);
+				return -EINVAL;
+			}
+			break;
+
+		case TCA_PEDIT_KEY_EX_HDR_TYPE_IP6:
+			actions->flags |= BNXT_TC_ACTION_FLAG_NAT_XLATE;
+			actions->nat.l3_is_ipv4 = false;
+
+			if (offset >= offsetof(struct ipv6hdr, saddr) &&
+			    offset < offset_of_ip6_daddr) {
+				/* 16 byte IPv6 address comes in 4 iterations of
+				 * 4byte chunks each
+				 */
+				actions->nat.src_xlate = true;
+				idx = (offset - offset_of_ip6_saddr) / 4;
+				/* First 4bytes will be copied to idx 0 and so on */
+				actions->nat.l3.ipv6.saddr.s6_addr32[idx] =
+								htonl(val);
+			} else if (offset >= offset_of_ip6_daddr &&
+				   offset < offset_of_ip6_daddr + 16) {
+				actions->nat.src_xlate = false;
+				idx = (offset - offset_of_ip6_daddr) / 4;
+				actions->nat.l3.ipv6.daddr.s6_addr32[idx] =
+								htonl(val);
+			} else {
+				netdev_err(bp->dev,
+					   "%s: IPv6_hdr: Invalid pedit field\n",
+					   __func__);
+				return -EINVAL;
+			}
+			break;
+
+		case TCA_PEDIT_KEY_EX_HDR_TYPE_TCP:
+		case TCA_PEDIT_KEY_EX_HDR_TYPE_UDP:
+			/* HW does not support L4 rewrite alone without L3
+			 * rewrite
+			 */
+			if (!(actions->flags & BNXT_TC_ACTION_FLAG_NAT_XLATE)) {
+				netdev_err(bp->dev,
+					   "Need to specify L3 rewrite as well\n");
+				return -EINVAL;
+			}
+			if (actions->nat.src_xlate)
+				actions->nat.l4.ports.sport = htons(val);
+			else
+				actions->nat.l4.ports.dport = htons(val);
+			break;
+		/* Return, if the packet edit is not for L2/L3/L4 */
+		default:
+			netdev_err(bp->dev, "%s: Unsupported pedit hdr type\n",
+				   __func__);
+			return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+
+static int bnxt_tc_parse_actions(struct bnxt *bp,
+				 struct bnxt_tc_actions *actions,
+				 struct tcf_exts *tc_exts)
+{
+	u16 eth_addr_mask[ETH_ALEN] = { 0 };
+	u16 eth_addr[ETH_ALEN] = { 0 };
+	const struct tc_action *tc_act;
+#ifndef HAVE_TC_EXTS_FOR_ACTION
+	LIST_HEAD(tc_actions);
+	int rc;
+#else
+	int i, j, rc;
+#endif
+
+	if (!tcf_exts_has_actions(tc_exts)) {
+		netdev_info(bp->dev, "no actions");
+		return -EINVAL;
+	}
+
+#ifndef HAVE_TC_EXTS_FOR_ACTION
+	tcf_exts_to_list(tc_exts, &tc_actions);
+	list_for_each_entry(tc_act, &tc_actions, list) {
+#else
+	tcf_exts_for_each_action(i, tc_act, tc_exts) {
+#endif
+		/* Drop action */
+		if (is_tcf_gact_shot(tc_act)) {
+			actions->flags |= BNXT_TC_ACTION_FLAG_DROP;
+			return 0; /* don't bother with other actions */
+		}
+
+		/* Redirect action */
+		if (is_tcf_mirred_egress_redirect(tc_act)) {
+			rc = bnxt_tc_parse_redir(bp, actions, tc_act);
+			if (rc)
+				return rc;
+			continue;
+		}
+
+		/* Push/pop VLAN */
+		if (is_tcf_vlan(tc_act)) {
+			rc = bnxt_tc_parse_vlan(bp, actions, tc_act);
+			if (rc)
+				return rc;
+			continue;
+		}
+
+		/* Tunnel encap */
+		if (is_tcf_tunnel_set(tc_act)) {
+			rc = bnxt_tc_parse_tunnel_set(bp, actions, tc_act);
+			if (rc)
+				return rc;
+			continue;
+		}
+
+		/* Tunnel decap */
+		if (is_tcf_tunnel_release(tc_act)) {
+			actions->flags |= BNXT_TC_ACTION_FLAG_TUNNEL_DECAP;
+			continue;
+		}
+
+		/* Packet edit: L2 rewrite, NAT, NAPT */
+		if (is_tcf_pedit(tc_act)) {
+			rc = bnxt_tc_parse_pedit(bp, tc_act, actions,
+						 (u8 *)eth_addr,
+						 (u8 *)eth_addr_mask);
+			if (rc)
+				return rc;
+
+			if (actions->flags & BNXT_TC_ACTION_FLAG_L2_REWRITE) {
+				rc = bnxt_fill_l2_rewrite_fields(actions,
+								 eth_addr,
+								 eth_addr_mask);
+				if (rc)
+					return rc;
+			}
+		}
+	}
+
+	if (actions->flags & BNXT_TC_ACTION_FLAG_FWD) {
+		if (actions->flags & BNXT_TC_ACTION_FLAG_TUNNEL_ENCAP) {
+			/* dst_fid is PF's fid */
+			actions->dst_fid = bp->pf.fw_fid;
+		} else {
+			/* find the FID from dst_dev */
+			actions->dst_fid =
+				bnxt_flow_get_dst_fid(bp, actions->dst_dev);
+			if (actions->dst_fid == BNXT_FID_INVALID)
+				return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+#endif
+
+#ifdef HAVE_FLOW_OFFLOAD_H
 static int bnxt_tc_parse_flow(struct bnxt *bp,
 			      struct flow_cls_offload *tc_flow_cmd,
 			      struct bnxt_tc_flow *flow)
@@ -179,7 +665,7 @@ static int bnxt_tc_parse_flow(struct bnxt *bp,
 	/* KEY_CONTROL and KEY_BASIC are needed for forming a meaningful key */
 	if ((dissector->used_keys & BIT(FLOW_DISSECTOR_KEY_CONTROL)) == 0 ||
 	    (dissector->used_keys & BIT(FLOW_DISSECTOR_KEY_BASIC)) == 0) {
-		netdev_info(bp->dev, "cannot form TC key: used_keys = 0x%x",
+		netdev_info(bp->dev, "cannot form TC key: used_keys = 0x%x\n",
 			    dissector->used_keys);
 		return -EOPNOTSUPP;
 	}
@@ -300,24 +786,189 @@ static int bnxt_tc_parse_flow(struct bnxt *bp,
 		flow->tun_mask.tp_src = match.mask->src;
 	}
 
-	return bnxt_tc_parse_actions(bp, &flow->actions, &rule->action);
+	return bnxt_tc_parse_actions(bp, &flow->actions, &rule->action,
+				     tc_flow_cmd->common.extack);
 }
+
+#else
+#define GET_KEY(flow_cmd, key_type)					\
+		skb_flow_dissector_target((flow_cmd)->dissector, key_type,\
+					  (flow_cmd)->key)
+#define GET_MASK(flow_cmd, key_type)					\
+		skb_flow_dissector_target((flow_cmd)->dissector, key_type,\
+					  (flow_cmd)->mask)
+
+static int bnxt_tc_parse_flow(struct bnxt *bp,
+			      struct flow_cls_offload *tc_flow_cmd,
+			      struct bnxt_tc_flow *flow)
+{
+	struct flow_dissector *dissector = tc_flow_cmd->dissector;
+
+	/* KEY_CONTROL and KEY_BASIC are needed for forming a meaningful key */
+	if ((dissector->used_keys & BIT(FLOW_DISSECTOR_KEY_CONTROL)) == 0 ||
+	    (dissector->used_keys & BIT(FLOW_DISSECTOR_KEY_BASIC)) == 0) {
+		netdev_info(bp->dev, "cannot form TC key: used_keys = 0x%x",
+			    dissector->used_keys);
+		return -EOPNOTSUPP;
+	}
+
+	if (dissector_uses_key(dissector, FLOW_DISSECTOR_KEY_BASIC)) {
+		struct flow_dissector_key_basic *key =
+			GET_KEY(tc_flow_cmd, FLOW_DISSECTOR_KEY_BASIC);
+		struct flow_dissector_key_basic *mask =
+			GET_MASK(tc_flow_cmd, FLOW_DISSECTOR_KEY_BASIC);
+
+		flow->l2_key.ether_type = key->n_proto;
+		flow->l2_mask.ether_type = mask->n_proto;
+
+		if (key->n_proto == htons(ETH_P_IP) ||
+		    key->n_proto == htons(ETH_P_IPV6)) {
+			flow->l4_key.ip_proto = key->ip_proto;
+			flow->l4_mask.ip_proto = mask->ip_proto;
+		}
+	}
+
+	if (dissector_uses_key(dissector, FLOW_DISSECTOR_KEY_ETH_ADDRS)) {
+		struct flow_dissector_key_eth_addrs *key =
+			GET_KEY(tc_flow_cmd, FLOW_DISSECTOR_KEY_ETH_ADDRS);
+		struct flow_dissector_key_eth_addrs *mask =
+			GET_MASK(tc_flow_cmd, FLOW_DISSECTOR_KEY_ETH_ADDRS);
+
+		flow->flags |= BNXT_TC_FLOW_FLAGS_ETH_ADDRS;
+		ether_addr_copy(flow->l2_key.dmac, key->dst);
+		ether_addr_copy(flow->l2_mask.dmac, mask->dst);
+		ether_addr_copy(flow->l2_key.smac, key->src);
+		ether_addr_copy(flow->l2_mask.smac, mask->src);
+	}
+
+	if (dissector_uses_key(dissector, FLOW_DISSECTOR_KEY_VLAN)) {
+		struct flow_dissector_key_vlan *key =
+			GET_KEY(tc_flow_cmd, FLOW_DISSECTOR_KEY_VLAN);
+		struct flow_dissector_key_vlan *mask =
+			GET_MASK(tc_flow_cmd, FLOW_DISSECTOR_KEY_VLAN);
+
+		flow->l2_key.inner_vlan_tci =
+		   cpu_to_be16(VLAN_TCI(key->vlan_id, key->vlan_priority));
+		flow->l2_mask.inner_vlan_tci =
+		   cpu_to_be16((VLAN_TCI(mask->vlan_id, mask->vlan_priority)));
+		flow->l2_key.inner_vlan_tpid = htons(ETH_P_8021Q);
+		flow->l2_mask.inner_vlan_tpid = htons(0xffff);
+		flow->l2_key.num_vlans = 1;
+	}
+
+	if (dissector_uses_key(dissector, FLOW_DISSECTOR_KEY_IPV4_ADDRS)) {
+		struct flow_dissector_key_ipv4_addrs *key =
+			GET_KEY(tc_flow_cmd, FLOW_DISSECTOR_KEY_IPV4_ADDRS);
+		struct flow_dissector_key_ipv4_addrs *mask =
+			GET_MASK(tc_flow_cmd, FLOW_DISSECTOR_KEY_IPV4_ADDRS);
+
+		flow->flags |= BNXT_TC_FLOW_FLAGS_IPV4_ADDRS;
+		flow->l3_key.ipv4.daddr.s_addr = key->dst;
+		flow->l3_mask.ipv4.daddr.s_addr = mask->dst;
+		flow->l3_key.ipv4.saddr.s_addr = key->src;
+		flow->l3_mask.ipv4.saddr.s_addr = mask->src;
+	} else if (dissector_uses_key(dissector,
+				      FLOW_DISSECTOR_KEY_IPV6_ADDRS)) {
+		struct flow_dissector_key_ipv6_addrs *key =
+			GET_KEY(tc_flow_cmd, FLOW_DISSECTOR_KEY_IPV6_ADDRS);
+		struct flow_dissector_key_ipv6_addrs *mask =
+			GET_MASK(tc_flow_cmd, FLOW_DISSECTOR_KEY_IPV6_ADDRS);
+
+		flow->flags |= BNXT_TC_FLOW_FLAGS_IPV6_ADDRS;
+		flow->l3_key.ipv6.daddr = key->dst;
+		flow->l3_mask.ipv6.daddr = mask->dst;
+		flow->l3_key.ipv6.saddr = key->src;
+		flow->l3_mask.ipv6.saddr = mask->src;
+	}
+
+	if (dissector_uses_key(dissector, FLOW_DISSECTOR_KEY_PORTS)) {
+		struct flow_dissector_key_ports *key =
+			GET_KEY(tc_flow_cmd, FLOW_DISSECTOR_KEY_PORTS);
+		struct flow_dissector_key_ports *mask =
+			GET_MASK(tc_flow_cmd, FLOW_DISSECTOR_KEY_PORTS);
+
+		flow->flags |= BNXT_TC_FLOW_FLAGS_PORTS;
+		flow->l4_key.ports.dport = key->dst;
+		flow->l4_mask.ports.dport = mask->dst;
+		flow->l4_key.ports.sport = key->src;
+		flow->l4_mask.ports.sport = mask->src;
+	}
+
+	if (dissector_uses_key(dissector, FLOW_DISSECTOR_KEY_ICMP)) {
+		struct flow_dissector_key_icmp *key =
+			GET_KEY(tc_flow_cmd, FLOW_DISSECTOR_KEY_ICMP);
+		struct flow_dissector_key_icmp *mask =
+			GET_MASK(tc_flow_cmd, FLOW_DISSECTOR_KEY_ICMP);
+
+		flow->flags |= BNXT_TC_FLOW_FLAGS_ICMP;
+		flow->l4_key.icmp.type = key->type;
+		flow->l4_key.icmp.code = key->code;
+		flow->l4_mask.icmp.type = mask->type;
+		flow->l4_mask.icmp.code = mask->code;
+	}
+
+	if (dissector_uses_key(dissector, FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS)) {
+		struct flow_dissector_key_ipv4_addrs *key =
+			GET_KEY(tc_flow_cmd, FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS);
+		struct flow_dissector_key_ipv4_addrs *mask =
+				GET_MASK(tc_flow_cmd,
+					 FLOW_DISSECTOR_KEY_ENC_IPV4_ADDRS);
+
+		flow->flags |= BNXT_TC_FLOW_FLAGS_TUNL_IPV4_ADDRS;
+		flow->tun_key.u.ipv4.dst = key->dst;
+		flow->tun_mask.u.ipv4.dst = mask->dst;
+		flow->tun_key.u.ipv4.src = key->src;
+		flow->tun_mask.u.ipv4.src = mask->src;
+	} else if (dissector_uses_key(dissector,
+				      FLOW_DISSECTOR_KEY_ENC_IPV6_ADDRS)) {
+		return -EOPNOTSUPP;
+	}
+
+	if (dissector_uses_key(dissector, FLOW_DISSECTOR_KEY_ENC_KEYID)) {
+		struct flow_dissector_key_keyid *key =
+			GET_KEY(tc_flow_cmd, FLOW_DISSECTOR_KEY_ENC_KEYID);
+		struct flow_dissector_key_keyid *mask =
+			GET_MASK(tc_flow_cmd, FLOW_DISSECTOR_KEY_ENC_KEYID);
+
+		flow->flags |= BNXT_TC_FLOW_FLAGS_TUNL_ID;
+		flow->tun_key.tun_id = key32_to_tunnel_id(key->keyid);
+		flow->tun_mask.tun_id = key32_to_tunnel_id(mask->keyid);
+	}
+
+	if (dissector_uses_key(dissector, FLOW_DISSECTOR_KEY_ENC_PORTS)) {
+		struct flow_dissector_key_ports *key =
+			GET_KEY(tc_flow_cmd, FLOW_DISSECTOR_KEY_ENC_PORTS);
+		struct flow_dissector_key_ports *mask =
+			GET_MASK(tc_flow_cmd, FLOW_DISSECTOR_KEY_ENC_PORTS);
+
+		flow->flags |= BNXT_TC_FLOW_FLAGS_TUNL_PORTS;
+		flow->tun_key.tp_dst = key->dst;
+		flow->tun_mask.tp_dst = mask->dst;
+		flow->tun_key.tp_src = key->src;
+		flow->tun_mask.tp_src = mask->src;
+	}
+
+	return bnxt_tc_parse_actions(bp, &flow->actions, tc_flow_cmd->exts);
+}
+#endif
 
 static int bnxt_hwrm_cfa_flow_free(struct bnxt *bp,
 				   struct bnxt_tc_flow_node *flow_node)
 {
-	struct hwrm_cfa_flow_free_input req = { 0 };
+	struct hwrm_cfa_flow_free_input *req;
 	int rc;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_FLOW_FREE, -1, -1);
-	if (bp->fw_cap & BNXT_FW_CAP_OVS_64BIT_HANDLE)
-		req.ext_flow_handle = flow_node->ext_flow_handle;
-	else
-		req.flow_handle = flow_node->flow_handle;
+	rc = hwrm_req_init(bp, req, HWRM_CFA_FLOW_FREE);
+	if (!rc) {
+		if (bp->fw_cap & BNXT_FW_CAP_OVS_64BIT_HANDLE)
+			req->ext_flow_handle = flow_node->ext_flow_handle;
+		else
+			req->flow_handle = flow_node->flow_handle;
 
-	rc = hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
+		rc = hwrm_req_send(bp, req);
+	}
 	if (rc)
-		netdev_info(bp->dev, "%s: Error rc=%d", __func__, rc);
+		netdev_info(bp->dev, "%s: Error rc=%d\n", __func__, rc);
 
 	return rc;
 }
@@ -391,29 +1042,101 @@ static int bnxt_hwrm_cfa_flow_alloc(struct bnxt *bp, struct bnxt_tc_flow *flow,
 	struct bnxt_tc_actions *actions = &flow->actions;
 	struct bnxt_tc_l3_key *l3_mask = &flow->l3_mask;
 	struct bnxt_tc_l3_key *l3_key = &flow->l3_key;
-	struct hwrm_cfa_flow_alloc_input req = { 0 };
 	struct hwrm_cfa_flow_alloc_output *resp;
+	struct hwrm_cfa_flow_alloc_input *req;
 	u16 flow_flags = 0, action_flags = 0;
 	int rc;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_FLOW_ALLOC, -1, -1);
+	rc = hwrm_req_init(bp, req, HWRM_CFA_FLOW_ALLOC);
+	if (rc)
+		return rc;
 
-	req.src_fid = cpu_to_le16(flow->src_fid);
-	req.ref_flow_handle = ref_flow_handle;
+	req->src_fid = cpu_to_le16(flow->src_fid);
+	req->ref_flow_handle = ref_flow_handle;
+
+	if (actions->flags & BNXT_TC_ACTION_FLAG_L2_REWRITE) {
+		memcpy(req->l2_rewrite_dmac, actions->l2_rewrite_dmac,
+		       ETH_ALEN);
+		memcpy(req->l2_rewrite_smac, actions->l2_rewrite_smac,
+		       ETH_ALEN);
+		action_flags |=
+			CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_L2_HEADER_REWRITE;
+	}
+
+	if (actions->flags & BNXT_TC_ACTION_FLAG_NAT_XLATE) {
+		if (actions->nat.l3_is_ipv4) {
+			action_flags |=
+				CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_NAT_IPV4_ADDRESS;
+
+			if (actions->nat.src_xlate) {
+				action_flags |=
+					CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_NAT_SRC;
+				/* L3 source rewrite */
+				req->nat_ip_address[0] =
+					actions->nat.l3.ipv4.saddr.s_addr;
+				/* L4 source port */
+				if (actions->nat.l4.ports.sport)
+					req->nat_port =
+						actions->nat.l4.ports.sport;
+			} else {
+				action_flags |=
+					CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_NAT_DEST;
+				/* L3 destination rewrite */
+				req->nat_ip_address[0] =
+					actions->nat.l3.ipv4.daddr.s_addr;
+				/* L4 destination port */
+				if (actions->nat.l4.ports.dport)
+					req->nat_port =
+						actions->nat.l4.ports.dport;
+			}
+			netdev_dbg(bp->dev,
+				   "req.nat_ip_address: %pI4 src_xlate: %d req.nat_port: %x\n",
+				   req->nat_ip_address, actions->nat.src_xlate,
+				   req->nat_port);
+		} else {
+			if (actions->nat.src_xlate) {
+				action_flags |=
+					CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_NAT_SRC;
+				/* L3 source rewrite */
+				memcpy(req->nat_ip_address,
+				       actions->nat.l3.ipv6.saddr.s6_addr32,
+				       sizeof(req->nat_ip_address));
+				/* L4 source port */
+				if (actions->nat.l4.ports.sport)
+					req->nat_port =
+						actions->nat.l4.ports.sport;
+			} else {
+				action_flags |=
+					CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_NAT_DEST;
+				/* L3 destination rewrite */
+				memcpy(req->nat_ip_address,
+				       actions->nat.l3.ipv6.daddr.s6_addr32,
+				       sizeof(req->nat_ip_address));
+				/* L4 destination port */
+				if (actions->nat.l4.ports.dport)
+					req->nat_port =
+						actions->nat.l4.ports.dport;
+			}
+			netdev_dbg(bp->dev,
+                                   "req.nat_ip_address: %pI6 src_xlate: %d req.nat_port: %x\n",
+				   req->nat_ip_address, actions->nat.src_xlate,
+				   req->nat_port);
+		}
+	}
 
 	if (actions->flags & BNXT_TC_ACTION_FLAG_TUNNEL_DECAP ||
 	    actions->flags & BNXT_TC_ACTION_FLAG_TUNNEL_ENCAP) {
-		req.tunnel_handle = tunnel_handle;
+		req->tunnel_handle = tunnel_handle;
 		flow_flags |= CFA_FLOW_ALLOC_REQ_FLAGS_TUNNEL;
 		action_flags |= CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_TUNNEL;
 	}
 
-	req.ethertype = flow->l2_key.ether_type;
-	req.ip_proto = flow->l4_key.ip_proto;
+	req->ethertype = flow->l2_key.ether_type;
+	req->ip_proto = flow->l4_key.ip_proto;
 
 	if (flow->flags & BNXT_TC_FLOW_FLAGS_ETH_ADDRS) {
-		memcpy(req.dmac, flow->l2_key.dmac, ETH_ALEN);
-		memcpy(req.smac, flow->l2_key.smac, ETH_ALEN);
+		memcpy(req->dmac, flow->l2_key.dmac, ETH_ALEN);
+		memcpy(req->smac, flow->l2_key.smac, ETH_ALEN);
 	}
 
 	if (flow->l2_key.num_vlans > 0) {
@@ -422,7 +1145,7 @@ static int bnxt_hwrm_cfa_flow_alloc(struct bnxt *bp, struct bnxt_tc_flow *flow,
 		 * in outer_vlan_tci when num_vlans is 1 (which is
 		 * always the case in TC.)
 		 */
-		req.outer_vlan_tci = flow->l2_key.inner_vlan_tci;
+		req->outer_vlan_tci = flow->l2_key.inner_vlan_tci;
 	}
 
 	/* If all IP and L4 fields are wildcarded then this is an L2 flow */
@@ -435,68 +1158,67 @@ static int bnxt_hwrm_cfa_flow_alloc(struct bnxt *bp, struct bnxt_tc_flow *flow,
 				CFA_FLOW_ALLOC_REQ_FLAGS_FLOWTYPE_IPV6;
 
 		if (flow->flags & BNXT_TC_FLOW_FLAGS_IPV4_ADDRS) {
-			req.ip_dst[0] = l3_key->ipv4.daddr.s_addr;
-			req.ip_dst_mask_len =
+			req->ip_dst[0] = l3_key->ipv4.daddr.s_addr;
+			req->ip_dst_mask_len =
 				inet_mask_len(l3_mask->ipv4.daddr.s_addr);
-			req.ip_src[0] = l3_key->ipv4.saddr.s_addr;
-			req.ip_src_mask_len =
+			req->ip_src[0] = l3_key->ipv4.saddr.s_addr;
+			req->ip_src_mask_len =
 				inet_mask_len(l3_mask->ipv4.saddr.s_addr);
 		} else if (flow->flags & BNXT_TC_FLOW_FLAGS_IPV6_ADDRS) {
-			memcpy(req.ip_dst, l3_key->ipv6.daddr.s6_addr32,
-			       sizeof(req.ip_dst));
-			req.ip_dst_mask_len =
+			memcpy(req->ip_dst, l3_key->ipv6.daddr.s6_addr32,
+			       sizeof(req->ip_dst));
+			req->ip_dst_mask_len =
 					ipv6_mask_len(&l3_mask->ipv6.daddr);
-			memcpy(req.ip_src, l3_key->ipv6.saddr.s6_addr32,
-			       sizeof(req.ip_src));
-			req.ip_src_mask_len =
+			memcpy(req->ip_src, l3_key->ipv6.saddr.s6_addr32,
+			       sizeof(req->ip_src));
+			req->ip_src_mask_len =
 					ipv6_mask_len(&l3_mask->ipv6.saddr);
 		}
 	}
 
 	if (flow->flags & BNXT_TC_FLOW_FLAGS_PORTS) {
-		req.l4_src_port = flow->l4_key.ports.sport;
-		req.l4_src_port_mask = flow->l4_mask.ports.sport;
-		req.l4_dst_port = flow->l4_key.ports.dport;
-		req.l4_dst_port_mask = flow->l4_mask.ports.dport;
+		req->l4_src_port = flow->l4_key.ports.sport;
+		req->l4_src_port_mask = flow->l4_mask.ports.sport;
+		req->l4_dst_port = flow->l4_key.ports.dport;
+		req->l4_dst_port_mask = flow->l4_mask.ports.dport;
 	} else if (flow->flags & BNXT_TC_FLOW_FLAGS_ICMP) {
 		/* l4 ports serve as type/code when ip_proto is ICMP */
-		req.l4_src_port = htons(flow->l4_key.icmp.type);
-		req.l4_src_port_mask = htons(flow->l4_mask.icmp.type);
-		req.l4_dst_port = htons(flow->l4_key.icmp.code);
-		req.l4_dst_port_mask = htons(flow->l4_mask.icmp.code);
+		req->l4_src_port = htons(flow->l4_key.icmp.type);
+		req->l4_src_port_mask = htons(flow->l4_mask.icmp.type);
+		req->l4_dst_port = htons(flow->l4_key.icmp.code);
+		req->l4_dst_port_mask = htons(flow->l4_mask.icmp.code);
 	}
-	req.flags = cpu_to_le16(flow_flags);
+	req->flags = cpu_to_le16(flow_flags);
 
 	if (actions->flags & BNXT_TC_ACTION_FLAG_DROP) {
 		action_flags |= CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_DROP;
 	} else {
 		if (actions->flags & BNXT_TC_ACTION_FLAG_FWD) {
 			action_flags |= CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_FWD;
-			req.dst_fid = cpu_to_le16(actions->dst_fid);
+			req->dst_fid = cpu_to_le16(actions->dst_fid);
 		}
 		if (actions->flags & BNXT_TC_ACTION_FLAG_PUSH_VLAN) {
 			action_flags |=
 			    CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_L2_HEADER_REWRITE;
-			req.l2_rewrite_vlan_tpid = actions->push_vlan_tpid;
-			req.l2_rewrite_vlan_tci = actions->push_vlan_tci;
-			memcpy(&req.l2_rewrite_dmac, &req.dmac, ETH_ALEN);
-			memcpy(&req.l2_rewrite_smac, &req.smac, ETH_ALEN);
+			req->l2_rewrite_vlan_tpid = actions->push_vlan_tpid;
+			req->l2_rewrite_vlan_tci = actions->push_vlan_tci;
+			memcpy(&req->l2_rewrite_dmac, &req->dmac, ETH_ALEN);
+			memcpy(&req->l2_rewrite_smac, &req->smac, ETH_ALEN);
 		}
 		if (actions->flags & BNXT_TC_ACTION_FLAG_POP_VLAN) {
 			action_flags |=
 			    CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_L2_HEADER_REWRITE;
 			/* Rewrite config with tpid = 0 implies vlan pop */
-			req.l2_rewrite_vlan_tpid = 0;
-			memcpy(&req.l2_rewrite_dmac, &req.dmac, ETH_ALEN);
-			memcpy(&req.l2_rewrite_smac, &req.smac, ETH_ALEN);
+			req->l2_rewrite_vlan_tpid = 0;
+			memcpy(&req->l2_rewrite_dmac, &req->dmac, ETH_ALEN);
+			memcpy(&req->l2_rewrite_smac, &req->smac, ETH_ALEN);
 		}
 	}
-	req.action_flags = cpu_to_le16(action_flags);
+	req->action_flags = cpu_to_le16(action_flags);
 
-	mutex_lock(&bp->hwrm_cmd_lock);
-	rc = _hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
+	resp = hwrm_req_hold(bp, req);
+	rc = hwrm_req_send(bp, req);
 	if (!rc) {
-		resp = bnxt_get_hwrm_resp_addr(bp, &req);
 		/* CFA_FLOW_ALLOC response interpretation:
 		 *		    fw with	     fw with
 		 *		    16-bit	     64-bit
@@ -512,7 +1234,7 @@ static int bnxt_hwrm_cfa_flow_alloc(struct bnxt *bp, struct bnxt_tc_flow *flow,
 			flow_node->flow_id = resp->flow_id;
 		}
 	}
-	mutex_unlock(&bp->hwrm_cmd_lock);
+	hwrm_req_drop(bp, req);
 	return rc;
 }
 
@@ -522,67 +1244,69 @@ static int hwrm_cfa_decap_filter_alloc(struct bnxt *bp,
 				       __le32 ref_decap_handle,
 				       __le32 *decap_filter_handle)
 {
-	struct hwrm_cfa_decap_filter_alloc_input req = { 0 };
 	struct hwrm_cfa_decap_filter_alloc_output *resp;
 	struct ip_tunnel_key *tun_key = &flow->tun_key;
+	struct hwrm_cfa_decap_filter_alloc_input *req;
 	u32 enables = 0;
 	int rc;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_DECAP_FILTER_ALLOC, -1, -1);
+	rc = hwrm_req_init(bp, req, HWRM_CFA_DECAP_FILTER_ALLOC);
+	if (rc)
+		goto exit;
 
-	req.flags = cpu_to_le32(CFA_DECAP_FILTER_ALLOC_REQ_FLAGS_OVS_TUNNEL);
+	req->flags = cpu_to_le32(CFA_DECAP_FILTER_ALLOC_REQ_FLAGS_OVS_TUNNEL);
 	enables |= CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_TUNNEL_TYPE |
 		   CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_IP_PROTOCOL;
-	req.tunnel_type = CFA_DECAP_FILTER_ALLOC_REQ_TUNNEL_TYPE_VXLAN;
-	req.ip_protocol = CFA_DECAP_FILTER_ALLOC_REQ_IP_PROTOCOL_UDP;
+	req->tunnel_type = CFA_DECAP_FILTER_ALLOC_REQ_TUNNEL_TYPE_VXLAN;
+	req->ip_protocol = CFA_DECAP_FILTER_ALLOC_REQ_IP_PROTOCOL_UDP;
 
 	if (flow->flags & BNXT_TC_FLOW_FLAGS_TUNL_ID) {
 		enables |= CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_TUNNEL_ID;
 		/* tunnel_id is wrongly defined in hsi defn. as __le32 */
-		req.tunnel_id = tunnel_id_to_key32(tun_key->tun_id);
+		req->tunnel_id = tunnel_id_to_key32(tun_key->tun_id);
 	}
 
 	if (flow->flags & BNXT_TC_FLOW_FLAGS_TUNL_ETH_ADDRS) {
 		enables |= CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_DST_MACADDR;
-		ether_addr_copy(req.dst_macaddr, l2_info->dmac);
+		ether_addr_copy(req->dst_macaddr, l2_info->dmac);
 	}
 	if (l2_info->num_vlans) {
 		enables |= CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_T_IVLAN_VID;
-		req.t_ivlan_vid = l2_info->inner_vlan_tci;
+		req->t_ivlan_vid = l2_info->inner_vlan_tci;
 	}
 
 	enables |= CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_ETHERTYPE;
-	req.ethertype = htons(ETH_P_IP);
+	req->ethertype = htons(ETH_P_IP);
 
 	if (flow->flags & BNXT_TC_FLOW_FLAGS_TUNL_IPV4_ADDRS) {
 		enables |= CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_SRC_IPADDR |
 			   CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_DST_IPADDR |
 			   CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_IPADDR_TYPE;
-		req.ip_addr_type = CFA_DECAP_FILTER_ALLOC_REQ_IP_ADDR_TYPE_IPV4;
-		req.dst_ipaddr[0] = tun_key->u.ipv4.dst;
-		req.src_ipaddr[0] = tun_key->u.ipv4.src;
+		req->ip_addr_type =
+			CFA_DECAP_FILTER_ALLOC_REQ_IP_ADDR_TYPE_IPV4;
+		req->dst_ipaddr[0] = tun_key->u.ipv4.dst;
+		req->src_ipaddr[0] = tun_key->u.ipv4.src;
 	}
 
 	if (flow->flags & BNXT_TC_FLOW_FLAGS_TUNL_PORTS) {
 		enables |= CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_DST_PORT;
-		req.dst_port = tun_key->tp_dst;
+		req->dst_port = tun_key->tp_dst;
 	}
 
 	/* Eventhough the decap_handle returned by hwrm_cfa_decap_filter_alloc
 	 * is defined as __le32, l2_ctxt_ref_id is defined in HSI as __le16.
 	 */
-	req.l2_ctxt_ref_id = (__force __le16)ref_decap_handle;
-	req.enables = cpu_to_le32(enables);
+	req->l2_ctxt_ref_id = (__force __le16)ref_decap_handle;
+	req->enables = cpu_to_le32(enables);
 
-	mutex_lock(&bp->hwrm_cmd_lock);
-	rc = _hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
-	if (!rc) {
-		resp = bnxt_get_hwrm_resp_addr(bp, &req);
+	resp = hwrm_req_hold(bp, req);
+	rc = hwrm_req_send(bp, req);
+	if (!rc)
 		*decap_filter_handle = resp->decap_filter_id;
-	} else {
-		netdev_info(bp->dev, "%s: Error rc=%d", __func__, rc);
-	}
-	mutex_unlock(&bp->hwrm_cmd_lock);
+	hwrm_req_drop(bp, req);
+exit:
+	if (rc)
+		netdev_info(bp->dev, "%s: Error rc=%d\n", __func__, rc);
 
 	return rc;
 }
@@ -590,15 +1314,16 @@ static int hwrm_cfa_decap_filter_alloc(struct bnxt *bp,
 static int hwrm_cfa_decap_filter_free(struct bnxt *bp,
 				      __le32 decap_filter_handle)
 {
-	struct hwrm_cfa_decap_filter_free_input req = { 0 };
+	struct hwrm_cfa_decap_filter_free_input *req;
 	int rc;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_DECAP_FILTER_FREE, -1, -1);
-	req.decap_filter_id = decap_filter_handle;
-
-	rc = hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
+	rc = hwrm_req_init(bp, req, HWRM_CFA_DECAP_FILTER_FREE);
+	if (!rc) {
+		req->decap_filter_id = decap_filter_handle;
+		rc = hwrm_req_send(bp, req);
+	}
 	if (rc)
-		netdev_info(bp->dev, "%s: Error rc=%d", __func__, rc);
+		netdev_info(bp->dev, "%s: Error rc=%d\n", __func__, rc);
 
 	return rc;
 }
@@ -608,17 +1333,20 @@ static int hwrm_cfa_encap_record_alloc(struct bnxt *bp,
 				       struct bnxt_tc_l2_key *l2_info,
 				       __le32 *encap_record_handle)
 {
-	struct hwrm_cfa_encap_record_alloc_input req = { 0 };
 	struct hwrm_cfa_encap_record_alloc_output *resp;
-	struct hwrm_cfa_encap_data_vxlan *encap =
-			(struct hwrm_cfa_encap_data_vxlan *)&req.encap_data;
-	struct hwrm_vxlan_ipv4_hdr *encap_ipv4 =
-				(struct hwrm_vxlan_ipv4_hdr *)encap->l3;
+	struct hwrm_cfa_encap_record_alloc_input *req;
+	struct hwrm_cfa_encap_data_vxlan *encap;
+	struct hwrm_vxlan_ipv4_hdr *encap_ipv4;
 	int rc;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_ENCAP_RECORD_ALLOC, -1, -1);
+	rc = hwrm_req_init(bp, req, HWRM_CFA_ENCAP_RECORD_ALLOC);
+	if (rc)
+		goto exit;
 
-	req.encap_type = CFA_ENCAP_RECORD_ALLOC_REQ_ENCAP_TYPE_VXLAN;
+	encap = (struct hwrm_cfa_encap_data_vxlan *)&req->encap_data;
+	encap_ipv4 = (struct hwrm_vxlan_ipv4_hdr *)encap->l3;
+
+	req->encap_type = CFA_ENCAP_RECORD_ALLOC_REQ_ENCAP_TYPE_VXLAN;
 
 	ether_addr_copy(encap->dst_mac_addr, l2_info->dmac);
 	ether_addr_copy(encap->src_mac_addr, l2_info->smac);
@@ -639,15 +1367,14 @@ static int hwrm_cfa_encap_record_alloc(struct bnxt *bp,
 	encap->dst_port = encap_key->tp_dst;
 	encap->vni = tunnel_id_to_key32(encap_key->tun_id);
 
-	mutex_lock(&bp->hwrm_cmd_lock);
-	rc = _hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
-	if (!rc) {
-		resp = bnxt_get_hwrm_resp_addr(bp, &req);
+	resp = hwrm_req_hold(bp, req);
+	rc = hwrm_req_send(bp, req);
+	if (!rc)
 		*encap_record_handle = resp->encap_record_id;
-	} else {
-		netdev_info(bp->dev, "%s: Error rc=%d", __func__, rc);
-	}
-	mutex_unlock(&bp->hwrm_cmd_lock);
+	hwrm_req_drop(bp, req);
+exit:
+	if (rc)
+		netdev_info(bp->dev, "%s: Error rc=%d\n", __func__, rc);
 
 	return rc;
 }
@@ -655,15 +1382,16 @@ static int hwrm_cfa_encap_record_alloc(struct bnxt *bp,
 static int hwrm_cfa_encap_record_free(struct bnxt *bp,
 				      __le32 encap_record_handle)
 {
-	struct hwrm_cfa_encap_record_free_input req = { 0 };
+	struct hwrm_cfa_encap_record_free_input *req;
 	int rc;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_ENCAP_RECORD_FREE, -1, -1);
-	req.encap_record_id = encap_record_handle;
-
-	rc = hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
+	rc = hwrm_req_init(bp, req, HWRM_CFA_ENCAP_RECORD_FREE);
+	if (!rc) {
+		req->encap_record_id = encap_record_handle;
+		rc = hwrm_req_send(bp, req);
+	}
 	if (rc)
-		netdev_info(bp->dev, "%s: Error rc=%d", __func__, rc);
+		netdev_info(bp->dev, "%s: Error rc=%d\n", __func__, rc);
 
 	return rc;
 }
@@ -682,7 +1410,7 @@ static int bnxt_tc_put_l2_node(struct bnxt *bp,
 					     tc_info->l2_ht_params);
 		if (rc)
 			netdev_err(bp->dev,
-				   "Error: %s: rhashtable_remove_fast: %d",
+				   "Error: %s: rhashtable_remove_fast: %d\n",
 				   __func__, rc);
 		kfree_rcu(l2_node, rcu);
 	}
@@ -711,7 +1439,7 @@ bnxt_tc_get_l2_node(struct bnxt *bp, struct rhashtable *l2_table,
 		if (rc) {
 			kfree_rcu(l2_node, rcu);
 			netdev_err(bp->dev,
-				   "Error: %s: rhashtable_insert_fast: %d",
+				   "Error: %s: rhashtable_insert_fast: %d\n",
 				   __func__, rc);
 			return NULL;
 		}
@@ -770,8 +1498,15 @@ static bool bnxt_tc_can_offload(struct bnxt *bp, struct bnxt_tc_flow *flow)
 	if ((flow->flags & BNXT_TC_FLOW_FLAGS_PORTS) &&
 	    (flow->l4_key.ip_proto != IPPROTO_TCP &&
 	     flow->l4_key.ip_proto != IPPROTO_UDP)) {
-		netdev_info(bp->dev, "Cannot offload non-TCP/UDP (%d) ports",
+		netdev_info(bp->dev, "Cannot offload non-TCP/UDP (%d) ports\n",
 			    flow->l4_key.ip_proto);
+		return false;
+	}
+
+	if (is_multicast_ether_addr(flow->l2_key.dmac) ||
+	    is_broadcast_ether_addr(flow->l2_key.dmac)) {
+		netdev_info(bp->dev,
+			    "Broadcast/Multicast flow offload unsupported\n");
 		return false;
 	}
 
@@ -813,7 +1548,8 @@ static bool bnxt_tc_can_offload(struct bnxt *bp, struct bnxt_tc_flow *flow)
 	return true;
 }
 
-/* Returns the final refcount of the node on success
+/*
+ * Returns the final refcount of the node on success
  * or a -ve error code on failure
  */
 static int bnxt_tc_put_tunnel_node(struct bnxt *bp,
@@ -827,7 +1563,7 @@ static int bnxt_tc_put_tunnel_node(struct bnxt *bp,
 		rc =  rhashtable_remove_fast(tunnel_table, &tunnel_node->node,
 					     *ht_params);
 		if (rc) {
-			netdev_err(bp->dev, "rhashtable_remove_fast rc=%d", rc);
+			netdev_err(bp->dev, "rhashtable_remove_fast rc=%d\n", rc);
 			rc = -1;
 		}
 		kfree_rcu(tunnel_node, rcu);
@@ -837,7 +1573,8 @@ static int bnxt_tc_put_tunnel_node(struct bnxt *bp,
 	}
 }
 
-/* Get (or add) either encap or decap tunnel node from/to the supplied
+/*
+ * Get (or add) either encap or decap tunnel node from/to the supplied
  * hash table.
  */
 static struct bnxt_tc_tunnel_node *
@@ -868,7 +1605,7 @@ bnxt_tc_get_tunnel_node(struct bnxt *bp, struct rhashtable *tunnel_table,
 	tunnel_node->refcount++;
 	return tunnel_node;
 err:
-	netdev_info(bp->dev, "error rc=%d", rc);
+	netdev_info(bp->dev, "error rc=%d\n", rc);
 	return NULL;
 }
 
@@ -926,7 +1663,7 @@ static void bnxt_tc_put_decap_l2_node(struct bnxt *bp,
 					     &decap_l2_node->node,
 					     tc_info->decap_l2_ht_params);
 		if (rc)
-			netdev_err(bp->dev, "rhashtable_remove_fast rc=%d", rc);
+			netdev_err(bp->dev, "rhashtable_remove_fast rc=%d\n", rc);
 		kfree_rcu(decap_l2_node, rcu);
 	}
 }
@@ -966,7 +1703,7 @@ static int bnxt_tc_resolve_tunnel_hdrs(struct bnxt *bp,
 
 	rt = ip_route_output_key(dev_net(real_dst_dev), &flow);
 	if (IS_ERR(rt)) {
-		netdev_info(bp->dev, "no route to %pI4b", &flow.daddr);
+		netdev_info(bp->dev, "no route to %pI4b\n", &flow.daddr);
 		return -EOPNOTSUPP;
 	}
 
@@ -980,7 +1717,7 @@ static int bnxt_tc_resolve_tunnel_hdrs(struct bnxt *bp,
 
 		if (vlan->real_dev != real_dst_dev) {
 			netdev_info(bp->dev,
-				    "dst_dev(%s) doesn't use PF-if(%s)",
+				    "dst_dev(%s) doesn't use PF-if(%s)\n",
 				    netdev_name(dst_dev),
 				    netdev_name(real_dst_dev));
 			rc = -EOPNOTSUPP;
@@ -992,7 +1729,7 @@ static int bnxt_tc_resolve_tunnel_hdrs(struct bnxt *bp,
 #endif
 	} else if (dst_dev != real_dst_dev) {
 		netdev_info(bp->dev,
-			    "dst_dev(%s) for %pI4b is not PF-if(%s)",
+			    "dst_dev(%s) for %pI4b is not PF-if(%s)\n",
 			    netdev_name(dst_dev), &flow.daddr,
 			    netdev_name(real_dst_dev));
 		rc = -EOPNOTSUPP;
@@ -1001,7 +1738,7 @@ static int bnxt_tc_resolve_tunnel_hdrs(struct bnxt *bp,
 
 	nbr = dst_neigh_lookup(&rt->dst, &flow.daddr);
 	if (!nbr) {
-		netdev_info(bp->dev, "can't lookup neighbor for %pI4b",
+		netdev_info(bp->dev, "can't lookup neighbor for %pI4b\n",
 			    &flow.daddr);
 		rc = -EOPNOTSUPP;
 		goto put_rt;
@@ -1053,7 +1790,8 @@ static int bnxt_tc_get_decap_handle(struct bnxt *bp, struct bnxt_tc_flow *flow,
 	if (decap_node->tunnel_handle != INVALID_TUNNEL_HANDLE)
 		goto done;
 
-	/* Resolve the L2 fields for tunnel decap
+	/*
+	 * Resolve the L2 fields for tunnel decap
 	 * Resolve the route for remote vtep (saddr) of the decap key
 	 * Find it's next-hop mac addrs
 	 */
@@ -1116,7 +1854,8 @@ static void bnxt_tc_put_encap_handle(struct bnxt *bp,
 		hwrm_cfa_encap_record_free(bp, encap_handle);
 }
 
-/* Lookup the tunnel encap table and check if there's an encap_handle
+/*
+ * Lookup the tunnel encap table and check if there's an encap_handle
  * alloc'd already.
  * If not, query L2 info via a route lookup and issue an encap_record_alloc
  * cmd to FW.
@@ -1211,7 +1950,7 @@ static int __bnxt_tc_del_flow(struct bnxt *bp,
 	rc = rhashtable_remove_fast(&tc_info->flow_table, &flow_node->node,
 				    tc_info->flow_ht_params);
 	if (rc)
-		netdev_err(bp->dev, "Error: %s: rhashtable_remove_fast rc=%d",
+		netdev_err(bp->dev, "Error: %s: rhashtable_remove_fast rc=%d\n",
 			   __func__, rc);
 
 	kfree_rcu(flow_node, rcu);
@@ -1224,7 +1963,7 @@ static void bnxt_tc_set_flow_dir(struct bnxt *bp, struct bnxt_tc_flow *flow,
 	flow->l2_key.dir = (bp->pf.fw_fid == src_fid) ? BNXT_DIR_RX : BNXT_DIR_TX;
 }
 
-static void bnxt_tc_set_src_fid(struct bnxt *bp, struct bnxt_tc_flow *flow,
+static void bnxt_tc_set_src_fid(struct bnxt* bp, struct bnxt_tc_flow *flow,
 				u16 src_fid)
 {
 	if (flow->actions.flags & BNXT_TC_ACTION_FLAG_TUNNEL_DECAP)
@@ -1246,8 +1985,14 @@ static void bnxt_tc_set_src_fid(struct bnxt *bp, struct bnxt_tc_flow *flow,
  *
  * The hash-tables are already protected by the rhashtable API.
  */
+#ifdef HAVE_TC_CB_EGDEV
+static int bnxt_tc_add_flow(struct bnxt *bp, u16 src_fid,
+			    struct flow_cls_offload *tc_flow_cmd,
+			    int tc_dev_dir)
+#else
 static int bnxt_tc_add_flow(struct bnxt *bp, u16 src_fid,
 			    struct flow_cls_offload *tc_flow_cmd)
+#endif
 {
 	struct bnxt_tc_flow_node *new_node, *old_node;
 	struct bnxt_tc_info *tc_info = bp->tc_info;
@@ -1263,6 +2008,9 @@ static int bnxt_tc_add_flow(struct bnxt *bp, u16 src_fid,
 		goto done;
 	}
 	new_node->cookie = tc_flow_cmd->cookie;
+#ifdef HAVE_TC_CB_EGDEV
+	new_node->tc_dev_dir = tc_dev_dir;
+#endif
 	flow = &new_node->flow;
 
 	rc = bnxt_tc_parse_flow(bp, tc_flow_cmd, flow);
@@ -1274,15 +2022,28 @@ static int bnxt_tc_add_flow(struct bnxt *bp, u16 src_fid,
 
 	if (!bnxt_tc_can_offload(bp, flow)) {
 		rc = -EOPNOTSUPP;
-		goto free_node;
+		kfree_rcu(new_node, rcu);
+		return rc;
 	}
 
 	/* If a flow exists with the same cookie, delete it */
 	old_node = rhashtable_lookup_fast(&tc_info->flow_table,
 					  &tc_flow_cmd->cookie,
 					  tc_info->flow_ht_params);
-	if (old_node)
+	if (old_node) {
+#ifdef HAVE_TC_CB_EGDEV
+		if (old_node->tc_dev_dir != tc_dev_dir) {
+			/* This happens when TC invokes flow-add for the same
+			 * flow a second time through egress dev (e.g, in the
+			 * case of VF-VF, VF-Uplink flows). Ignore it and
+			 * return success.
+			 */
+			kfree_rcu(new_node, rcu);
+			return 0;
+		}
+#endif
 		__bnxt_tc_del_flow(bp, old_node);
+	}
 
 	/* Check if the L2 part of the flow has been offloaded already.
 	 * If so, bump up it's refcnt and get it's reference handle.
@@ -1325,13 +2086,19 @@ unlock:
 free_node:
 	kfree_rcu(new_node, rcu);
 done:
-	netdev_err(bp->dev, "Error: %s: cookie=0x%lx error=%d",
+	netdev_err(bp->dev, "Error: %s: cookie=0x%lx error=%d\n",
 		   __func__, tc_flow_cmd->cookie, rc);
 	return rc;
 }
 
+#ifdef HAVE_TC_CB_EGDEV
+static int bnxt_tc_del_flow(struct bnxt *bp,
+			    struct flow_cls_offload *tc_flow_cmd,
+			    int tc_dev_dir)
+#else
 static int bnxt_tc_del_flow(struct bnxt *bp,
 			    struct flow_cls_offload *tc_flow_cmd)
+#endif
 {
 	struct bnxt_tc_info *tc_info = bp->tc_info;
 	struct bnxt_tc_flow_node *flow_node;
@@ -1339,14 +2106,24 @@ static int bnxt_tc_del_flow(struct bnxt *bp,
 	flow_node = rhashtable_lookup_fast(&tc_info->flow_table,
 					   &tc_flow_cmd->cookie,
 					   tc_info->flow_ht_params);
+#ifdef HAVE_TC_CB_EGDEV
+	if (!flow_node || flow_node->tc_dev_dir != tc_dev_dir)
+#else
 	if (!flow_node)
+#endif
 		return -EINVAL;
 
 	return __bnxt_tc_del_flow(bp, flow_node);
 }
 
+#ifdef HAVE_TC_CB_EGDEV
+static int bnxt_tc_get_flow_stats(struct bnxt *bp,
+				  struct flow_cls_offload *tc_flow_cmd,
+				  int tc_dev_dir)
+#else
 static int bnxt_tc_get_flow_stats(struct bnxt *bp,
 				  struct flow_cls_offload *tc_flow_cmd)
+#endif
 {
 	struct bnxt_tc_flow_stats stats, *curr_stats, *prev_stats;
 	struct bnxt_tc_info *tc_info = bp->tc_info;
@@ -1357,7 +2134,11 @@ static int bnxt_tc_get_flow_stats(struct bnxt *bp,
 	flow_node = rhashtable_lookup_fast(&tc_info->flow_table,
 					   &tc_flow_cmd->cookie,
 					   tc_info->flow_ht_params);
+#ifdef HAVE_TC_CB_EGDEV
+	if (!flow_node || flow_node->tc_dev_dir != tc_dev_dir)
+#else
 	if (!flow_node)
+#endif
 		return -1;
 
 	flow = &flow_node->flow;
@@ -1371,8 +2152,13 @@ static int bnxt_tc_get_flow_stats(struct bnxt *bp,
 	lastused = flow->lastused;
 	spin_unlock(&flow->stats_lock);
 
+#ifdef HAVE_FLOW_OFFLOAD_H
 	flow_stats_update(&tc_flow_cmd->stats, stats.bytes, stats.packets,
-			  lastused);
+			  lastused, FLOW_ACTION_HW_STATS_DELAYED);
+#else
+	tcf_exts_stats_update(tc_flow_cmd->exts, stats.bytes, stats.packets,
+			      lastused);
+#endif
 	return 0;
 }
 
@@ -1406,14 +2192,20 @@ static int
 bnxt_hwrm_cfa_flow_stats_get(struct bnxt *bp, int num_flows,
 			     struct bnxt_tc_stats_batch stats_batch[])
 {
-	struct hwrm_cfa_flow_stats_input req = { 0 };
 	struct hwrm_cfa_flow_stats_output *resp;
-	__le16 *req_flow_handles = &req.flow_handle_0;
-	__le32 *req_flow_ids = &req.flow_id_0;
+	struct hwrm_cfa_flow_stats_input *req;
+	__le16 *req_flow_handles;
+	__le32 *req_flow_ids;
 	int rc, i;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_FLOW_STATS, -1, -1);
-	req.num_flows = cpu_to_le16(num_flows);
+	rc = hwrm_req_init(bp, req, HWRM_CFA_FLOW_STATS);
+	if (rc)
+		goto exit;
+
+	req_flow_handles = &req->flow_handle_0;
+	req_flow_ids = &req->flow_id_0;
+
+	req->num_flows = cpu_to_le16(num_flows);
 	for (i = 0; i < num_flows; i++) {
 		struct bnxt_tc_flow_node *flow_node = stats_batch[i].flow_node;
 
@@ -1421,13 +2213,12 @@ bnxt_hwrm_cfa_flow_stats_get(struct bnxt *bp, int num_flows,
 					&req_flow_handles[i], &req_flow_ids[i]);
 	}
 
-	mutex_lock(&bp->hwrm_cmd_lock);
-	rc = _hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
+	resp = hwrm_req_hold(bp, req);
+	rc = hwrm_req_send(bp, req);
 	if (!rc) {
 		__le64 *resp_packets;
 		__le64 *resp_bytes;
 
-		resp = bnxt_get_hwrm_resp_addr(bp, &req);
 		resp_packets = &resp->packet_0;
 		resp_bytes = &resp->byte_0;
 
@@ -1437,15 +2228,17 @@ bnxt_hwrm_cfa_flow_stats_get(struct bnxt *bp, int num_flows,
 			stats_batch[i].hw_stats.bytes =
 						le64_to_cpu(resp_bytes[i]);
 		}
-	} else {
-		netdev_info(bp->dev, "error rc=%d", rc);
 	}
-	mutex_unlock(&bp->hwrm_cmd_lock);
+	hwrm_req_drop(bp, req);
+exit:
+	if (rc)
+		netdev_info(bp->dev, "error rc=%d\n", rc);
 
 	return rc;
 }
 
-/* Add val to accum while handling a possible wraparound
+/*
+ * Add val to accum while handling a possible wraparound
  * of val. Eventhough val is of type u64, its actual width
  * is denoted by mask and will wrap-around beyond that width.
  */
@@ -1565,9 +2358,40 @@ void bnxt_tc_flow_stats_work(struct bnxt *bp)
 	rhashtable_walk_exit(&tc_info->iter);
 }
 
+#ifdef HAVE_TC_CB_EGDEV
+int bnxt_tc_setup_flower(struct bnxt *bp, u16 src_fid,
+			 struct flow_cls_offload *cls_flower,
+			 int tc_dev_dir)
+{
+#ifdef HAVE_TC_SETUP_TYPE
+#ifndef HAVE_TC_SETUP_BLOCK
+	if (!is_classid_clsact_ingress(cls_flower->common.classid))
+		return -EOPNOTSUPP;
+#endif
+#endif
+	switch (cls_flower->command) {
+	case FLOW_CLS_REPLACE:
+		return bnxt_tc_add_flow(bp, src_fid, cls_flower, tc_dev_dir);
+	case FLOW_CLS_DESTROY:
+		return bnxt_tc_del_flow(bp, cls_flower, tc_dev_dir);
+	case FLOW_CLS_STATS:
+		return bnxt_tc_get_flow_stats(bp, cls_flower, tc_dev_dir);
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+#else
+
 int bnxt_tc_setup_flower(struct bnxt *bp, u16 src_fid,
 			 struct flow_cls_offload *cls_flower)
 {
+#ifdef HAVE_TC_SETUP_TYPE
+#ifndef HAVE_TC_SETUP_BLOCK
+	if (!is_classid_clsact_ingress(cls_flower->common.classid))
+		return -EOPNOTSUPP;
+#endif
+#endif
 	switch (cls_flower->command) {
 	case FLOW_CLS_REPLACE:
 		return bnxt_tc_add_flow(bp, src_fid, cls_flower);
@@ -1579,6 +2403,250 @@ int bnxt_tc_setup_flower(struct bnxt *bp, u16 src_fid,
 		return -EOPNOTSUPP;
 	}
 }
+#endif /* HAVE_TC_CB_EGDEV */
+
+#ifdef HAVE_TC_SETUP_TYPE
+#ifdef HAVE_TC_SETUP_BLOCK
+#ifdef HAVE_FLOW_INDR_BLOCK_CB
+
+static int bnxt_tc_setup_indr_block_cb(enum tc_setup_type type,
+				       void *type_data, void *cb_priv)
+{
+	struct bnxt_flower_indr_block_cb_priv *priv = cb_priv;
+	struct flow_cls_offload *flower = type_data;
+	struct bnxt *bp = priv->bp;
+
+	if (flower->common.chain_index)
+		return -EOPNOTSUPP;
+
+	switch (type) {
+	case TC_SETUP_CLSFLOWER:
+		return bnxt_tc_setup_flower(bp, bp->pf.fw_fid, flower);
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+static struct bnxt_flower_indr_block_cb_priv *
+bnxt_tc_indr_block_cb_lookup(struct bnxt *bp, struct net_device *netdev)
+{
+	struct bnxt_flower_indr_block_cb_priv *cb_priv;
+
+	/* All callback list access should be protected by RTNL. */
+	ASSERT_RTNL();
+
+	list_for_each_entry(cb_priv, &bp->tc_indr_block_list, list)
+		if (cb_priv->tunnel_netdev == netdev)
+			return cb_priv;
+
+	return NULL;
+}
+
+static void bnxt_tc_setup_indr_rel(void *cb_priv)
+{
+	struct bnxt_flower_indr_block_cb_priv *priv = cb_priv;
+
+	list_del(&priv->list);
+	kfree(priv);
+}
+
+extern struct list_head bnxt_block_cb_list;
+static int bnxt_tc_setup_indr_block(struct net_device *netdev, struct bnxt *bp,
+				    struct flow_block_offload *f)
+{
+	struct bnxt_flower_indr_block_cb_priv *cb_priv;
+	struct flow_block_cb *block_cb;
+
+	if (f->binder_type != FLOW_BLOCK_BINDER_TYPE_CLSACT_INGRESS)
+		return -EOPNOTSUPP;
+
+	switch (f->command) {
+	case FLOW_BLOCK_BIND:
+		cb_priv = kmalloc(sizeof(*cb_priv), GFP_KERNEL);
+		if (!cb_priv)
+			return -ENOMEM;
+
+		cb_priv->tunnel_netdev = netdev;
+		cb_priv->bp = bp;
+		list_add(&cb_priv->list, &bp->tc_indr_block_list);
+
+		block_cb = flow_block_cb_alloc(bnxt_tc_setup_indr_block_cb,
+					       cb_priv, cb_priv,
+					       bnxt_tc_setup_indr_rel);
+		if (IS_ERR(block_cb)) {
+			list_del(&cb_priv->list);
+			kfree(cb_priv);
+			return PTR_ERR(block_cb);
+		}
+
+		flow_block_cb_add(block_cb, f);
+		list_add_tail(&block_cb->driver_list, &bnxt_block_cb_list);
+		break;
+	case FLOW_BLOCK_UNBIND:
+		cb_priv = bnxt_tc_indr_block_cb_lookup(bp, netdev);
+		if (!cb_priv)
+			return -ENOENT;
+
+		block_cb = flow_block_cb_lookup(f->block,
+						bnxt_tc_setup_indr_block_cb,
+						cb_priv);
+		if (!block_cb)
+			return -ENOENT;
+
+		flow_block_cb_remove(block_cb, f);
+		list_del(&block_cb->driver_list);
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+	return 0;
+}
+
+static int bnxt_tc_setup_indr_cb(struct net_device *netdev, void *cb_priv,
+				 enum tc_setup_type type, void *type_data)
+{
+	switch (type) {
+	case TC_SETUP_BLOCK:
+		return bnxt_tc_setup_indr_block(netdev, cb_priv, type_data);
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+static bool bnxt_is_netdev_indr_offload(struct net_device *netdev)
+{
+	return netif_is_vxlan(netdev);
+}
+
+static int bnxt_tc_indr_block_event(struct notifier_block *nb,
+				    unsigned long event, void *ptr)
+{
+	struct net_device *netdev;
+	struct bnxt *bp;
+	int rc;
+
+	netdev = netdev_notifier_info_to_dev(ptr);
+	if (!bnxt_is_netdev_indr_offload(netdev))
+		return NOTIFY_OK;
+
+	bp = container_of(nb, struct bnxt, tc_netdev_nb);
+
+	switch (event) {
+	case NETDEV_REGISTER:
+		rc = __flow_indr_block_cb_register(netdev, bp,
+						   bnxt_tc_setup_indr_cb,
+						   bp);
+		if (rc)
+			netdev_info(bp->dev,
+				    "Failed to register indirect blk: dev: %s\n",
+				    netdev->name);
+		break;
+	case NETDEV_UNREGISTER:
+		__flow_indr_block_cb_unregister(netdev,
+						bnxt_tc_setup_indr_cb,
+						bp);
+		break;
+	}
+
+	return NOTIFY_DONE;
+}
+
+#endif /* HAVE_FLOW_INDR_BLOCK_CB */
+
+#if defined(HAVE_TC_MATCHALL_FLOW_RULE) && defined(HAVE_FLOW_ACTION_POLICE)
+
+static inline int bnxt_tc_find_vf_by_fid(struct bnxt *bp, u16 fid)
+{
+	int num_vfs = pci_num_vf(bp->pdev);
+	int i;
+
+	for (i = 0; i < num_vfs; i++) {
+		if (bp->pf.vf[i].fw_fid == fid)
+			break;
+	}
+	if (i >= num_vfs)
+		return -EINVAL;
+	return i;
+}
+
+static int bnxt_tc_del_matchall(struct bnxt *bp, u16 src_fid,
+				struct tc_cls_matchall_offload *matchall_cmd)
+{
+	int vf_idx;
+
+	vf_idx = bnxt_tc_find_vf_by_fid(bp, src_fid);
+	if (vf_idx < 0)
+		return vf_idx;
+
+	if (bp->pf.vf[vf_idx].police_id != matchall_cmd->cookie)
+		return -ENOENT;
+
+	bnxt_set_vf_bw(bp->dev, vf_idx, 0, 0);
+	bp->pf.vf[vf_idx].police_id = 0;
+	return 0;
+}
+
+static int bnxt_tc_add_matchall(struct bnxt *bp, u16 src_fid,
+				struct tc_cls_matchall_offload *matchall_cmd)
+{
+	struct flow_action_entry *action;
+	int vf_idx;
+	s64 burst;
+	u64 rate;
+	int rc;
+
+	vf_idx = bnxt_tc_find_vf_by_fid(bp, src_fid);
+	if (vf_idx < 0)
+		return vf_idx;
+
+	action = &matchall_cmd->rule->action.entries[0];
+	if (action->id != FLOW_ACTION_POLICE) {
+		netdev_err(bp->dev, "%s: Unsupported matchall action: %d",
+			   __func__, action->id);
+		return -EOPNOTSUPP;
+	}
+	if (bp->pf.vf[vf_idx].police_id && bp->pf.vf[vf_idx].police_id !=
+	    matchall_cmd->cookie) {
+		netdev_err(bp->dev,
+			   "%s: Policer is already configured for VF: %d",
+			   __func__, vf_idx);
+		return -EEXIST;
+	}
+
+	rate = (u32)div_u64(action->police.rate_bytes_ps, 1024 * 1000) * 8;
+	burst = (u32)div_u64(action->police.rate_bytes_ps *
+			     PSCHED_NS2TICKS(action->police.burst),
+			     PSCHED_TICKS_PER_SEC);
+	burst = (u32)PSCHED_TICKS2NS(burst) / (1 << 20);
+
+	rc = bnxt_set_vf_bw(bp->dev, vf_idx, burst, rate);
+	if (rc) {
+		netdev_err(bp->dev,
+			   "Error: %s: VF: %d rate: %llu burst: %llu rc: %d",
+			   __func__, vf_idx, rate, burst, rc);
+		return rc;
+	}
+
+	bp->pf.vf[vf_idx].police_id = matchall_cmd->cookie;
+	return 0;
+}
+
+int bnxt_tc_setup_matchall(struct bnxt *bp, u16 src_fid,
+			   struct tc_cls_matchall_offload *cls_matchall)
+{
+	switch (cls_matchall->command) {
+	case TC_CLSMATCHALL_REPLACE:
+		return bnxt_tc_add_matchall(bp, src_fid, cls_matchall);
+	case TC_CLSMATCHALL_DESTROY:
+		return bnxt_tc_del_matchall(bp, src_fid, cls_matchall);
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+#endif /* HAVE_TC_MATCHALL_FLOW_RULE && HAVE_FLOW_ACTION_POLICE */
+#endif /* HAVE_TC_SETUP_BLOCK */
+#endif /* HAVE_TC_SETUP_TYPE */
 
 static const struct rhashtable_params bnxt_tc_flow_ht_params = {
 	.head_offset = offsetof(struct bnxt_tc_flow_node, node),
@@ -1616,7 +2684,7 @@ int bnxt_init_tc(struct bnxt *bp)
 	struct bnxt_tc_info *tc_info;
 	int rc;
 
-	if (bp->hwrm_spec_code < 0x10803) {
+	if (bp->hwrm_spec_code < 0x10800) {
 		netdev_warn(bp->dev,
 			    "Firmware does not support TC flower offload.\n");
 		return -ENOTSUPP;
@@ -1663,7 +2731,19 @@ int bnxt_init_tc(struct bnxt *bp)
 	bp->dev->hw_features |= NETIF_F_HW_TC;
 	bp->dev->features |= NETIF_F_HW_TC;
 	bp->tc_info = tc_info;
+
+#ifndef HAVE_FLOW_INDR_BLOCK_CB
 	return 0;
+#else
+	/* init indirect block notifications */
+	INIT_LIST_HEAD(&bp->tc_indr_block_list);
+	bp->tc_netdev_nb.notifier_call = bnxt_tc_indr_block_event;
+	rc = register_netdevice_notifier(&bp->tc_netdev_nb);
+	if (!rc)
+		return 0;
+
+	rhashtable_destroy(&tc_info->encap_table);
+#endif
 
 destroy_decap_table:
 	rhashtable_destroy(&tc_info->decap_table);
@@ -1685,6 +2765,9 @@ void bnxt_shutdown_tc(struct bnxt *bp)
 	if (!bnxt_tc_flower_enabled(bp))
 		return;
 
+#ifdef HAVE_FLOW_INDR_BLOCK_CB
+	unregister_netdevice_notifier(&bp->tc_netdev_nb);
+#endif
 	rhashtable_destroy(&tc_info->flow_table);
 	rhashtable_destroy(&tc_info->l2_table);
 	rhashtable_destroy(&tc_info->decap_l2_table);
@@ -1693,3 +2776,5 @@ void bnxt_shutdown_tc(struct bnxt *bp)
 	kfree(tc_info);
 	bp->tc_info = NULL;
 }
+
+#endif /* CONFIG_BNXT_FLOWER_OFFLOAD */

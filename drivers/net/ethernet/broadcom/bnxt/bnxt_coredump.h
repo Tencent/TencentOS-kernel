@@ -10,6 +10,7 @@
 #ifndef BNXT_COREDUMP_H
 #define BNXT_COREDUMP_H
 
+#if defined(ETHTOOL_GET_DUMP_FLAG) && !defined(GET_ETHTOOL_OP_EXT)
 struct bnxt_coredump_segment_hdr {
 	__u8 signature[4];
 	__le32 component_id;
@@ -63,4 +64,5 @@ struct bnxt_coredump_record {
 	__u8 ioctl_high_version;
 	__le16 rsvd3[313];
 };
+#endif /* defined(ETHTOOL_GET_DUMP_FLAG) && !defined(GET_ETHTOOL_OP_EXT) */
 #endif

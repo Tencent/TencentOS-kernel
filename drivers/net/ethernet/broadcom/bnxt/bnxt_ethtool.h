@@ -11,6 +11,11 @@
 #ifndef BNXT_ETHTOOL_H
 #define BNXT_ETHTOOL_H
 
+#if defined(ETHTOOL_GET_DUMP_FLAG) && !defined(GET_ETHTOOL_OP_EXT)
+#include <linux/time.h>
+#include <linux/rtc.h>
+#endif
+
 struct bnxt_led_cfg {
 	u8 led_id;
 	u8 led_state;
@@ -22,6 +27,7 @@ struct bnxt_led_cfg {
 	u8 rsvd;
 };
 
+#if defined(ETHTOOL_GET_DUMP_FLAG) && !defined(GET_ETHTOOL_OP_EXT)
 #define COREDUMP_LIST_BUF_LEN		2048
 #define COREDUMP_RETRIEVE_BUF_LEN	4096
 
@@ -29,6 +35,14 @@ struct bnxt_coredump {
 	void		*data;
 	int		data_size;
 	u16		total_segs;
+};
+
+struct bnxt_time {
+#if defined(HAVE_TIME64)
+	struct tm tm;
+#elif defined(CONFIG_RTC_LIB) || defined(CONFIG_RTC_LIB_MODULE)
+	struct rtc_time tm;
+#endif
 };
 
 #define BNXT_COREDUMP_BUF_LEN(len) ((len) - sizeof(struct bnxt_coredump_record))
@@ -63,6 +77,9 @@ struct hwrm_dbg_cmn_output {
 	#define HWRM_DBG_CMN_FLAGS_MORE	1
 };
 
+#define BNXT_CRASH_DUMP_LEN	(8 << 20)
+#endif /* defined(ETHTOOL_GET_DUMP_FLAG) && !defined(GET_ETHTOOL_OP_EXT) */
+
 #define BNXT_LED_DFLT_ENA				\
 	(PORT_LED_CFG_REQ_ENABLES_LED0_ID |		\
 	 PORT_LED_CFG_REQ_ENABLES_LED0_STATE |		\
@@ -75,14 +92,23 @@ struct hwrm_dbg_cmn_output {
 #define BNXT_LED_DFLT_ENABLES(x)			\
 	cpu_to_le32(BNXT_LED_DFLT_ENA << (BNXT_LED_DFLT_ENA_SHIFT * (x)))
 
-#define BNXT_FW_RESET_AP	0xfffe
-#define BNXT_FW_RESET_CHIP	0xffff
+#define BNXT_FW_RESET_CRASHDUMP (ETH_RESET_CRASHDUMP << ETH_RESET_SHARED_SHIFT)
+#define BNXT_FW_RESET_AP	(ETH_RESET_AP << ETH_RESET_SHARED_SHIFT)
+#define BNXT_FW_RESET_CHIP	((ETH_RESET_MGMT | ETH_RESET_IRQ |	\
+				  ETH_RESET_DMA | ETH_RESET_FILTER |	\
+				  ETH_RESET_OFFLOAD | ETH_RESET_MAC |	\
+				  ETH_RESET_PHY | ETH_RESET_RAM)	\
+				 << ETH_RESET_SHARED_SHIFT)
+
+#define BNXT_PXP_REG_LEN	0x3110
 
 extern const struct ethtool_ops bnxt_ethtool_ops;
 
 u32 _bnxt_fw_to_ethtool_adv_spds(u16, u8);
 u32 bnxt_fw_to_ethtool_speed(u16);
 u16 bnxt_get_fw_auto_link_speeds(u32);
+int bnxt_flash_package_from_file(struct net_device *dev, const char *filename,
+				 u32 install_type);
 void bnxt_ethtool_init(struct bnxt *bp);
 void bnxt_ethtool_free(struct bnxt *bp);
 
