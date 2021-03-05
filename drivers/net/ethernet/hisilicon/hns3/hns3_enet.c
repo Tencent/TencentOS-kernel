@@ -1119,11 +1119,6 @@ static int hns3_fill_desc(struct hns3_enet_ring *ring, void *priv,
 
 	if (type == DESC_TYPE_SKB) {
 		struct sk_buff *skb = (struct sk_buff *)priv;
-		int ret;
-
-		ret = hns3_fill_skb_desc(ring, skb, desc);
-		if (unlikely(ret))
-			return ret;
 
 		dma = dma_map_single(dev, skb->data, size, DMA_TO_DEVICE);
 	} else {
@@ -1364,6 +1359,10 @@ netdev_tx_t hns3_nic_net_xmit(struct sk_buff *skb, struct net_device *netdev)
 	size = skb_headlen(skb);
 
 	next_to_use_head = ring->next_to_use;
+
+	ret = hns3_fill_skb_desc(ring, skb, &ring->desc[ring->next_to_use]);
+	if (unlikely(ret < 0))
+		goto fill_err;
 
 	ret = hns3_fill_desc(ring, skb, size, seg_num == 1 ? 1 : 0,
 			     DESC_TYPE_SKB);
