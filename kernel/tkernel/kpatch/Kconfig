@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config KPATCH
+	tristate "Kernel Kpatching"
+	depends on DYNAMIC_FTRACE_WITH_REGS
+	depends on MODULES
+	depends on SYSFS
+	help
+	  Say M here if you want to support kernel kpatch.
+	  This option has no runtime impact until a kernel "patch"
+	  module uses the interface provided by this option to register
+	  a patch, causing calls to patched functions to be redirected
+	  to new function code contained in the patch module.

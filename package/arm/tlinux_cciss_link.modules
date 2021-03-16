@@ -1,0 +1,16 @@
+#!/bin/sh
+
+if [ -b /dev/sda  -a ! -b /dev/cciss/c0d0 ]; then
+	mkdir -p /dev/cciss
+	set -- 0 a 1 b 2 c 3 d 4 e 5 f 6 g 7 h 8 i 9 j 10 k 11 l 12 m 13 n 14 o 15 p
+	while [ $# -ge 2 ]; do
+		c=/dev/cciss/c0d$1; shift
+		s=/dev/sd$1; shift
+		ln -s ${s}  ${c} 
+		ln -s ${s}1 ${c}p1 
+		ln -s ${s}2 ${c}p2 
+		ln -s ${s}3 ${c}p3 
+		ln -s ${s}4 ${c}p4 
+	done
+fi
+

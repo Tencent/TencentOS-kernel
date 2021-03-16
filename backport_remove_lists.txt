@@ -1,0 +1,11 @@
+remove lists:
+1. Architectures except x86,ARM(ARM从4.14开始支持),powerpc（数平在用powerpc, 没准哪天需要支持）.
+2. CAN bus.
+3. ALSA drivers, ASoC.
+4. all Android files.
+5. Bluetooh.
+6. i40e & i40evf (替换到sourceforge版本，无需从上游backport变更).
+
+
+replace .gitignore directly
+
