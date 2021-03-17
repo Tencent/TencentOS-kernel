@@ -56,6 +56,15 @@ config ARM_GIC_V3_ITS_FSL_MC
 	depends on FSL_MC_BUS
 	default ARM_GIC_V3_ITS
 
+config ARM_GIC_PHYTIUM_2500
+    bool
+    select IRQ_DOMAIN
+    select GENERIC_IRQ_MULTI_HANDLER
+    select IRQ_DOMAIN_HIERARCHY
+    select PARTITION_PERCPU
+    select GENERIC_IRQ_EFFECTIVE_AFF_MASK
+    select GENERIC_MSI_IRQ_DOMAIN
+
 config ARM_NVIC
 	bool
 	select IRQ_DOMAIN_HIERARCHY

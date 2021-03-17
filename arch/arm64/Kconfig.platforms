@@ -180,6 +180,12 @@ config ARCH_MXC
 	  This enables support for the ARMv8 based SoCs in the
 	  NXP i.MX family.
 
+config ARCH_PHYTIUM
+    bool "Phytium SoC Family"
+    help
+      This enables support for Phytium ARMv8 SoC family.
+    select ARM_GIC_PHYTIUM_2500
+
 config ARCH_QCOM
 	bool "Qualcomm Platforms"
 	select GPIOLIB
