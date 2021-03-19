@@ -187,6 +187,10 @@ extern int unaligned_dump_stack;
 extern int no_unaligned_warning;
 #endif
 
+#ifdef CONFIG_RPS
+extern unsigned int sysctl_rps_using_pvipi;
+#endif
+
 #ifdef CONFIG_PROC_SYSCTL
 
 /**
@@ -409,6 +413,17 @@ static struct ctl_table kern_table[] = {
 		.extra1		= &min_softirq_accel_mask,
 		.extra2		= &max_softirq_accel_mask,
 	},
+#ifdef CONFIG_RPS
+	{
+		.procname	= "rps_using_pvipi",
+		.data		= &sysctl_rps_using_pvipi,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = SYSCTL_ZERO,
+		.extra2         = SYSCTL_ONE,
+	},
+#endif
 #ifdef CONFIG_PID_NS
 	{
 		.procname	= "watch_host_pid",
