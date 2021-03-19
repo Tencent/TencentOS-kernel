@@ -15,6 +15,7 @@
 #include <linux/mm_types.h>
 #include <linux/wait.h>
 #include <linux/u64_stats_sync.h>
+#include <linux/mutex.h>
 
 struct bpf_verifier_env;
 struct perf_event;
