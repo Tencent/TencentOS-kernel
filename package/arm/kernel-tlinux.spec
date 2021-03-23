@@ -357,6 +357,7 @@ do
     mv %buildroot/boot/.vmlinuz-%{tagged_name}%{?dist}.hmac %buildroot/lib/modules/$KernelVer/dist_compat
 %endif
 
+    env -i PATH=$PATH LD_LIBRARY_PATH=$LD_LIBRARY_PATH HOME=$HOME USER=$USER bash -c "$PWD/package/arm/mlx/mlnx_ofed_integrate_into_kernel.sh $KernelVer $PWD %buildroot"
 
     # Copy the System.map file for depmod to use, and create a backup of the
     # full module tree so we can restore it after we're done filtering
