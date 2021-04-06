@@ -78,12 +78,12 @@ get_tlinux_name()
 		exit 1
 	fi
 
-        if [[ $raw_tagged_name != public-arm64-* ]]; then
-                echo "$raw_tagged_name not valid tag name for public-arm64"
+        if [[ $raw_tagged_name != arm64-* ]]; then
+                echo "$raw_tagged_name not valid tag name for arm64"
                 exit 1
 	fi
 
-	tagged_name=${raw_tagged_name#public-arm64-}
+	tagged_name=${raw_tagged_name#arm64-}
 
 	echo "${tagged_name}" | grep 'kvm_guest'
 	if [ $? -eq 0 ]; then

@@ -58,12 +58,12 @@ get_kernel_version()
 	local tagged_name
 	raw_tagged_name=$tag_name
 
-	if [[ $raw_tagged_name != public-arm64-* ]]; then
-                echo "$raw_tagged_name not valid tag name for public-arm64"
+	if [[ $raw_tagged_name != arm64-* ]]; then
+                echo "$raw_tagged_name not valid tag name for arm64"
                 exit 1
         fi  
 
-	tagged_name=${raw_tagged_name#public-arm64-}
+	tagged_name=${raw_tagged_name#arm64-}
 
 	kernel_version=`echo $tagged_name|cut -d- -f1`
 	#kernel_version=${kernel_version}-1
@@ -84,12 +84,12 @@ get_tlinux_name()
 		exit 1
 	fi
 
-	if [[ $raw_tagged_name != public-arm64-* ]]; then
-                echo "$raw_tagged_name not valid tag name for public-arm64"
+	if [[ $raw_tagged_name != arm64-* ]]; then
+                echo "$raw_tagged_name not valid tag name for arm64"
                 exit 1
         fi  
 
-	tagged_name=${raw_tagged_name#public-arm64-}
+	tagged_name=${raw_tagged_name#arm64-}
 
 
 	echo "${tagged_name}" | grep 'kvm_guest'
