@@ -79,12 +79,12 @@ get_tlinux_name()
 		exit 1
 	fi
 
-	if [[ $raw_tagged_name != public-x86-* ]]; then
-		echo "$raw_tagged_name not valid tag name for public-x86"
+	if [[ $raw_tagged_name != x86-* ]]; then
+		echo "$raw_tagged_name not valid tag name for x86"
 		exit 11
 	fi
 
-	tagged_name=${raw_tagged_name#public-x86-}
+	tagged_name=${raw_tagged_name#x86-}
 
 	echo "${tagged_name}" | grep 'kasan'
 	if [ $?  -eq 0 ]; then

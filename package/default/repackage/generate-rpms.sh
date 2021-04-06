@@ -33,12 +33,12 @@ get_kernel_version()
 	local tagged_name
 	raw_tagged_name=$tag_name
 
-	if [[ $raw_tagged_name != public-x86-* ]]; then
-                echo "$raw_tagged_name not valid tag name for public-x86"
+	if [[ $raw_tagged_name != x86-* ]]; then
+                echo "$raw_tagged_name not valid tag name for x86"
                 exit 1
         fi  
 
-	tagged_name=${raw_tagged_name#public-x86-}
+	tagged_name=${raw_tagged_name#x86-}
 
 	kernel_version=`echo $tagged_name|cut -d- -f1`
 	#kernel_version=${kernel_version}-1
@@ -59,12 +59,12 @@ get_tlinux_name()
 		exit 1
 	fi
 
-	if [[ $raw_tagged_name != public-x86-* ]]; then
-                echo "$raw_tagged_name not valid tag name for public-x86"
-                exit 1
-        fi  
+	if [[ $raw_tagged_name != x86-* ]]; then
+		echo "$raw_tagged_name not valid tag name for x86"
+		exit 1
+	fi  
 
-    tagged_name=${raw_tagged_name#public-x86-}
+	tagged_name=${raw_tagged_name#x86-}
 
 	#if [ "${tagged_name#*-*-*}" != ${tagged_name} ];then
 		#echo "Error: bad tag name:$tagged_name."
