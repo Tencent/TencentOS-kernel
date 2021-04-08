@@ -677,25 +677,21 @@ static int map_create(union bpf_attr *attr)
 	if (attr->btf_key_type_id || attr->btf_value_type_id) {
 		struct btf *btf;
 
-		if (!attr->btf_value_type_id) {
-			err = -EINVAL;
-			goto free_map;
-		}
-
 		btf = btf_get_by_fd(attr->btf_fd);
 		if (IS_ERR(btf)) {
 			err = PTR_ERR(btf);
 			goto free_map;
 		}
-
-		err = map_check_btf(map, btf, attr->btf_key_type_id,
-				    attr->btf_value_type_id);
-		if (err) {
-			btf_put(btf);
-			goto free_map;
-		}
-
 		map->btf = btf;
+
+		if (attr->btf_value_type_id) {
+			err = map_check_btf(map, btf, attr->btf_key_type_id,
+					attr->btf_value_type_id);
+			if (err) {
+				btf_put(btf);
+				goto free_map;
+			}
+		}
 		map->btf_key_type_id = attr->btf_key_type_id;
 		map->btf_value_type_id = attr->btf_value_type_id;
 	} else {
