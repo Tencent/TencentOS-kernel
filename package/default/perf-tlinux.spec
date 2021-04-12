@@ -141,6 +141,7 @@ fi
 /usr/lib64/traceevent/plugins/*
 /usr/share/doc/*
 /usr/share/perf-core/*
+/usr/lib64/libperf-jvmti.so
 /usr/lib/perf/*
 
 %files -n python-perf
