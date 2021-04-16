@@ -1255,7 +1255,7 @@ xt_replace_table(struct xt_table *table,
 	table->private = newinfo;
 
 	/* make sure all cpus see new ->private value */
-	smp_wmb();
+	smp_mb();
 	/*
 	 * Even though table entries have now been swapped, other CPU's
 	 * may still be using the old entries...
