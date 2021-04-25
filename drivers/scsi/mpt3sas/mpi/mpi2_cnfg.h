@@ -252,6 +252,9 @@
  *                      Modify NVMe WriteCache values.
  *                      Add ConfigSource to PCIeIOUnit0.
  *                      Add various PCI id info to PCIeDevice2.
+ *  08-01-19  02.00.49  Add MPI26_MANPAGE7_FLAG_X2_X4_SLOT_INFO_VALID
+ *                      Add MPI26_IOUNITPAGE1_NVME_WRCACHE_SHIFT
+ *                      Correct def of MPI26_PCIEIOUNIT1_CF_BP_AUTO_CLOCK_ENABLE
  *  --------------------------------------------------------------------------
  */
 
@@ -900,6 +903,7 @@ typedef struct _MPI2_CONFIG_PAGE_MAN_7
 #define MPI2_MANPAGE7_FLAG_USE_SLOT_INFO                (0x00000001)
 
 #define MPI26_MANPAGE7_FLAG_CONN_LANE_USE_PINOUT        (0x00000020)
+#define MPI26_MANPAGE7_FLAG_X2_X4_SLOT_INFO_VALID       (0x00000010)
 
 /*
  * Generic structure to use for product-specific manufacturing pages
@@ -971,6 +975,7 @@ typedef struct _MPI2_CONFIG_PAGE_IO_UNIT_1
 
 /* IO Unit Page 1 Flags defines */
 #define MPI26_IOUNITPAGE1_NVME_WRCACHE_MASK             (0x00030000)
+#define MPI26_IOUNITPAGE1_NVME_WRCACHE_SHIFT            (16)
 #define MPI26_IOUNITPAGE1_NVME_WRCACHE_NO_CHANGE        (0x00000000)
 #define MPI26_IOUNITPAGE1_NVME_WRCACHE_ENABLE           (0x00010000)
 #define MPI26_IOUNITPAGE1_NVME_WRCACHE_DISABLE          (0x00020000)
@@ -3560,7 +3565,7 @@ typedef struct _MPI26_CONFIG_PAGE_PIOUNIT_1
 
 /* values for PCIe IO Unit Page 1 ControlFlags */
 #define MPI26_PCIEIOUNIT1_CF_BP_CONFIG_DISABLE                      (0x0080)
-#define MPI26_PCIEIOUNIT1_CF_BP_AUTO_CLOCK_ENABLE                   (0x0060)
+#define MPI26_PCIEIOUNIT1_CF_BP_AUTO_CLOCK_ENABLE                   (0x0040)
 #define MPI26_PCIEIOUNIT1_CF_BP_CLK_MASK                            (0x0030)
 #define MPI26_PCIEIOUNIT1_CF_BP_CLK_ALL_DIS                         (0x0000)
 #define MPI26_PCIEIOUNIT1_CF_BP_CLK_SRIS_EN                         (0x0010)

@@ -639,6 +639,7 @@ _csmisas_get_cntlr_status(struct MPT3SAS_ADAPTER *ioc,
 		break;
 
 	case MPI2_IOC_STATE_FAULT:
+	case MPI2_IOC_STATE_COREDUMP:
 		karg->Status.uStatus = CSMI_SAS_CNTLR_STATUS_FAILED;
 		karg->Status.uOfflineReason = 0;
 		break;
@@ -2194,7 +2195,7 @@ _csmisas_ssp_passthru(struct MPT3SAS_ADAPTER *ioc,
 		printk(MPT3SAS_INFO_FMT "issue target reset: handle"
 		    "(0x%04x)\n", ioc->name, sas_device.handle);
 		mpt3sas_scsih_issue_locked_tm(ioc, sas_device.handle, 0, 0, 0,
-		    MPI2_SCSITASKMGMT_TASKTYPE_TARGET_RESET, 0, 30, 0);
+		    MPI2_SCSITASKMGMT_TASKTYPE_TARGET_RESET, smid, 30, 0);
 		if (ioc->scsih_cmds.status & MPT3_CMD_COMPLETE) {
 			printk(MPT3SAS_INFO_FMT "target reset completed: handle"
 			    "(0x%04x)\n", ioc->name, sas_device.handle);

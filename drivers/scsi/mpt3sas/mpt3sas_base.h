@@ -73,13 +73,14 @@
 #include "mpt3sas_compatibility.h"
 #include "mpt3sas_debug.h"
 #include "mpt3sas_trigger_diag.h"
+#include "mpt3sas_trigger_pages.h"
 
 /* mpt3sas driver versioning info */
 #define MPT3SAS_DRIVER_NAME		"mpt3sas"
 #define MPT3SAS_AUTHOR	"Broadcom Inc. <MPT-FusionLinux.pdl@broadcom.com>"
 #define MPT3SAS_DESCRIPTION	"LSI MPT Fusion SAS 3.0 & SAS 3.5 Device Driver"
-#define MPT3SAS_DRIVER_VERSION		"32.00.00.00"
-#define MPT3SAS_MAJOR_VERSION		32
+#define MPT3SAS_DRIVER_VERSION		"37.00.00.00"
+#define MPT3SAS_MAJOR_VERSION		37
 #define MPT3SAS_MINOR_VERSION           00
 #define MPT3SAS_BUILD_VERSION		0
 #define MPT3SAS_RELEASE_VERSION		0
@@ -92,6 +93,17 @@
 #define MPT2SAS_MINOR_VERSION		0
 #define MPT2SAS_BUILD_VERSION		3
 #define MPT2SAS_RELEASE_VERSION		0
+
+/* CoreDump: Default timeout */
+#define MPT3SAS_DEFAULT_COREDUMP_TIMEOUT_SECONDS	(15)	/* 15 seconds */
+#define MPT3SAS_TIMESYNC_TIMEOUT_SECONDS		(10)	/* 10 seconds */
+#define MPT3SAS_TIMESYNC_UPDATE_INTERVAL		(900)   /* 15 minutes */
+#define MPT3SAS_TIMESYNC_UNIT_MASK			(0x80)	/* bit 7 */
+#define MPT3SAS_TIMESYNC_MASK			(0x7F)	/* 0 - 6 bits */
+#define SECONDS_PER_MIN					(60)
+#define SECONDS_PER_HOUR				(3600)
+#define MPT3SAS_COREDUMP_LOOP_DONE			(0xFF)
+#define MPI26_SET_IOC_PARAMETER_SYNC_TIMESTAMP		(0x81)
 
 /*
  * Set MPT3SAS_SG_DEPTH value based on user input.
@@ -478,6 +490,7 @@ struct read_cap_parameter {
 #define MPT3SAS_HIGH_IOPS_REPLY_QUEUES		8
 #define MPT3SAS_HIGH_IOPS_BATCH_COUNT		16
 #define MPT3SAS_GEN35_MAX_MSIX_QUEUES		128
+#define RDPQ_MAX_INDEX_IN_ONE_CHUNK		16
 
 /* Get status code type(bits 27-25) with status code(bits 24-17)
  * value from status field.
@@ -659,7 +672,10 @@ struct Mpi2ManufacturingPage11_t {
 	u8	HostTraceBufferFlags;		/* 4Fh */
 	u16	HostTraceBufferMaxSizeKB;	/* 50h */
 	u16	HostTraceBufferMinSizeKB;	/* 52h */
-	__le32	Reserved10[2];			/* 54h - 5Bh */
+	u8	CoreDumpTOSec;			/* 54h */
+	u8	TimeSyncInterval;		/* 55h */
+	u16 Reserved9;                  /* 56h */
+	__le32	Reserved10;	            /* 58h */
 };
 
 /**
@@ -940,6 +956,7 @@ struct _pcie_device {
 	u8	*serial_number;
 	u8	reset_timeout;
 	u8	access_status;
+	u16	shutdown_latency;
 	struct kref refcount;
 };
 
@@ -1076,6 +1093,7 @@ struct _sas_port {
  * @handle: device handle for this phy
  * @attached_handle: device handle for attached device
  * @phy_belongs_to_port: port has been created for this phy
+ * @hba_vphy: flag to identify HBA vSES device phy
  * @port: hba port entry
  */
 struct _sas_phy {
@@ -1087,6 +1105,7 @@ struct _sas_phy {
 	u16	handle;
 	u16	attached_handle;
 	u8	phy_belongs_to_port;
+	u8	hba_vphy;
 	struct hba_port *port;
 };
 
@@ -1104,6 +1123,7 @@ struct _sas_phy {
  * @port: hba port entry
  * @phy: a list of phys that make up this sas_host/expander
  * @sas_port_list: list of ports attached to this sas_host/expander
+ * @rphy: sas_rphy object of this expander
  */
 struct _sas_node {
 	struct list_head list;
@@ -1118,6 +1138,7 @@ struct _sas_node {
 	struct hba_port *port;
 	struct	_sas_phy *phy;
 	struct list_head sas_port_list;
+	struct sas_rphy *rphy;
 };
 
 
@@ -1353,9 +1374,22 @@ struct mpt3sas_port_facts {
 struct reply_post_struct {
 	Mpi2ReplyDescriptorsUnion_t 	*reply_post_free;
 	dma_addr_t			reply_post_free_dma;
-	struct dma_pool			*dma_pool;
-
 };
+
+/**
+ * struct virtual_phy - vSES phy structure
+ * sas_address: SAS Address of vSES device
+ * phy_mask: vSES device's phy number
+ * flags: flags used to manage this structure
+ */
+struct virtual_phy {
+	struct	list_head list;
+	u64	sas_address;
+	u32	phy_mask;
+	u8	flags;
+};
+
+#define MPT_VPHY_FLAG_DIRTY_PHY	0x01
 
  /**
  * struct hba_port - Saves each HBA's Wide/Narrow port info
@@ -1363,14 +1397,63 @@ struct reply_post_struct {
  * @sas_address: sas address of this wide/narrow port's attached device
  * @phy_mask: HBA PHY's belonging to this port
  * @flags: hba port flags
+ * @vphys_mask : mask of vSES devices Phy number
+ * @vphys_list : list containing vSES device structures
  */
 struct hba_port {
 	struct list_head list;
-	u8	port_id;
 	u64	sas_address;
 	u32	phy_mask;
+	u8	port_id;
 	u8	flags;
+	u32	vphys_mask;
+	struct list_head vphys_list;
 };
+
+/**
+ * struct htb_rel_query - diagnostic buffer release reason
+ * @unique_id - unique id associated with this buffer.
+ * @buffer_rel_condition - Release condition ioctl/sysfs/reset 
+ * @reserved
+ * @trigger_type - Master/Event/scsi/MPI
+ * @trigger_info_dwords - Data Correspondig to trigger type
+ */
+struct htb_rel_query
+{
+	u16	buffer_rel_condition;
+	u16	reserved;
+	u32	trigger_type;
+	u32	trigger_info_dwords[2];
+};
+
+/* Buffer_rel_condition bit fields */
+
+/* Bit 0 - Diag Buffer not Released */
+#define MPT3_DIAG_BUFFER_NOT_RELEASED	(0x00)
+/* Bit 0 - Diag Buffer Released */
+#define MPT3_DIAG_BUFFER_RELEASED	(0x01)
+
+/*
+ * Bit 1 - Diag Buffer Released by IOCTL,
+ * This bit is valid only if Bit 0 is one
+ */
+#define MPT3_DIAG_BUFFER_REL_IOCTL	(0x02 | MPT3_DIAG_BUFFER_RELEASED)
+
+/*
+ * Bit 2 - Diag Buffer Released by Trigger,
+ * This bit is valid only if Bit 0 is one
+ */
+#define MPT3_DIAG_BUFFER_REL_TRIGGER	(0x04 | MPT3_DIAG_BUFFER_RELEASED)
+
+/*
+ * Bit 3 - Diag Buffer Released by SysFs,
+ * This bit is valid only if Bit 0 is one
+ */
+#define MPT3_DIAG_BUFFER_REL_SYSFS	(0x08 | MPT3_DIAG_BUFFER_RELEASED)
+
+/* DIAG RESET Master trigger flags */
+#define MPT_DIAG_RESET_ISSUED_BY_DRIVER 0x00000000
+#define MPT_DIAG_RESET_ISSUED_BY_USER	0x00000001
 
 /* hba port flags */
 #define HBA_PORT_FLAG_DIRTY_PORT	0x01
@@ -1405,6 +1488,8 @@ typedef void (*MPT3SAS_FLUSH_RUNNING_CMDS)(struct MPT3SAS_ADAPTER *ioc);
  * @firmware_event_thread: ""
  * @fw_event_lock:
  * @fw_event_list: list of fw events
+ * @current_evet: current processing firmware event
+ * @fw_event_cleanup: set to one while cleaning up the fw events
  * @aen_event_read_flag: event log was read
  * @broadcast_aen_busy: broadcast aen waiting to be serviced
  * @shost_recovery: host reset in progress
@@ -1428,10 +1513,13 @@ typedef void (*MPT3SAS_FLUSH_RUNNING_CMDS)(struct MPT3SAS_ADAPTER *ioc);
  * @total_io_cnt: Gives total IO count, used to load balance the interrupts
  * @high_iops_outstanding: used to load balance the interrupts within high iops reply queues
  * @high_iops_queues: high iops reply queues count
+ * @drv_internal_flags: Bit map internal to driver
  * @drv_support_bitmap: driver's supported feature bit map
  * @msix_load_balance: Enables load balancing of interrupts across the multiple MSIXs
  * @thresh_hold: Max number of reply descriptors processed before updating Host Index
  * @schedule_dead_ioc_flush_running_cmds: callback to flush pending commands
+ * @timestamp_update_count: Counter to fire timeSync command
+ * time_sync_interval: Time sync interval read from man page 11
  * @scsi_io_cb_idx: shost generated commands
  * @tm_cb_idx: task management commands
  * @scsih_cb_idx: scsih internal commands
@@ -1617,6 +1705,8 @@ struct MPT3SAS_ADAPTER {
 	struct workqueue_struct	*firmware_event_thread;
 	spinlock_t	fw_event_lock;
 	struct list_head fw_event_list;
+	struct fw_event_work *current_event;
+	u8		fw_events_cleanup;
 
 	 /* misc flags */
 	int		aen_event_read_flag;
@@ -1654,13 +1744,20 @@ struct MPT3SAS_ADAPTER {
 	u32		ioc_reset_count;
 	MPT3SAS_FLUSH_RUNNING_CMDS schedule_dead_ioc_flush_running_cmds;
 	u32             non_operational_loop;
+	u8		ioc_coredump_loop;
+	u32		timestamp_update_count;
+	u32		time_sync_interval;
 	u8		multipath_on_hba;
 	atomic64_t	total_io_cnt;
 	atomic64_t	high_iops_outstanding;
 	bool 		msix_load_balance;
 	u16		thresh_hold;
 	u8		high_iops_queues;
+	u32		drv_internal_flags;
 	u32		drv_support_bitmap;
+	u32		dma_mask;
+	bool		enable_sdev_max_qd;
+	bool		use_32bit_dma;
 
 	/* internal commands, callback index */
 	u8		scsi_io_cb_idx;
@@ -1713,6 +1810,7 @@ struct MPT3SAS_ADAPTER {
 	u8		disable_eedp_support;
 	u8		tm_custom_handling;
 	u8		nvme_abort_timeout;
+	u16		max_shutdown_latency;
 
 	/* static config pages */
 	struct mpt3sas_facts facts;
@@ -1846,9 +1944,6 @@ struct MPT3SAS_ADAPTER {
 	u16		reply_post_queue_depth;
 	struct reply_post_struct *reply_post;
 	struct dma_pool *reply_post_free_dma_pool;
-	struct dma_pool *reply_post_free_dma_pool_align;
-	struct dma_pool *reply_post_free_dma_pool_mod_rdpq_set;
-	struct dma_pool *reply_post_free_dma_pool_mod_rdpq_set_align;
 	struct dma_pool *reply_post_free_array_dma_pool;
 	Mpi2IOCInitRDPQArrayEntry *reply_post_free_array;
 	dma_addr_t reply_post_free_array_dma;
@@ -1884,6 +1979,8 @@ struct MPT3SAS_ADAPTER {
 	u32		diagnostic_flags[MPI2_DIAG_BUF_TYPE_COUNT];
 	u32		ring_buffer_offset;
 	u32		ring_buffer_sz;
+	struct	htb_rel_query htb_rel;
+	u8		reset_from_user;
 #if defined(TARGET_MODE)
 	char		stm_name[MPT_NAME_LENGTH];
 	u8		stm_io_cb_idx; /* normal io */
@@ -1922,6 +2019,7 @@ struct MPT3SAS_ADAPTER {
 	struct SL_WH_EVENT_TRIGGERS_T diag_trigger_event;
 	struct SL_WH_SCSI_TRIGGERS_T diag_trigger_scsi;
 	struct SL_WH_MPI_TRIGGERS_T diag_trigger_mpi;
+	u8		supports_trigger_pages;
 	void		*device_remove_in_progress;
 	u16		device_remove_in_progress_sz;
 	u8		*tm_tr_retry;
@@ -1929,10 +2027,22 @@ struct MPT3SAS_ADAPTER {
 	u8		temp_sensors_count;
 	u8		is_gen35_ioc;
 	u8		is_aero_ioc;
+#ifdef CONFIG_DEBUG_FS
+	struct dentry *debugfs_root;
+	struct dentry *ioc_dump;
+#endif
 	struct list_head port_table_list;
 };
 
-#define MPT_DRV_SUPPORT_BITMAP_MEMMOVE 0x00000001
+struct mpt3sas_debugfs_buffer {
+        void *buf;
+        u32 len;
+};
+
+#define MPT_DRV_SUPPORT_BITMAP_MEMMOVE		0x00000001
+#define MPT_DRV_SUPPORT_BITMAP_ADDNLQUERY	0x00000002
+
+#define MPT_DRV_INTERNAL_BITMAP_BLK_MQ 0x00000001
 
 typedef u8 (*MPT_CALLBACK)(struct MPT3SAS_ADAPTER *ioc, u16 smid, u8 msix_index,
 	u32 reply);
@@ -1983,7 +2093,7 @@ __le64 mpt3sas_base_get_sense_buffer_dma_64(struct MPT3SAS_ADAPTER *ioc,
 	u16 smid);
 void *mpt3sas_base_get_pcie_sgl(struct MPT3SAS_ADAPTER *ioc, u16 smid);
 dma_addr_t mpt3sas_base_get_pcie_sgl_dma(struct MPT3SAS_ADAPTER *ioc, u16 smid);
-void mpt3sas_base_sync_reply_irqs(struct MPT3SAS_ADAPTER *ioc);
+void mpt3sas_base_sync_reply_irqs(struct MPT3SAS_ADAPTER *ioc, u8 poll);
 
 /* hi-priority queue */
 u16 mpt3sas_base_get_smid_hpr(struct MPT3SAS_ADAPTER *ioc, u8 cb_idx);
@@ -2007,6 +2117,13 @@ u32 mpt3sas_base_get_iocstate(struct MPT3SAS_ADAPTER *ioc, int cooked);
 int _base_check_and_get_msix_vectors(struct pci_dev *pdev);
 
 void mpt3sas_base_fault_info(struct MPT3SAS_ADAPTER *ioc , u16 fault_code);
+#define mpt3sas_print_fault_code(ioc, fault_code) \
+    printk(MPT3SAS_ERR_FMT "fault info from func: %s\n", ioc->name, __func__); \
+    mpt3sas_base_fault_info (ioc, fault_code)
+
+void mpt3sas_base_coredump_info(struct MPT3SAS_ADAPTER *ioc , u16 fault_code);
+int mpt3sas_base_wait_for_coredump_completion(struct MPT3SAS_ADAPTER *ioc,
+		const char *caller);
 int mpt3sas_base_sas_iounit_control(struct MPT3SAS_ADAPTER *ioc,
 	Mpi2SasIoUnitControlReply_t *mpi_reply,
 	Mpi2SasIoUnitControlRequest_t *mpi_request);
@@ -2038,7 +2155,9 @@ void mpt3sas_base_disable_msix(struct MPT3SAS_ADAPTER *ioc);
 void mpt3sas_wait_for_commands_to_complete(struct MPT3SAS_ADAPTER *ioc);
 u8 mpt3sas_base_check_cmd_timeout(struct MPT3SAS_ADAPTER *ioc,
 	u8 status, void *mpi_request, int sz);
-
+#define mpt3sas_check_cmd_timeout(ioc, status, mpi_request, sz, issue_reset) \
+	printk(MPT3SAS_ERR_FMT "In func: %s\n", ioc->name, __func__); \
+	issue_reset = mpt3sas_base_check_cmd_timeout(ioc, status, mpi_request, sz)
 
 int mpt3sas_wait_for_ioc_to_operational(struct MPT3SAS_ADAPTER *ioc,
 	int wait_count);
@@ -2046,6 +2165,7 @@ void mpt3sas_base_start_hba_unplug_watchdog(struct MPT3SAS_ADAPTER *ioc);
 void mpt3sas_base_stop_hba_unplug_watchdog(struct MPT3SAS_ADAPTER *ioc);
 int mpt3sas_base_make_ioc_ready(struct MPT3SAS_ADAPTER *ioc, enum reset_type type);
 void mpt3sas_base_mask_interrupts(struct MPT3SAS_ADAPTER *ioc);
+void mpt3sas_base_unmask_interrupts(struct MPT3SAS_ADAPTER *ioc);
 
 /* scsih shared API */
 extern char driver_name[MPT_NAME_LENGTH];
@@ -2070,7 +2190,9 @@ void mpt3sas_device_remove_by_sas_address(struct MPT3SAS_ADAPTER *ioc,
 u8 mpt3sas_check_for_pending_internal_cmds(struct MPT3SAS_ADAPTER *ioc,
 	 u16 smid);
 struct hba_port *
-mpt3sas_get_port_by_id(struct MPT3SAS_ADAPTER *ioc, u8 port);
+mpt3sas_get_port_by_id(struct MPT3SAS_ADAPTER *ioc, u8 port, u8 skip_dirty_flag);
+struct virtual_phy *
+mpt3sas_get_vphy_by_phy(struct MPT3SAS_ADAPTER *ioc, struct hba_port *port, u32 phy);
 
 struct _sas_node *mpt3sas_scsih_expander_find_by_handle(
 	struct MPT3SAS_ADAPTER *ioc, u16 handle);
@@ -2098,6 +2220,8 @@ _scsih_sas_device_remove(struct MPT3SAS_ADAPTER *ioc,
 void
 mpt3sas_scsih_clear_outstanding_scsi_tm_commands(struct MPT3SAS_ADAPTER *ioc);
 u32 base_mod64(u64 dividend, u32 divisor);
+void
+mpt3sas_scsih_change_queue_depth(struct scsi_device *sdev, int qdepth);
 
 /**
  * _scsih_is_pcie_scsi_device - determines if device is an pcie scsi device
@@ -2214,6 +2338,33 @@ int mpt3sas_config_get_ioc_pg1(struct MPT3SAS_ADAPTER *ioc,
 int
 mpt3sas_config_get_iounit_pg3(struct MPT3SAS_ADAPTER *ioc,
         Mpi2ConfigReply_t *mpi_reply, Mpi2IOUnitPage3_t *config_page, u16 sz);
+int
+mpt3sas_config_get_driver_trigger_pg0(struct MPT3SAS_ADAPTER *ioc,
+	Mpi2ConfigReply_t *mpi_reply, Mpi26DriverTriggerPage0_t *config_page);
+int
+mpt3sas_config_get_driver_trigger_pg1(struct MPT3SAS_ADAPTER *ioc,
+	Mpi2ConfigReply_t *mpi_reply, Mpi26DriverTriggerPage1_t *config_page);
+int
+mpt3sas_config_get_driver_trigger_pg2(struct MPT3SAS_ADAPTER *ioc,
+	Mpi2ConfigReply_t *mpi_reply, Mpi26DriverTriggerPage2_t *config_page);
+int
+mpt3sas_config_get_driver_trigger_pg3(struct MPT3SAS_ADAPTER *ioc,
+	Mpi2ConfigReply_t *mpi_reply, Mpi26DriverTriggerPage3_t *config_page);
+int
+mpt3sas_config_get_driver_trigger_pg4(struct MPT3SAS_ADAPTER *ioc,
+	Mpi2ConfigReply_t *mpi_reply, Mpi26DriverTriggerPage4_t *config_page);
+int
+mpt3sas_config_update_driver_trigger_pg1(struct MPT3SAS_ADAPTER *ioc,
+	struct SL_WH_MASTER_TRIGGER_T *master_tg, bool set);
+int
+mpt3sas_config_update_driver_trigger_pg2(struct MPT3SAS_ADAPTER *ioc,
+	struct SL_WH_EVENT_TRIGGERS_T *event_tg, bool set);
+int
+mpt3sas_config_update_driver_trigger_pg3(struct MPT3SAS_ADAPTER *ioc,
+	struct SL_WH_SCSI_TRIGGERS_T *scsi_tg, bool set);
+int
+mpt3sas_config_update_driver_trigger_pg4(struct MPT3SAS_ADAPTER *ioc,
+	struct SL_WH_MPI_TRIGGERS_T *mpi_tg, bool set);
 
 /* ctl shared API */
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,25))
@@ -2310,6 +2461,11 @@ mpt3sas_setup_direct_io(struct MPT3SAS_ADAPTER *ioc, struct scsi_cmnd *scmd,
 	struct _raid_device *raid_device, Mpi25SCSIIORequest_t *mpi_request);
 
 void _scsih_hide_unhide_sas_devices(struct MPT3SAS_ADAPTER *ioc);
+
+void mpt3sas_setup_debugfs(struct MPT3SAS_ADAPTER *ioc);
+void mpt3sas_destroy_debugfs(struct MPT3SAS_ADAPTER *ioc);
+void mpt3sas_init_debugfs(void);
+void mpt3sas_exit_debugfs(void);
 
 #ifdef MPT2SAS_WD_DDIOCOUNT
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,25))
