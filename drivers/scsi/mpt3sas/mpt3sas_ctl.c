@@ -218,6 +218,12 @@ _ctl_display_some_debug(struct MPT3SAS_ADAPTER *ioc, u16 smid,
 	case MPI2_FUNCTION_SMP_PASSTHROUGH:
 		desc = "smp_passthrough";
 		break;
+	case MPI2_FUNCTION_TOOLBOX:
+		desc = "toolbox";
+		break;
+	case MPI2_FUNCTION_NVME_ENCAPSULATED:
+		desc = "nvme_encapsulated";
+		break;
 	}
 
 	if (!desc)
@@ -535,6 +541,8 @@ mpt3sas_ctl_reset_handler(struct MPT3SAS_ADAPTER *ioc, int reset_phase)
 			/* add a log message to indicate the release */
 			printk(MPT3SAS_INFO_FMT "%s: Releasing the trace buffer "
 					"due to adapter reset.", ioc->name, __func__);
+			ioc->htb_rel.buffer_rel_condition =
+			    MPT3_DIAG_BUFFER_REL_TRIGGER;
 			mpt3sas_send_diag_release(ioc, i, &issue_reset);
 		}
 		break;
@@ -960,7 +968,8 @@ _ctl_do_mpt_command(struct MPT3SAS_ADAPTER *ioc, struct mpt3_ioctl_command karg,
 		u8 *data;
 
 		/* ioc determines which port to use */
-		smp_request->PhysicalPort = 0xFF;
+		if (!ioc->multipath_on_hba)
+			smp_request->PhysicalPort = 0xFF;
 		if (smp_request->PassthroughFlags &
 		    MPI2_SMP_PT_REQ_PT_FLAGS_IMMEDIATE)
 			data = (u8 *)&smp_request->SGL;
@@ -1063,6 +1072,7 @@ _ctl_do_mpt_command(struct MPT3SAS_ADAPTER *ioc, struct mpt3_ioctl_command karg,
 		}
 		/* drop to default case for posting the request */
 	}
+		/* fall through */
 	default:
 		ioc->build_sg_mpi(ioc, psge, data_out_dma, data_out_sz,
 		    data_in_dma, data_in_sz);
@@ -1088,10 +1098,9 @@ _ctl_do_mpt_command(struct MPT3SAS_ADAPTER *ioc, struct mpt3_ioctl_command karg,
 		ioc->ignore_loginfos = 0;
 	}
 	if (!(ioc->ctl_cmds.status & MPT3_CMD_COMPLETE)) {
-		issue_reset = 
-			mpt3sas_base_check_cmd_timeout(ioc,
-				ioc->ctl_cmds.status, mpi_request,
-				karg.data_sge_offset);
+		mpt3sas_check_cmd_timeout(ioc,
+		    ioc->ctl_cmds.status, mpi_request,
+		    karg.data_sge_offset, issue_reset);
 		goto issue_host_reset;
 	}
 
@@ -1174,13 +1183,13 @@ _ctl_do_mpt_command(struct MPT3SAS_ADAPTER *ioc, struct mpt3_ioctl_command karg,
 				(!(mpt3sas_scsih_is_pcie_scsi_device(pcie_device->device_info))))
 				mpt3sas_scsih_issue_locked_tm(ioc,
 					le16_to_cpu(mpi_request->FunctionDependent1), 0, 0,
-					0, MPI2_SCSITASKMGMT_TASKTYPE_TARGET_RESET, 0, 
+					0, MPI2_SCSITASKMGMT_TASKTYPE_TARGET_RESET, smid, 
 					pcie_device->reset_timeout,
 					MPI26_SCSITASKMGMT_MSGFLAGS_PROTOCOL_LVL_RST_PCIE);
 			else 
 				mpt3sas_scsih_issue_locked_tm(ioc,
 					le16_to_cpu(mpi_request->FunctionDependent1), 0, 0,
-					0, MPI2_SCSITASKMGMT_TASKTYPE_TARGET_RESET, 0, 30,
+					0, MPI2_SCSITASKMGMT_TASKTYPE_TARGET_RESET, smid, 30,
 					MPI2_SCSITASKMGMT_MSGFLAGS_LINK_RESET);
 		} else
 			mpt3sas_base_hard_reset_handler(ioc, FORCE_BIG_HAMMER);
@@ -1398,11 +1407,12 @@ _ctl_do_reset(struct MPT3SAS_ADAPTER *ioc, void __user *arg)
 
 	dctlprintk(ioc, printk(MPT3SAS_INFO_FMT "%s: enter\n", ioc->name,
 	    __func__));
-
+	
+	ioc->reset_from_user = 1;
 	scsi_block_requests(ioc->shost);
 	retval = mpt3sas_base_hard_reset_handler(ioc, FORCE_BIG_HAMMER);
 	scsi_unblock_requests(ioc->shost);
-	printk(MPT3SAS_INFO_FMT "host reset: %s\n",
+	printk(MPT3SAS_INFO_FMT "ioctl: host reset: %s\n",
 	    ioc->name, ((!retval) ? "SUCCESS" : "FAILED"));
 	return 0;
 }
@@ -1785,6 +1795,9 @@ _ctl_diag_register_2(struct MPT3SAS_ADAPTER *ioc,
 	request_data = ioc->diag_buffer[buffer_type];
 	request_data_sz = diag_register->requested_buffer_size;
 	ioc->unique_id[buffer_type] = diag_register->unique_id;
+	/* Reset ioc variables used for additional query commands */
+	ioc->reset_from_user = 0;
+	memset(&ioc->htb_rel, 0, sizeof(struct htb_rel_query));
 	ioc->diag_buffer_status[buffer_type] &= MPT3_DIAG_BUFFER_IS_DRIVER_ALLOCATED;
 	memcpy(ioc->product_specific[buffer_type],
 	    diag_register->product_specific, MPT3_PRODUCT_SPECIFIC_DWORDS);
@@ -1841,10 +1854,9 @@ _ctl_diag_register_2(struct MPT3SAS_ADAPTER *ioc,
 	    MPT3_IOCTL_DEFAULT_TIMEOUT*HZ);
 
 	if (!(ioc->ctl_diag_cmds.status & MPT3_CMD_COMPLETE)) {
-		issue_reset = 
-			mpt3sas_base_check_cmd_timeout(ioc,
-				ioc->ctl_diag_cmds.status, mpi_request,
-				sizeof(Mpi2DiagBufferPostRequest_t)/4);
+		mpt3sas_check_cmd_timeout(ioc,
+		    ioc->ctl_diag_cmds.status, mpi_request,
+		    sizeof(Mpi2DiagBufferPostRequest_t)/4, issue_reset);
 		goto issue_host_reset;
 	}
 
@@ -1912,8 +1924,6 @@ mpt3sas_enable_diag_buffer(struct MPT3SAS_ADAPTER *ioc, u8 bits_to_register)
 
 		printk(MPT3SAS_INFO_FMT "registering trace buffer support\n",
 		    ioc->name);
-		ioc->diag_trigger_master.MasterData =
-				(MASTER_TRIGGER_FW_FAULT + MASTER_TRIGGER_ADAPTER_RESET);
 		diag_register.buffer_type = MPI2_DIAG_BUF_TYPE_TRACE;
 		diag_register.unique_id =
 				(ioc->hba_mpi_version_belonged == MPI2_VERSION)?
@@ -2230,6 +2240,7 @@ mpt3sas_send_diag_release(struct MPT3SAS_ADAPTER *ioc, u8 buffer_type,
 	u16 ioc_status;
 	u32 ioc_state;
 	int rc;
+	u8 reset_needed = 0;
 
 	dctlprintk(ioc, printk(MPT3SAS_INFO_FMT "%s\n", ioc->name,
 	    __func__));
@@ -2281,9 +2292,10 @@ mpt3sas_send_diag_release(struct MPT3SAS_ADAPTER *ioc, u8 buffer_type,
 	    MPT3_IOCTL_DEFAULT_TIMEOUT*HZ);
 
 	if (!(ioc->ctl_diag_cmds.status & MPT3_CMD_COMPLETE)) {
-		*issue_reset = mpt3sas_base_check_cmd_timeout(ioc,
-				ioc->ctl_diag_cmds.status, mpi_request,
-				sizeof(Mpi2DiagReleaseRequest_t)/4);
+		mpt3sas_check_cmd_timeout(ioc,
+		    ioc->ctl_diag_cmds.status, mpi_request,
+		    sizeof(Mpi2DiagReleaseRequest_t)/4, reset_needed);
+		*issue_reset = reset_needed;
 		ioc->diag_buffer_status[buffer_type] |=
 		    MPT3_DIAG_BUFFER_IS_RELEASED;
 		rc = -EFAULT;
@@ -2399,8 +2411,9 @@ _ctl_diag_release(struct MPT3SAS_ADAPTER *ioc, void __user *arg)
 		return 0;
 	}
 
+	ioc->htb_rel.buffer_rel_condition = MPT3_DIAG_BUFFER_REL_IOCTL;
 	rc = mpt3sas_send_diag_release(ioc, buffer_type, &issue_reset);
-
+	
 	if (issue_reset)
 		mpt3sas_base_hard_reset_handler(ioc, FORCE_BIG_HAMMER);
 
@@ -2555,10 +2568,9 @@ _ctl_diag_read_buffer(struct MPT3SAS_ADAPTER *ioc, void __user *arg)
 	    MPT3_IOCTL_DEFAULT_TIMEOUT*HZ);
 
 	if (!(ioc->ctl_diag_cmds.status & MPT3_CMD_COMPLETE)) {
-		issue_reset = 
-			mpt3sas_base_check_cmd_timeout(ioc,
-				ioc->ctl_diag_cmds.status, mpi_request,
-				sizeof(Mpi2DiagBufferPostRequest_t)/4);
+		mpt3sas_check_cmd_timeout(ioc,
+		    ioc->ctl_diag_cmds.status, mpi_request,
+		    sizeof(Mpi2DiagBufferPostRequest_t)/4, issue_reset);
 		goto issue_host_reset;
 	}
 
@@ -2598,6 +2610,62 @@ _ctl_diag_read_buffer(struct MPT3SAS_ADAPTER *ioc, void __user *arg)
 }
 
 
+/**
+ * _ctl_addnl_diag_query - query relevant info associated with diag buffers
+ * @ioc: per adapter object
+ * @arg - user space buffer containing ioctl content
+ *
+ * The application will send only unique_id.  Driver will
+ * inspect unique_id first, if valid, fill the details related to cause
+ * for diag buffer release.
+ */
+static long
+_ctl_addnl_diag_query(struct MPT3SAS_ADAPTER *ioc, void __user *arg)
+{
+	struct mpt3_addnl_diag_query karg;
+	u32 buffer_type = 0;
+
+	if (copy_from_user(&karg, arg, sizeof(karg))) {
+		pr_err("%s: failure at %s:%d/%s()!\n",
+		    ioc->name, __FILE__, __LINE__, __func__);
+		return -EFAULT;
+	}
+	dctlprintk(ioc, printk(MPT3SAS_INFO_FMT "%s\n", ioc->name,
+	    __func__));
+	if (karg.unique_id == 0) {
+		pr_err("%s: %s: unique_id is(0x%08x) \n",
+		    ioc->name, __func__, karg.unique_id);
+		return -EPERM;
+	}
+	buffer_type = _ctl_diag_get_bufftype(ioc, karg.unique_id);
+	if (buffer_type == MPT3_DIAG_UID_NOT_FOUND) {
+		pr_err("%s: %s: buffer with unique_id(0x%08x) not found\n",
+		    ioc->name, __func__, karg.unique_id);
+		return -EPERM;
+	}
+	memset(&karg.buffer_rel_condition, 0, sizeof(struct htb_rel_query));
+	if ((ioc->diag_buffer_status[buffer_type] &
+	    MPT3_DIAG_BUFFER_IS_REGISTERED) == 0) {
+		pr_info("%s: %s: buffer_type(0x%02x) is not registered\n",
+		    ioc->name, __func__, buffer_type);
+		goto out;
+	}
+	if ((ioc->diag_buffer_status[buffer_type] &
+	    MPT3_DIAG_BUFFER_IS_RELEASED) == 0) {
+		pr_err("%s: %s: buffer_type(0x%02x) is not released\n",
+		    ioc->name, __func__, buffer_type);
+		return -EPERM;
+	}
+	memcpy(&karg.buffer_rel_condition, &ioc->htb_rel,
+	    sizeof(struct  htb_rel_query));
+out:
+	if (copy_to_user(arg, &karg, sizeof(struct mpt3_addnl_diag_query))) {
+		pr_err("%s: %s: unable to write mpt3_addnl_diag_query data @ %p\n",
+		    ioc->name, __func__, arg);
+		return -EFAULT;
+	}
+	return 0;
+}
 
 #ifdef CONFIG_COMPAT
 /**
@@ -2661,7 +2729,7 @@ _ctl_ioctl_main(struct file *file, unsigned int cmd, void __user *arg,
 	struct MPT3SAS_ADAPTER *ioc;
 	struct mpt3_ioctl_header ioctl_header;
 	enum block_state state;
-	long ret = -EINVAL;
+	long ret = -ENOIOCTLCMD;
 
 	/* get IOCTL header */
 	if (copy_from_user(&ioctl_header, (char __user *)arg,
@@ -2776,6 +2844,10 @@ _ctl_ioctl_main(struct file *file, unsigned int cmd, void __user *arg,
 	case MPT3DIAGREADBUFFER:
 		if (_IOC_SIZE(cmd) == sizeof(struct mpt3_diag_read_buffer))
 			ret = _ctl_diag_read_buffer(ioc, arg);
+		break;
+	case MPT3ADDNLDIAGQUERY:
+		if (_IOC_SIZE(cmd) == sizeof(struct mpt3_addnl_diag_query))
+			ret = _ctl_addnl_diag_query(ioc, arg);
 		break;
 	default:
 		dctlprintk(ioc, printk(MPT3SAS_INFO_FMT
@@ -3591,7 +3663,9 @@ mpt3sas_ctl_tm_sysfs(struct MPT3SAS_ADAPTER *ioc, u8 task_type)
 			tm_count++;
 			doorbell = mpt3sas_base_get_iocstate(ioc, 0);
 			if ((doorbell &
-				MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_FAULT)
+				MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_FAULT ||
+				(doorbell &
+				MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_COREDUMP	)
 				goto fault_in_progress;
 			ioc->put_smid_hi_priority(ioc, hpr_smid, 0);
 		}
@@ -3643,7 +3717,9 @@ mpt3sas_ctl_tm_sysfs(struct MPT3SAS_ADAPTER *ioc, u8 task_type)
 			tm_count++;
 			doorbell = mpt3sas_base_get_iocstate(ioc, 0);
 			if ((doorbell &
-			    MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_FAULT) {
+			    MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_FAULT ||
+				(doorbell &
+				MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_COREDUMP) {
 				spin_unlock_irqrestore(&ioc->sas_device_lock,
 				    flags);
 			    goto fault_in_progress;
@@ -3699,7 +3775,9 @@ mpt3sas_ctl_tm_sysfs(struct MPT3SAS_ADAPTER *ioc, u8 task_type)
 			tm_count++;
 			doorbell = mpt3sas_base_get_iocstate(ioc, 0);
 			if ((doorbell &
-			    MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_FAULT) {
+			    MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_FAULT ||
+				(doorbell &
+				MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_COREDUMP) {
 				spin_unlock_irqrestore(&ioc->pcie_device_lock,
 				    flags);
 			    goto fault_in_progress;
@@ -3750,7 +3828,9 @@ mpt3sas_ctl_tm_sysfs(struct MPT3SAS_ADAPTER *ioc, u8 task_type)
 			tm_count++;
 			doorbell = mpt3sas_base_get_iocstate(ioc, 0);
 			if ((doorbell &
-			    MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_FAULT) {
+			    MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_FAULT ||
+				(doorbell &
+				MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_COREDUMP) {
 				spin_unlock_irqrestore(&ioc->raid_device_lock,
 				    flags);
 			    goto fault_in_progress;
@@ -3821,7 +3901,9 @@ mpt3sas_ctl_tm_sysfs(struct MPT3SAS_ADAPTER *ioc, u8 task_type)
 			tm_count++;
 			doorbell = mpt3sas_base_get_iocstate(ioc, 0);
 			if ((doorbell &
-			    MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_FAULT) {
+			    MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_FAULT ||
+				(doorbell &
+				MPI2_IOC_STATE_MASK) == MPI2_IOC_STATE_COREDUMP) {
 				scsi_device_put(sdev);
 			    goto fault_in_progress;
 			}
@@ -3878,8 +3960,10 @@ _ctl_task_management_store(struct class_device *cdev, const char *buf,
 	switch (opcode) {
 
 	case 1:
+		ioc->reset_from_user = 1;
 		scsi_block_requests(ioc->shost);
-		printk(MPT3SAS_INFO_FMT "diag reset: %s\n", ioc->name,
+		printk(MPT3SAS_INFO_FMT
+		    "sysfs: diag reset issued: %s\n", ioc->name,
 		    ((!mpt3sas_base_hard_reset_handler(ioc, 
 		    FORCE_BIG_HAMMER)) ? "SUCCESS" : "FAILED"));
 		scsi_unblock_requests(ioc->shost);
@@ -3887,8 +3971,10 @@ _ctl_task_management_store(struct class_device *cdev, const char *buf,
 		break;
 
 	case 2:
+		ioc->reset_from_user = 1;
 		scsi_block_requests(ioc->shost);
-		printk(MPT3SAS_INFO_FMT "message unit reset: %s\n", ioc->name,
+		printk(MPT3SAS_INFO_FMT
+		    "sysfs: message unit reset issued: %s\n", ioc->name,
 		    ((!mpt3sas_base_hard_reset_handler(ioc, 
 		    SOFT_RESET)) ? "SUCCESS" : "FAILED"));
 		scsi_unblock_requests(ioc->shost);
@@ -3896,7 +3982,8 @@ _ctl_task_management_store(struct class_device *cdev, const char *buf,
 		break;
 
 	case 3:
-		printk(MPT3SAS_INFO_FMT "TASKTYPE_ABORT_TASK:\n", ioc->name);
+		printk(MPT3SAS_INFO_FMT
+		    "sysfs: TASKTYPE_ABORT_TASK :\n", ioc->name);
 		ioc->got_task_abort_from_sysfs = 1;
 		mpt3sas_ctl_tm_sysfs(ioc,
 		    MPI2_SCSITASKMGMT_TASKTYPE_ABORT_TASK);
@@ -3904,20 +3991,22 @@ _ctl_task_management_store(struct class_device *cdev, const char *buf,
 		break;
 
 	case 4:
-		printk(MPT3SAS_INFO_FMT "TASKTYPE_TARGET_RESET:\n", ioc->name);
+		printk(MPT3SAS_INFO_FMT
+		    "sysfs: TASKTYPE_TARGET_RESET:\n", ioc->name);
 		mpt3sas_ctl_tm_sysfs(ioc,
 		    MPI2_SCSITASKMGMT_TASKTYPE_TARGET_RESET);
 		break;
 
 	case 5:
-		printk(MPT3SAS_INFO_FMT "TASKTYPE_LOGICAL_UNIT_RESET:\n",
-		    ioc->name);
+		printk(MPT3SAS_INFO_FMT
+		    "sysfs: TASKTYPE_LOGICAL_UNIT_RESET:\n", ioc->name);
 		mpt3sas_ctl_tm_sysfs(ioc,
 		    MPI2_SCSITASKMGMT_TASKTYPE_LOGICAL_UNIT_RESET);
 		break;
 
 	case 6:
-		printk(MPT3SAS_INFO_FMT "TASKTYPE_ABRT_TASK_SET\n", ioc->name);
+		printk(MPT3SAS_INFO_FMT "sysfs: TASKTYPE_ABRT_TASK_SET\n",
+		    ioc->name);
 		mpt3sas_ctl_tm_sysfs(ioc,
 		    MPI2_SCSITASKMGMT_TASKTYPE_ABRT_TASK_SET);
 		break;
@@ -4306,6 +4395,7 @@ _ctl_host_trace_buffer_enable_store(struct class_device *cdev, const char *buf,
 			goto out;
 		printk(MPT3SAS_INFO_FMT "releasing host trace buffer\n",
 		    ioc->name);
+		ioc->htb_rel.buffer_rel_condition = MPT3_DIAG_BUFFER_REL_SYSFS;
 		mpt3sas_send_diag_release(ioc, MPI2_DIAG_BUF_TYPE_TRACE,
 		    &issue_reset);
 	}
@@ -4372,17 +4462,38 @@ _ctl_diag_trigger_master_store(struct class_device *cdev, const char *buf,
 {
 	struct Scsi_Host *shost = class_to_shost(cdev);
 	struct MPT3SAS_ADAPTER *ioc = shost_private(shost);
+	struct SL_WH_MASTER_TRIGGER_T *master_tg;
 	unsigned long flags;
 	ssize_t rc;
+	bool set = 1;
+
+	rc = min(sizeof(struct SL_WH_MASTER_TRIGGER_T), count);
+
+	if (ioc->supports_trigger_pages) {
+		master_tg = kzalloc(sizeof(struct SL_WH_MASTER_TRIGGER_T),
+		    GFP_KERNEL);
+		if (!master_tg)
+			return -ENOMEM;
+
+		memcpy(master_tg, buf, rc);
+		if (!master_tg->MasterData)
+			set = 0;
+		if (mpt3sas_config_update_driver_trigger_pg1(ioc, master_tg,
+		    set)) {
+			kfree(master_tg);
+			return -EFAULT;
+		}
+
+	}
 
 	spin_lock_irqsave(&ioc->diag_trigger_lock, flags);
-	rc = min(sizeof(struct SL_WH_MASTER_TRIGGER_T), count);
 	memset(&ioc->diag_trigger_master, 0,
 	    sizeof(struct SL_WH_MASTER_TRIGGER_T));
 	memcpy(&ioc->diag_trigger_master, buf, rc);
 	ioc->diag_trigger_master.MasterData |=
 	    (MASTER_TRIGGER_FW_FAULT + MASTER_TRIGGER_ADAPTER_RESET);
 	spin_unlock_irqrestore(&ioc->diag_trigger_lock, flags);
+
 	return rc;
 }
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,25))
@@ -4440,17 +4551,37 @@ _ctl_diag_trigger_event_store(struct class_device *cdev, const char *buf,
 {
 	struct Scsi_Host *shost = class_to_shost(cdev);
 	struct MPT3SAS_ADAPTER *ioc = shost_private(shost);
+	struct SL_WH_EVENT_TRIGGERS_T *event_tg;
 	unsigned long flags;
 	ssize_t sz;
+	bool set = 1;
+
+	sz = min(sizeof(struct SL_WH_EVENT_TRIGGERS_T), count);
+	if (ioc->supports_trigger_pages) {
+		event_tg = kzalloc(sizeof(struct SL_WH_EVENT_TRIGGERS_T),
+		    GFP_KERNEL);
+		if (!event_tg)
+			return -ENOMEM;
+
+		memcpy(event_tg, buf, sz);
+		if (!event_tg->ValidEntries)
+			set = 0;
+		if (mpt3sas_config_update_driver_trigger_pg2(ioc, event_tg,
+		    set)) {
+			kfree(event_tg);
+			return -EFAULT;
+		}
+	}
 
 	spin_lock_irqsave(&ioc->diag_trigger_lock, flags);
-	sz = min(sizeof(struct SL_WH_EVENT_TRIGGERS_T), count);
+
 	memset(&ioc->diag_trigger_event, 0,
 	    sizeof(struct SL_WH_EVENT_TRIGGERS_T));
 	memcpy(&ioc->diag_trigger_event, buf, sz);
 	if (ioc->diag_trigger_event.ValidEntries > NUM_VALID_ENTRIES)
 		ioc->diag_trigger_event.ValidEntries = NUM_VALID_ENTRIES;
 	spin_unlock_irqrestore(&ioc->diag_trigger_lock, flags);
+
 	return sz;
 }
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,25))
@@ -4508,16 +4639,36 @@ _ctl_diag_trigger_scsi_store(struct class_device *cdev, const char *buf,
 {
 	struct Scsi_Host *shost = class_to_shost(cdev);
 	struct MPT3SAS_ADAPTER *ioc = shost_private(shost);
+	struct SL_WH_SCSI_TRIGGERS_T *scsi_tg;
 	unsigned long flags;
 	ssize_t sz;
+	bool set = 1;
+
+	sz = min(sizeof(struct SL_WH_SCSI_TRIGGERS_T), count);
+	if (ioc->supports_trigger_pages) {
+		scsi_tg = kzalloc(sizeof(struct SL_WH_SCSI_TRIGGERS_T),
+		    GFP_KERNEL);
+		if (!scsi_tg)
+			return -ENOMEM;
+
+		memcpy(scsi_tg, buf, sz);
+		if (!scsi_tg->ValidEntries)
+			set = 0;
+		if (mpt3sas_config_update_driver_trigger_pg3(ioc, scsi_tg,
+		    set)) {
+			kfree(scsi_tg);
+			return -EFAULT;
+		}
+	}
 
 	spin_lock_irqsave(&ioc->diag_trigger_lock, flags);
-	sz = min(sizeof(ioc->diag_trigger_scsi), count);
+
 	memset(&ioc->diag_trigger_scsi, 0, sizeof(ioc->diag_trigger_scsi));
 	memcpy(&ioc->diag_trigger_scsi, buf, sz);
 	if (ioc->diag_trigger_scsi.ValidEntries > NUM_VALID_ENTRIES)
 		ioc->diag_trigger_scsi.ValidEntries = NUM_VALID_ENTRIES;
 	spin_unlock_irqrestore(&ioc->diag_trigger_lock, flags);
+
 	return sz;
 }
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,25))
@@ -4576,17 +4727,36 @@ _ctl_diag_trigger_mpi_store(struct class_device *cdev, const char *buf,
 {
 	struct Scsi_Host *shost = class_to_shost(cdev);
 	struct MPT3SAS_ADAPTER *ioc = shost_private(shost);
+	struct SL_WH_MPI_TRIGGERS_T *mpi_tg;
 	unsigned long flags;
 	ssize_t sz;
+	bool set = 1;
+
+	sz = min(sizeof(struct SL_WH_MPI_TRIGGERS_T), count);
+	if (ioc->supports_trigger_pages) {
+		mpi_tg = kzalloc(sizeof(struct SL_WH_MPI_TRIGGERS_T),
+		    GFP_KERNEL);
+		if (!mpi_tg)
+			return -ENOMEM;
+
+		memcpy(mpi_tg, buf, sz);
+		if (!mpi_tg->ValidEntries)
+			set = 0;
+		if (mpt3sas_config_update_driver_trigger_pg4(ioc, mpi_tg,
+		    set)) {
+			kfree(mpi_tg);
+			return -EFAULT;
+		}
+	}
 
 	spin_lock_irqsave(&ioc->diag_trigger_lock, flags);
-	sz = min(sizeof(struct SL_WH_MPI_TRIGGERS_T), count);
 	memset(&ioc->diag_trigger_mpi, 0,
 	    sizeof(struct SL_WH_EVENT_TRIGGERS_T));
 	memcpy(&ioc->diag_trigger_mpi, buf, sz);
 	if (ioc->diag_trigger_mpi.ValidEntries > NUM_VALID_ENTRIES)
 		ioc->diag_trigger_mpi.ValidEntries = NUM_VALID_ENTRIES;
 	spin_unlock_irqrestore(&ioc->diag_trigger_lock, flags);
+
 	return sz;
 }
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,25))
@@ -4628,6 +4798,123 @@ static CLASS_DEVICE_ATTR(drv_support_bitmap, S_IRUGO,
 	_ctl_drv_support_bitmap_show, NULL);
 #endif
 
+/**
+ * _ctl_enable_sdev_max_qd_show - display whether enable_sdev_max_qd is
+ * 				 enabled/disabled
+ * @cdev - pointer to embedded class device
+ * @buf - the buffer returned
+ *
+ * A sysfs read/write shost attribute. This attribute is used to set the
+ * targets queue depth to HBA IO queue depth if this attribute is enabled.
+ */
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,25))
+static ssize_t
+_ctl_enable_sdev_max_qd_show(struct device *cdev,
+	struct device_attribute *attr, char *buf)
+#else
+static ssize_t
+_ctl_enable_sdev_max_qd_show(struct class_device *cdev, char *buf)
+#endif
+{
+	struct Scsi_Host *shost = class_to_shost(cdev);
+	struct MPT3SAS_ADAPTER *ioc = shost_private(shost);
+	
+	return snprintf(buf, PAGE_SIZE, "%d\n", ioc->enable_sdev_max_qd);
+}
+
+/**
+ * _ctl_enable_sdev_max_qd_store - Enable/disable enable_sdev_max_qd 
+ * @cdev - pointer to embedded class device
+ * @buf - the buffer returned
+ *
+ * A sysfs read/write shost attribute. This attribute is used to set the
+ * targets queue depth to HBA IO queue depth if this attribute is enabled.
+ * If this attribute is disabled then targets will have default 
+ * queue depth.
+ */
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,25))
+static ssize_t
+_ctl_enable_sdev_max_qd_store(struct device *cdev,
+	struct device_attribute *attr, const char *buf, size_t count)
+#else
+static ssize_t
+_ctl_enable_sdev_max_qd_store(struct class_device *cdev, const char *buf,
+    size_t count)
+#endif
+{
+	struct Scsi_Host *shost = class_to_shost(cdev);
+	struct MPT3SAS_ADAPTER *ioc = shost_private(shost);
+	struct MPT3SAS_DEVICE *sas_device_priv_data;
+	struct MPT3SAS_TARGET *sas_target_priv_data;
+	int val = 0;
+	struct scsi_device *sdev;
+	struct _raid_device *raid_device;
+	int qdepth;
+
+	if (sscanf(buf, "%d", &val) != 1)
+		return -EINVAL;
+
+	switch (val) {
+	case 0:
+		ioc->enable_sdev_max_qd = 0;
+		shost_for_each_device(sdev, ioc->shost) {
+			sas_device_priv_data = sdev->hostdata;
+			if (!sas_device_priv_data)
+				continue;
+			sas_target_priv_data = sas_device_priv_data->sas_target;
+			if (!sas_target_priv_data)
+				continue;
+
+			if (sas_target_priv_data->flags & MPT_TARGET_FLAGS_VOLUME) {
+				raid_device = mpt3sas_raid_device_find_by_handle(ioc,
+				    sas_target_priv_data->handle);
+				
+				switch (raid_device->volume_type) {
+				case MPI2_RAID_VOL_TYPE_RAID0:
+					if (raid_device->device_info &
+					    MPI2_SAS_DEVICE_INFO_SSP_TARGET)
+						qdepth = MPT3SAS_SAS_QUEUE_DEPTH;
+					else
+						qdepth = MPT3SAS_SATA_QUEUE_DEPTH;
+					break;
+				case MPI2_RAID_VOL_TYPE_RAID1E:
+				case MPI2_RAID_VOL_TYPE_RAID1:
+				case MPI2_RAID_VOL_TYPE_RAID10:
+				case MPI2_RAID_VOL_TYPE_UNKNOWN:
+				default:
+					qdepth = MPT3SAS_RAID_QUEUE_DEPTH;
+				}
+			} else if (sas_target_priv_data->flags &
+			    MPT_TARGET_FLAGS_PCIE_DEVICE)
+				qdepth = MPT3SAS_NVME_QUEUE_DEPTH;
+			else
+				qdepth = MPT3SAS_SAS_QUEUE_DEPTH;
+
+			mpt3sas_scsih_change_queue_depth(sdev, qdepth);
+		}
+		break;
+	case 1:
+		ioc->enable_sdev_max_qd = 1;
+		shost_for_each_device(sdev, ioc->shost) {
+			mpt3sas_scsih_change_queue_depth(sdev, shost->can_queue);
+		}
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return strlen(buf);
+}
+
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,25))
+static DEVICE_ATTR(enable_sdev_max_qd, S_IRUGO | S_IWUSR,
+	_ctl_enable_sdev_max_qd_show, _ctl_enable_sdev_max_qd_store);
+#else
+static CLASS_DEVICE_ATTR(enable_sdev_max_qd, S_IRUGO | S_IWUSR,
+	_ctl_enable_sdev_max_qd_show, _ctl_enable_sdev_max_qd_store);
+#endif
+
+
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,25))
 struct device_attribute *mpt3sas_host_attrs[] = {
 	&dev_attr_version_fw,
@@ -4664,6 +4951,7 @@ struct device_attribute *mpt3sas_host_attrs[] = {
 	&dev_attr_ddio_err_count,
 #endif
 	&dev_attr_drv_support_bitmap,
+	&dev_attr_enable_sdev_max_qd,
 	NULL,
 };
 #else
@@ -4702,6 +4990,7 @@ struct class_device_attribute *mpt3sas_host_attrs[] = {
 	&class_device_attr_ddio_err_count,
 #endif
 	&class_device_attr_drv_support_bitmap,
+	&class_device_attr_enable_sdev_max_qd,
 	NULL,
 };
 #endif

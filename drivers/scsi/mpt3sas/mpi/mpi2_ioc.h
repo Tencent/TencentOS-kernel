@@ -177,6 +177,10 @@
  *                      Moved FW image definitions ionto new mpi2_image,h
  * 08-14-18   02.00.36  Fixed definition of MPI2_FW_DOWNLOAD_ITYPE_PSOC (0x16)
  * 09-07-18   02.00.37  Added MPI26_EVENT_PCIE_TOPO_PI_16_LANES
+ * 10-02-19   02.00.38  Added MPI26_IOCINIT_CFGFLAGS_COREDUMP_ENABLE
+ *                      Added MPI26_IOCFACTS_CAPABILITY_COREDUMP_ENABLED
+ *                      Added MPI2_FW_DOWNLOAD_ITYPE_COREDUMP
+ *                      Added MPI2_FW_UPLOAD_ITYPE_COREDUMP
  *  --------------------------------------------------------------------------
  */
 
@@ -250,6 +254,7 @@ typedef struct _MPI2_IOC_INIT_REQUEST
 
 /* ConfigurationFlags */
 #define MPI26_IOCINIT_CFGFLAGS_NVME_SGL_FORMAT  (0x0001)
+#define MPI26_IOCINIT_CFGFLAGS_COREDUMP_ENABLE  (0x0002)
 
 /* minimum depth for a Reply Descriptor Post Queue */
 #define MPI2_RDPQ_DEPTH_MIN                     (16)
@@ -384,6 +389,7 @@ typedef struct _MPI2_IOC_FACTS_REPLY
 /* ProductID field uses MPI2_FW_HEADER_PID_ */
 
 /* IOCCapabilities */
+#define MPI26_IOCFACTS_CAPABILITY_COREDUMP_ENABLED      (0x00200000)
 #define MPI26_IOCFACTS_CAPABILITY_PCIE_SRIOV            (0x00100000)
 #define MPI26_IOCFACTS_CAPABILITY_ATOMIC_REQ            (0x00080000)
 #define MPI2_IOCFACTS_CAPABILITY_RDPQ_ARRAY_CAPABLE     (0x00040000)
@@ -1510,8 +1516,8 @@ typedef struct _MPI2_FW_DOWNLOAD_REQUEST
 #define MPI2_FW_DOWNLOAD_ITYPE_MR_NVDATA            (0x14)
 #define MPI2_FW_DOWNLOAD_ITYPE_CPLD                 (0x15) /* MPI v2.6 and newer */
 #define MPI2_FW_DOWNLOAD_ITYPE_PSOC                 (0x16) /* MPI v2.6 and newer */
+#define MPI2_FW_DOWNLOAD_ITYPE_COREDUMP             (0x17)
 #define MPI2_FW_DOWNLOAD_ITYPE_MIN_PRODUCT_SPECIFIC (0xF0)
-#define MPI2_FW_DOWNLOAD_ITYPE_TERMINATE            (0xFF) /* MPI v2.6 and newer */
 
 
 /* MPI v2.0 FWDownload TransactionContext Element */
@@ -1612,6 +1618,8 @@ typedef struct _MPI2_FW_UPLOAD_REQUEST
 #define MPI2_FW_UPLOAD_ITYPE_CTLR               (0x12)
 #define MPI2_FW_UPLOAD_ITYPE_IMR_FIRMWARE       (0x13)
 #define MPI2_FW_UPLOAD_ITYPE_MR_NVDATA          (0x14)
+/* skipping 0x15, 0x16. They are defined in DOWNLOAD, but not needed here */
+#define MPI2_FW_UPLOAD_ITYPE_COREDUMP           (0x17)
 
 /* MPI v2.0 FWUpload TransactionContext Element */
 typedef struct _MPI2_FW_UPLOAD_TCSGE
