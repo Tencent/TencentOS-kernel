@@ -126,6 +126,8 @@
  *                      Added MPI2_IOCSTATUS_FAILURE
  *  12-17-18  02.00.54  Bumped MPI2_HEADER_VERSION_UNIT
  *  06-24-19  02.00.55  Bumped MPI2_HEADER_VERSION_UNIT
+ *  08-01-19  02.00.56  Bumped MPI2_HEADER_VERSION_UNIT
+ *  10-02-19  02.00.56  Bumped MPI2_HEADER_VERSION_UNIT
  *  --------------------------------------------------------------------------
  */
 
@@ -169,7 +171,7 @@
 
 
 /* Unit and Dev versioning for this MPI header set */
-#define MPI2_HEADER_VERSION_UNIT            (0x37)
+#define MPI2_HEADER_VERSION_UNIT            (0x39)
 #define MPI2_HEADER_VERSION_DEV             (0x00)
 #define MPI2_HEADER_VERSION_UNIT_MASK       (0xFF00)
 #define MPI2_HEADER_VERSION_UNIT_SHIFT      (8)
@@ -188,6 +190,7 @@
 #define MPI2_IOC_STATE_READY               (0x10000000)
 #define MPI2_IOC_STATE_OPERATIONAL         (0x20000000)
 #define MPI2_IOC_STATE_FAULT               (0x40000000)
+#define MPI2_IOC_STATE_COREDUMP            (0x50000000)
 
 #define MPI2_IOC_STATE_MASK                (0xF0000000)
 #define MPI2_IOC_STATE_SHIFT               (28)

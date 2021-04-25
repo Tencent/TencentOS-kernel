@@ -132,6 +132,26 @@ _transport_sas_node_find_by_sas_phy(struct MPT3SAS_ADAPTER *ioc,
 }
 #endif
 
+/**
+ * _transport_get_port_id_by_sas_phy - get zone's port id that Phy belong to
+ * @phy - sas_phy object
+ *
+ * Return Port number
+ */
+static inline u8
+_transport_get_port_id_by_sas_phy(struct sas_phy *phy)
+{
+	u8 port_id = 0xFF;
+#if defined(SAS_PHY_HOSTDATA)
+	struct hba_port *port = phy->hostdata;
+	if (port)
+		port_id = port->port_id;
+	else
+		BUG();
+#endif
+	return port_id;
+}
+
 static int
 _transport_find_parent_node(struct MPT3SAS_ADAPTER *ioc,
 	struct sas_phy *phy)
@@ -157,6 +177,49 @@ _transport_find_parent_node(struct MPT3SAS_ADAPTER *ioc,
 	spin_unlock_irqrestore(&ioc->sas_node_lock, flags);
 #endif
 	return 0;
+}
+
+/**
+ * _transport_get_port_id_by_rphy - Get Port number from rphy object
+ * @ioc: per adapter object
+ * @rphy: sas_rphy object
+ *
+ * Returns Port number.
+ */
+u8
+_transport_get_port_id_by_rphy(struct MPT3SAS_ADAPTER *ioc,
+	 struct sas_rphy *rphy)
+{
+	struct _sas_node *sas_expander;
+	struct _sas_device *sas_device;
+	unsigned long flags;
+	u8 port_id = 0xFF;
+
+	if (!rphy)
+		return port_id;
+
+	if (rphy->identify.device_type == SAS_EDGE_EXPANDER_DEVICE ||
+	    rphy->identify.device_type == SAS_FANOUT_EXPANDER_DEVICE) {
+		spin_lock_irqsave(&ioc->sas_node_lock, flags);
+		list_for_each_entry(sas_expander, &ioc->sas_expander_list, list) {
+			if (sas_expander->rphy == rphy) {
+				port_id = sas_expander->port->port_id;
+				break;
+			}
+		}
+		spin_unlock_irqrestore(&ioc->sas_node_lock, flags);
+	} else if (rphy->identify.device_type == SAS_END_DEVICE) {
+		spin_lock_irqsave(&ioc->sas_device_lock, flags);
+		sas_device = __mpt3sas_get_sdev_by_addr_and_rphy(ioc,
+			    rphy->identify.sas_address, rphy);
+		if (sas_device) {
+			port_id = sas_device->port->port_id;
+			sas_device_put(sas_device);
+		}
+		spin_unlock_irqrestore(&ioc->sas_device_lock, flags);
+	}
+
+	return port_id;
 }
 
 /**
@@ -377,7 +440,7 @@ struct rep_manu_reply {
  */
 static int
 _transport_expander_report_manufacture(struct MPT3SAS_ADAPTER *ioc,
-	u64 sas_address, struct sas_expander_device *edev)
+	u64 sas_address, struct sas_expander_device *edev, u8 port_id)
 {
 	Mpi2SmpPassthroughRequest_t *mpi_request;
 	Mpi2SmpPassthroughReply_t *mpi_reply;
@@ -448,7 +511,7 @@ _transport_expander_report_manufacture(struct MPT3SAS_ADAPTER *ioc,
 
 	memset(mpi_request, 0, sizeof(Mpi2SmpPassthroughRequest_t));
 	mpi_request->Function = MPI2_FUNCTION_SMP_PASSTHROUGH;
-	mpi_request->PhysicalPort = 0xFF;
+	mpi_request->PhysicalPort = port_id;
 	mpi_request->SASAddress = cpu_to_le64(sas_address);
 	mpi_request->RequestDataLength = cpu_to_le16(data_out_sz);
 	psge = &mpi_request->SGL;
@@ -740,6 +803,7 @@ mpt3sas_transport_port_add(struct MPT3SAS_ADAPTER *ioc, u16 handle,
 #if defined(MPT_WIDE_PORT_API)
 	struct sas_port *port;
 #endif
+	struct virtual_phy *vphy = NULL;
 
 	if (!hba_port) {
 		printk(MPT3SAS_ERR_FMT "failure at %s:%d/%s()!\n",
@@ -793,10 +857,21 @@ mpt3sas_transport_port_add(struct MPT3SAS_ADAPTER *ioc, u16 handle,
 			continue;
 		list_add_tail(&sas_node->phy[i].port_siblings,
 		    &mpt3sas_port->phy_list);
-		if (sas_node->handle <= ioc->sas_hba.num_phys) {
-			hba_port->phy_mask |= (1 << i);
-		}
 		mpt3sas_port->num_phys++;
+		if (sas_node->handle <= ioc->sas_hba.num_phys) {
+			if (!sas_node->phy[i].hba_vphy) {
+				hba_port->phy_mask |= (1 << i);
+				continue;
+			}
+
+			vphy = mpt3sas_get_vphy_by_phy(ioc, hba_port, i);
+			if (!vphy) {
+				printk(MPT3SAS_ERR_FMT
+				    "failure at %s:%d/%s()!\n",
+				    ioc->name, __FILE__, __LINE__, __func__);
+				goto out_fail;
+			}
+		}
 	}
 
 	if (!mpt3sas_port->num_phys) {
@@ -847,8 +922,14 @@ mpt3sas_transport_port_add(struct MPT3SAS_ADAPTER *ioc, u16 handle,
 	if (mpt3sas_port->remote_identify.device_type == SAS_END_DEVICE) {
 		rphy = sas_end_device_alloc(port);
 		sas_device->rphy=rphy;
-		if (sas_node->handle <= ioc->sas_hba.num_phys)
-			hba_port->sas_address = sas_device->sas_address;
+		if (sas_node->handle <= ioc->sas_hba.num_phys) {
+			if (!vphy)
+				hba_port->sas_address =
+				    sas_device->sas_address;
+			else
+				vphy->sas_address =
+				    sas_device->sas_address;
+		}
 	} else {
 		rphy = sas_expander_alloc(port,
 		    mpt3sas_port->remote_identify.device_type);
@@ -876,11 +957,12 @@ mpt3sas_transport_port_add(struct MPT3SAS_ADAPTER *ioc, u16 handle,
 		sas_device->pend_sas_rphy_add = 0;
 		sas_device_put(sas_device);
 	}
-	if ((ioc->logging_level & MPT_DEBUG_TRANSPORT))
-		dev_printk(KERN_INFO, &rphy->dev, "add: handle(0x%04x), "
-		    "sas_addr(0x%016llx)\n", handle,
-		    (unsigned long long)
-		    mpt3sas_port->remote_identify.sas_address);
+
+	dev_printk(KERN_INFO, &rphy->dev,
+	    "%s: added: handle(0x%04x), sas_addr(0x%016llx)\n",
+	    __func__, handle, (unsigned long long)
+	    mpt3sas_port->remote_identify.sas_address);
+
 	mpt3sas_port->rphy = rphy;
 	spin_lock_irqsave(&ioc->sas_node_lock, flags);
 	list_add_tail(&mpt3sas_port->port_list, &sas_node->sas_port_list);
@@ -894,7 +976,7 @@ mpt3sas_transport_port_add(struct MPT3SAS_ADAPTER *ioc, u16 handle,
 	    MPI2_SAS_DEVICE_INFO_FANOUT_EXPANDER)
 		_transport_expander_report_manufacture(ioc,
 		    mpt3sas_port->remote_identify.sas_address,
-		    rphy_to_expander_device(rphy));
+		    rphy_to_expander_device(rphy), hba_port->port_id);
 #endif
 	return mpt3sas_port;
 
@@ -932,6 +1014,7 @@ mpt3sas_transport_port_remove(struct MPT3SAS_ADAPTER *ioc, u64 sas_address,
 	struct _sas_phy *mpt3sas_phy, *next_phy;
 #endif
 	struct hba_port *hba_port, *hba_port_next=NULL;
+	struct virtual_phy *vphy, *vphy_next=NULL;
 
 	if (!port)
 		return;
@@ -962,17 +1045,52 @@ mpt3sas_transport_port_remove(struct MPT3SAS_ADAPTER *ioc, u64 sas_address,
 
 	if ((sas_node->handle <= ioc->sas_hba.num_phys) &&
 	    (ioc->multipath_on_hba)) {
+		
+		if (port->vphys_mask) {
+			list_for_each_entry_safe(vphy, vphy_next,
+			    &port->vphys_list, list) {
+				if (vphy->sas_address != sas_address)
+					continue;
+				printk(MPT3SAS_INFO_FMT
+				    "remove vphy entry: %p of port:%p,from %d"
+				    " port's vphys list\n", ioc->name,
+				    vphy, port, port->port_id);
+				port->vphys_mask &= ~vphy->phy_mask;
+				list_del(&vphy->list);
+				kfree(vphy);
+			}
+			
+			if (!port->vphys_mask && !port->sas_address) {
+				printk(MPT3SAS_INFO_FMT
+				    "remove hba_port entry: %p port: %d from"
+				    " hba_port list\n", ioc->name,
+				    port, port->port_id);
+				list_del(&port->list);
+				kfree(port);
+			}
+		}
+
 		list_for_each_entry_safe(hba_port, hba_port_next,
-				&ioc->port_table_list, list) {
+		    &ioc->port_table_list, list) {
 			if (hba_port != port)
 				continue;
 			if (hba_port->sas_address != sas_address)
 				continue;
-			printk(MPT3SAS_INFO_FMT "remove hba_port entry: %p"
-			       " port: %d from hba_port list\n", ioc->name,
-			        hba_port, hba_port->port_id);
-			list_del(&hba_port->list);
-			kfree(hba_port);
+			if (!port->vphys_mask) {
+				printk(MPT3SAS_INFO_FMT
+				    "remove hba_port entry: %p port: %d from"
+				    " hba_port list\n", ioc->name,
+				    hba_port, hba_port->port_id);
+				list_del(&hba_port->list);
+				kfree(hba_port);
+			} else {
+				printk(MPT3SAS_INFO_FMT
+				    "clearing sas_address from hba_port"
+				    " entry: %p port: %d from hba_port list\n",
+				    ioc->name, hba_port, hba_port->port_id);
+				port->sas_address = 0;
+			}
+			break;
 		}
 	}
 
@@ -1000,6 +1118,8 @@ mpt3sas_transport_port_remove(struct MPT3SAS_ADAPTER *ioc, u64 sas_address,
 	}
 	if(!ioc->remove_host)
 		sas_port_delete(mpt3sas_port->port);
+	printk(MPT3SAS_INFO_FMT "%s: removed: sas_addr(0x%016llx)\n",
+	    ioc->name, __func__, (unsigned long long)sas_address);
 #else
 	if ((ioc->logging_level & MPT_DEBUG_TRANSPORT))
 		dev_printk(KERN_INFO, &mpt3sas_port->rphy->dev,
@@ -1007,6 +1127,8 @@ mpt3sas_transport_port_remove(struct MPT3SAS_ADAPTER *ioc, u64 sas_address,
 		    (unsigned long long)sas_address);
 	if(!ioc->remove_host)
 		sas_rphy_delete(mpt3sas_port->rphy);
+	printk(MPT3SAS_INFO_FMT "%s: removed: sas_addr(0x%016llx)\n",
+	    ioc->name, __func__, (unsigned long long)sas_address);
 #endif
 	kfree(mpt3sas_port);
 }
@@ -1354,7 +1476,7 @@ _transport_get_expander_phy_error_log(struct MPT3SAS_ADAPTER *ioc,
 
 	memset(mpi_request, 0, sizeof(Mpi2SmpPassthroughRequest_t));
 	mpi_request->Function = MPI2_FUNCTION_SMP_PASSTHROUGH;
-	mpi_request->PhysicalPort = 0xFF;
+	mpi_request->PhysicalPort = _transport_get_port_id_by_sas_phy(phy);
 	mpi_request->VF_ID = 0; /* TODO */
 	mpi_request->VP_ID = 0;
 	mpi_request->SASAddress = cpu_to_le64(phy->identify.sas_address);
@@ -1646,7 +1768,7 @@ _transport_expander_phy_control(struct MPT3SAS_ADAPTER *ioc,
 
 	memset(mpi_request, 0, sizeof(Mpi2SmpPassthroughRequest_t));
 	mpi_request->Function = MPI2_FUNCTION_SMP_PASSTHROUGH;
-	mpi_request->PhysicalPort = 0xFF;
+	mpi_request->PhysicalPort = _transport_get_port_id_by_sas_phy(phy);
 	mpi_request->VF_ID = 0; /* TODO */
 	mpi_request->VP_ID = 0;
 	mpi_request->SASAddress = cpu_to_le64(phy->identify.sas_address);
@@ -2141,7 +2263,7 @@ _transport_smp_handler(struct bsg_job *job, struct Scsi_Host *shost,
 
 	memset(mpi_request, 0, sizeof(Mpi2SmpPassthroughRequest_t));
 	mpi_request->Function = MPI2_FUNCTION_SMP_PASSTHROUGH;
-	mpi_request->PhysicalPort = 0xFF;
+	mpi_request->PhysicalPort = _transport_get_port_id_by_rphy(ioc, rphy);
 	mpi_request->SASAddress = (rphy) ?
 	    cpu_to_le64(rphy->identify.sas_address) :
 	    cpu_to_le64(ioc->sas_hba.sas_address);
@@ -2369,7 +2491,7 @@ _transport_smp_handler(struct Scsi_Host *shost, struct sas_rphy *rphy,
 
 	memset(mpi_request, 0, sizeof(Mpi2SmpPassthroughRequest_t));
 	mpi_request->Function = MPI2_FUNCTION_SMP_PASSTHROUGH;
-	mpi_request->PhysicalPort = 0xFF;
+	mpi_request->PhysicalPort = _transport_get_port_id_by_rphy(ioc, rphy);
 	mpi_request->SASAddress = (rphy) ?
 	    cpu_to_le64(rphy->identify.sas_address) :
 	    cpu_to_le64(ioc->sas_hba.sas_address);
