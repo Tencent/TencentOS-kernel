@@ -4327,7 +4327,6 @@ retry:
 	for (; pass <= 3; pass++) {
 		for (sc.priority = DEF_PRIORITY; sc.priority >= 0; sc.priority--) {
 			unsigned long nr_to_scan = nr_pages - ret;
-			struct mem_cgroup *memcg = mem_cgroup_iter(NULL, NULL, NULL);
 			int nid;
 
 			sc.nr_scanned = 0;
@@ -4345,6 +4344,8 @@ retry:
 
 			reclaim_state.reclaimed_slab = 0;
 			for_each_online_node(nid) {
+			  struct mem_cgroup *memcg = mem_cgroup_iter(NULL, NULL, NULL);
+
 			  do {
 			    shrink_slab(mask, nid, memcg, sc.priority);
 			  } while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)) != NULL);
