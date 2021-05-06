@@ -11,6 +11,8 @@
 #define BNXT_PTP_H
 
 #define BNXT_MAX_PHC_DRIFT	31000000
+#define BNXT_LO_TIMER_MASK	0x0000ffffffffUL
+#define BNXT_HI_TIMER_MASK	0xffff00000000UL
 
 struct bnxt_ptp_cfg {
 #ifdef HAVE_IEEE1588_SUPPORT
@@ -18,6 +20,10 @@ struct bnxt_ptp_cfg {
 	struct ptp_clock	*ptp_clock;
 	struct cyclecounter	cc;
 	struct timecounter	tc;
+	struct sk_buff		*tx_skb;
+	u64			current_time;
+	u64			old_time;
+	struct work_struct	ptp_ts_task;
 #endif
 	struct bnxt		*bp;
 	atomic_t		tx_avail;
@@ -60,11 +66,16 @@ struct bnxt_ptp_cfg {
 	u32			tx_mapped_regs[BNXT_PTP_TX_REGS];
 };
 
+int bnxt_ptp_get_current_time(struct bnxt *bp);
 int bnxt_hwtstamp_set(struct net_device *dev, struct ifreq *ifr);
 int bnxt_hwtstamp_get(struct net_device *dev, struct ifreq *ifr);
+int bnxt_get_tx_ts_p5(struct bnxt *bp, struct sk_buff *skb);
 int bnxt_get_tx_ts(struct bnxt *bp, u64 *ts);
 int bnxt_get_rx_ts(struct bnxt *bp, u64 *ts);
+int bnxt_get_rx_ts_p5(struct bnxt *bp, u64 *ts, u32 pkt_ts);
+int bnxt_ptp_start(struct bnxt *bp);
 int bnxt_ptp_init(struct bnxt *bp);
 void bnxt_ptp_free(struct bnxt *bp);
+void bnxt_ptp_ts_task(struct work_struct *work);
 
 #endif

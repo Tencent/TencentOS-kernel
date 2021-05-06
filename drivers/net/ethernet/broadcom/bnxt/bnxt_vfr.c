@@ -18,6 +18,7 @@
 #include "bnxt_compat.h"
 #include "bnxt_hsi.h"
 #include "bnxt.h"
+#include "bnxt_hwrm.h"
 #include "bnxt_vfr.h"
 #include "bnxt_devlink.h"
 #include "bnxt_tc.h"
@@ -30,57 +31,60 @@
 static int hwrm_cfa_vfr_alloc(struct bnxt *bp, u16 vf_idx,
 			      u16 *tx_cfa_action, u16 *rx_cfa_code)
 {
-	struct hwrm_cfa_vfr_alloc_output *resp = bp->hwrm_cmd_resp_addr;
-	struct hwrm_cfa_vfr_alloc_input req = { 0 };
+	struct hwrm_cfa_vfr_alloc_output *resp;
+	struct hwrm_cfa_vfr_alloc_input *req;
 	int rc;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_VFR_ALLOC, -1, -1);
-	req.vf_id = cpu_to_le16(vf_idx);
-	sprintf(req.vfr_name, "vfr%d", vf_idx);
-
-	mutex_lock(&bp->hwrm_cmd_lock);
-	rc = _hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
+	rc = hwrm_req_init(bp, req, HWRM_CFA_VFR_ALLOC);
 	if (!rc) {
-		*tx_cfa_action = le16_to_cpu(resp->tx_cfa_action);
-		*rx_cfa_code = le16_to_cpu(resp->rx_cfa_code);
-		netdev_dbg(bp->dev, "tx_cfa_action=0x%x, rx_cfa_code=0x%x",
-			   *tx_cfa_action, *rx_cfa_code);
-	} else {
-		netdev_info(bp->dev, "%s error rc=%d", __func__, rc);
-	}
+		req->vf_id = cpu_to_le16(vf_idx);
+		sprintf(req->vfr_name, "vfr%d", vf_idx);
 
-	mutex_unlock(&bp->hwrm_cmd_lock);
+		resp = hwrm_req_hold(bp, req);
+		rc = hwrm_req_send(bp, req);
+		if (!rc) {
+			*tx_cfa_action = le16_to_cpu(resp->tx_cfa_action);
+			*rx_cfa_code = le16_to_cpu(resp->rx_cfa_code);
+			netdev_dbg(bp->dev, "tx_cfa_action=0x%x, rx_cfa_code=0x%x",
+				   *tx_cfa_action, *rx_cfa_code);
+		}
+		hwrm_req_drop(bp, req);
+	}
+	if (rc)
+		netdev_info(bp->dev, "%s error rc=%d\n", __func__, rc);
 	return rc;
 }
 
 static int hwrm_cfa_vfr_free(struct bnxt *bp, u16 vf_idx)
 {
-	struct hwrm_cfa_vfr_free_input req = { 0 };
+	struct hwrm_cfa_vfr_free_input *req;
 	int rc;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_VFR_FREE, -1, -1);
-	sprintf(req.vfr_name, "vfr%d", vf_idx);
-
-	rc = hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
+	rc = hwrm_req_init(bp, req, HWRM_CFA_VFR_FREE);
+	if (!rc) {
+		sprintf(req->vfr_name, "vfr%d", vf_idx);
+		rc = hwrm_req_send(bp, req);
+	}
 	if (rc)
-		netdev_info(bp->dev, "%s error rc=%d", __func__, rc);
+		netdev_info(bp->dev, "%s error rc=%d\n", __func__, rc);
 	return rc;
 }
 
 static int bnxt_hwrm_vfr_qcfg(struct bnxt *bp, struct bnxt_vf_rep *vf_rep,
 			      u16 *max_mtu)
 {
-	struct hwrm_func_qcfg_output *resp = bp->hwrm_cmd_resp_addr;
-	struct hwrm_func_qcfg_input req = {0};
+	struct hwrm_func_qcfg_output *resp;
+	struct hwrm_func_qcfg_input *req;
 	u16 mtu;
 	int rc;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_FUNC_QCFG, -1, -1);
-	req.fid = bp->pf.vf[vf_rep->vf_idx].fw_fid;
+	rc = hwrm_req_init(bp, req, HWRM_FUNC_QCFG);
+	if (rc)
+		return rc;
 
-	mutex_lock(&bp->hwrm_cmd_lock);
-
-	rc = _hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
+	req->fid = bp->pf.vf[vf_rep->vf_idx].fw_fid;
+	resp = hwrm_req_hold(bp, req);
+	rc = hwrm_req_send(bp, req);
 	if (!rc) {
 		mtu = le16_to_cpu(resp->max_mtu_configured);
 		if (!mtu)
@@ -88,7 +92,8 @@ static int bnxt_hwrm_vfr_qcfg(struct bnxt *bp, struct bnxt_vf_rep *vf_rep,
 		else
 			*max_mtu = mtu;
 	}
-	mutex_unlock(&bp->hwrm_cmd_lock);
+	hwrm_req_drop(bp, req);
+
 	return rc;
 }
 
@@ -619,7 +624,7 @@ static int bnxt_vf_reps_create(struct bnxt *bp)
 	return 0;
 
 err:
-	netdev_info(bp->dev, "%s error=%d", __func__, rc);
+	netdev_info(bp->dev, "%s error=%d\n", __func__, rc);
 	kfree(cfa_code_map);
 	__bnxt_vf_reps_destroy(bp);
 	return rc;
@@ -646,7 +651,7 @@ int bnxt_dl_eswitch_mode_set(struct devlink *devlink, u16 mode)
 
 	mutex_lock(&bp->sriov_lock);
 	if (bp->eswitch_mode == mode) {
-		netdev_info(bp->dev, "already in %s eswitch mode",
+		netdev_info(bp->dev, "already in %s eswitch mode\n",
 			    mode == DEVLINK_ESWITCH_MODE_LEGACY ?
 			    "legacy" : "switchdev");
 		rc = -EINVAL;
@@ -666,7 +671,7 @@ int bnxt_dl_eswitch_mode_set(struct devlink *devlink, u16 mode)
 		}
 
 		if (pci_num_vf(bp->pdev) == 0) {
-			netdev_info(bp->dev, "Enable VFs before setting switchdev mode");
+			netdev_info(bp->dev, "Enable VFs before setting switchdev mode\n");
 			rc = -EPERM;
 			goto done;
 		}

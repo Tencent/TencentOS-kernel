@@ -19,7 +19,10 @@
 #include <net/flow_keys.h>
 #endif
 #include <linux/sched.h>
-
+#include <linux/dma-buf.h>
+#ifdef HAVE_IEEE1588_SUPPORT
+#include <linux/ptp_clock_kernel.h>
+#endif
 #if defined(HAVE_TC_FLOW_CLS_OFFLOAD) || defined(HAVE_TC_CLS_FLOWER_OFFLOAD)
 #include <net/pkt_cls.h>
 #endif
@@ -42,8 +45,11 @@
 
 #if !IS_ENABLED(CONFIG_NET_DEVLINK)
 #undef HAVE_DEVLINK
+#undef HAVE_DEVLINK_INFO
 #undef HAVE_DEVLINK_PARAM
 #undef HAVE_NDO_DEVLINK_PORT
+#undef HAVE_DEVLINK_PORT_PARAM
+#undef HAVE_DEVLINK_FLASH_UPDATE
 #undef HAVE_DEVLINK_HEALTH_REPORT
 #endif
 
@@ -305,6 +311,29 @@
 	dma_unmap_page(dev, dma_addr, size, dir)
 #endif
 
+static inline struct dma_buf *dma_buf_export_attr(void *priv, int pg_count,
+						  const struct dma_buf_ops *ops)
+{
+#ifdef HAVE_DMA_EXPORT
+	DEFINE_DMA_BUF_EXPORT_INFO(exp_info);
+
+	exp_info.ops = ops;
+	exp_info.size = pg_count << PAGE_SHIFT;
+	exp_info.flags = O_RDWR;
+	exp_info.priv = priv;
+	exp_info.exp_name = "eem_dma_buf";
+	return dma_buf_export(&exp_info);
+#endif
+
+#ifdef HAVE_DMA_EXPORT_FLAG_RESV
+	return dma_buf_export(priv, ops, pg_count << PAGE_SHIFT, O_RDWR, NULL);
+#endif
+
+#ifdef HAVE_DMA_EXPORT_FLAG
+	return dma_buf_export(priv, ops, pg_count << PAGE_SHIFT, O_RDWR);
+#endif
+}
+
 #ifndef RHEL_RELEASE_VERSION
 #define RHEL_RELEASE_VERSION(a, b) 0
 #endif
@@ -341,6 +370,11 @@
 
 #ifdef HAVE_NDO_SET_VF_TRUST_RH
 #define ndo_set_vf_trust extended.ndo_set_vf_trust
+#endif
+
+#ifdef HAVE_NDO_UDP_TUNNEL_RH
+#define ndo_udp_tunnel_add extended.ndo_udp_tunnel_add
+#define ndo_udp_tunnel_del extended.ndo_udp_tunnel_del
 #endif
 
 #ifndef HAVE_TC_SETUP_QDISC_MQPRIO
@@ -400,6 +434,10 @@ struct ethtool_eee {
 	__u32	tx_lpi_timer;
 	__u32	reserved[2];
 };
+#endif
+
+#ifndef HAVE_ETHTOOL_RESET_CRASHDUMP
+enum compat_ethtool_reset_flags { ETH_RESET_CRASHDUMP = 1 << 9 };
 #endif
 
 #ifndef HAVE_SKB_FRAG_PAGE
@@ -493,6 +531,15 @@ skb_set_hash(struct sk_buff *skb, __u32 hash, enum pkt_hash_types type)
 #if !defined(NETDEV_RX_FLOW_STEER) || !defined(HAVE_FLOW_KEYS) || (LINUX_VERSION_CODE < 0x030300) || defined(NO_NETDEV_CPU_RMAP)
 #undef CONFIG_RFS_ACCEL
 #endif
+
+#ifdef CONFIG_RFS_ACCEL
+#if !defined(HAVE_FLOW_HASH_FROM_KEYS) && !defined(HAVE_GET_HASH_RAW)
+static inline __u32 skb_get_hash_raw(const struct sk_buff *skb)
+{
+	return skb->rxhash;
+}
+#endif
+#endif /* CONFIG_RFS_ACCEL */
 
 #if !defined(IEEE_8021QAZ_APP_SEL_DGRAM) || !defined(CONFIG_DCB) || !defined(HAVE_IEEE_DELAPP)
 #undef CONFIG_BNXT_DCB
@@ -664,6 +711,23 @@ static inline const char *netdev_name(const struct net_device *dev)
 	dev_warn(dev, format, ##args)
 #endif
 
+#ifndef netdev_level_once
+#define netdev_level_once(level, dev, fmt, ...)			\
+do {								\
+	static bool __print_once __read_mostly;			\
+								\
+	if (!__print_once) {					\
+		__print_once = true;				\
+		netdev_printk(level, dev, fmt, ##__VA_ARGS__);	\
+	}							\
+} while (0)
+
+#define netdev_info_once(dev, fmt, ...) \
+	netdev_level_once(KERN_INFO, dev, fmt, ##__VA_ARGS__)
+#define netdev_warn_once(dev, fmt, ...) \
+	netdev_level_once(KERN_WARNING, dev, fmt, ##__VA_ARGS__)
+#endif
+
 #ifndef netdev_uc_count
 #define netdev_uc_count(dev)	((dev)->uc.count)
 #endif
@@ -698,6 +762,14 @@ static inline const char *netdev_name(const struct net_device *dev)
 #define writeq_relaxed(v, a)	writeq(v, a)
 #endif
 
+#ifndef WRITE_ONCE
+#define WRITE_ONCE(x, val)	(x = val)
+#endif
+
+#ifndef READ_ONCE
+#define READ_ONCE(val)		(val)
+#endif
+
 #ifdef CONFIG_NET_RX_BUSY_POLL
 #include <net/busy_poll.h>
 #if defined(HAVE_NAPI_HASH_ADD) && defined(NETDEV_BUSY_POLL)
@@ -711,6 +783,21 @@ static inline const char *netdev_name(const struct net_device *dev)
 
 #if !defined(CONFIG_PTP_1588_CLOCK) && !defined(CONFIG_PTP_1588_CLOCK_MODULE)
 #undef HAVE_IEEE1588_SUPPORT
+#endif
+
+#if !defined(HAVE_PTP_GETTIMEX64)
+struct ptp_system_timestamp {
+	struct timespec64 pre_ts;
+	struct timespec64 post_ts;
+};
+
+static inline void ptp_read_system_prets(struct ptp_system_timestamp *sts)
+{
+}
+
+static inline void ptp_read_system_postts(struct ptp_system_timestamp *sts)
+{
+}
 #endif
 
 #if defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE == RHEL_RELEASE_VERSION(7,0))
@@ -873,6 +960,15 @@ static inline int netif_get_num_default_rss_queues(void)
 }
 #endif
 
+#ifndef IFF_RXFH_CONFIGURED
+#define IFF_RXFH_CONFIGURED	0
+#undef HAVE_SET_RXFH
+static inline bool netif_is_rxfh_configured(const struct net_device *dev)
+{
+	return false;
+}
+#endif
+
 #if !defined(HAVE_TCP_V6_CHECK)
 static __inline__ __sum16 tcp_v6_check(int len,
 				const struct in6_addr *saddr,
@@ -943,6 +1039,22 @@ static inline void *kmalloc_array(unsigned n, size_t s, gfp_t gfp)
 #define ETH_MODULE_SFF_8636_LEN         256
 #endif
 
+#ifndef HAVE_MSIX_RANGE
+static inline int
+pci_enable_msix_range(struct pci_dev *dev, struct msix_entry *entries,
+		      int minvec, int maxvec)
+{
+	int rc;
+
+	while (maxvec >= minvec) {
+		rc = pci_enable_msix(dev, entries, maxvec);
+		if (!rc || rc < 0)
+			return rc;
+		maxvec = rc;
+	}
+}
+#endif /* HAVE_MSIX_RANGE */
+
 #ifndef HAVE_PCI_PHYSFN
 static inline struct pci_dev *pci_physfn(struct pci_dev *dev)
 {
@@ -967,8 +1079,15 @@ enum pci_bus_speed {
 	PCIE_SPEED_2_5GT		= 0x14,
 	PCIE_SPEED_5_0GT		= 0x15,
 	PCIE_SPEED_8_0GT		= 0x16,
+#ifndef PCIE_SPEED_16_0GT
+	PCIE_SPEED_16_0GT		= 0x17,
+#endif
 	PCI_SPEED_UNKNOWN		= 0xFF,
 };
+#endif
+
+#ifndef PCIE_SPEED_16_0GT
+#define PCIE_SPEED_16_0GT	0x17
 #endif
 
 static const unsigned char pcie_link_speed[] = {
@@ -976,7 +1095,7 @@ static const unsigned char pcie_link_speed[] = {
 	PCIE_SPEED_2_5GT,		/* 1 */
 	PCIE_SPEED_5_0GT,		/* 2 */
 	PCIE_SPEED_8_0GT,		/* 3 */
-	PCI_SPEED_UNKNOWN,		/* 4 */
+	PCIE_SPEED_16_0GT,		/* 4 */
 	PCI_SPEED_UNKNOWN,		/* 5 */
 	PCI_SPEED_UNKNOWN,		/* 6 */
 	PCI_SPEED_UNKNOWN,		/* 7 */
@@ -1004,6 +1123,10 @@ static const unsigned char pcie_link_speed[] = {
 #define PCI_EXP_LNKCAP2_SLS_8_0GB	0x00000008 /* Supported Speed 8GT/s */
 #endif
 
+#ifndef PCI_EXP_LNKCAP2_SLS_16_0GB
+#define PCI_EXP_LNKCAP2_SLS_16_0GB	0x00000010 /* Supported Speed 16GT/s */
+#endif
+
 #ifndef PCI_EXP_LNKCAP_SLS_2_5GB
 #define PCI_EXP_LNKCAP_SLS_2_5GB	0x00000001 /* LNKCAP2 SLS Vector bit 0*/
 #define PCI_EXP_LNKCAP_SLS_5_0GB	0x00000002 /* LNKCAP2 SLS Vector bit 1*/
@@ -1013,17 +1136,23 @@ static const unsigned char pcie_link_speed[] = {
 #define PCI_EXP_LNKCAP_SLS_8_0GB	0x00000003 /* LNKCAP2 SLS Vector bit2 */
 #endif
 
+#ifndef PCI_EXP_LNKCAP_SLS_16_0GB
+#define PCI_EXP_LNKCAP_SLS_16_0GB	0x00000004 /* LNKCAP2 SLS Vector bit 3 */
+#endif
+
 #ifndef PCIE_SPEED2STR
 /* PCIe link information */
 #define PCIE_SPEED2STR(speed) \
-	((speed) == PCIE_SPEED_8_0GT ? "8 GT/s" : \
+	((speed) == PCIE_SPEED_16_0GT ? "16 GT/s" : \
+	 (speed) == PCIE_SPEED_8_0GT ? "8 GT/s" : \
 	 (speed) == PCIE_SPEED_5_0GT ? "5 GT/s" : \
 	 (speed) == PCIE_SPEED_2_5GT ? "2.5 GT/s" : \
 	 "Unknown speed")
 
 /* PCIe speed to Mb/s reduced by encoding overhead */
 #define PCIE_SPEED2MBS_ENC(speed) \
-	((speed) == PCIE_SPEED_8_0GT  ?  8000 * 128 / 130 : \
+	((speed) == PCIE_SPEED_16_0GT ? 16000 * 128 / 130 : \
+	 (speed) == PCIE_SPEED_8_0GT  ?  8000 * 128 / 130 : \
 	 (speed) == PCIE_SPEED_5_0GT  ?  5000 * 8 / 10 : \
 	 (speed) == PCIE_SPEED_2_5GT  ?  2500 * 8 / 10 : \
 	 0)
@@ -1114,7 +1243,9 @@ static enum pci_bus_speed pcie_get_speed_cap(struct pci_dev *dev)
 	pci_read_config_word(dev, BNXT_PCIE_CAP + PCI_EXP_LNKCAP2, &lnkcap2);
 #endif
 	if (lnkcap2) { /* PCIe r3.0-compliant */
-		if (lnkcap2 & PCI_EXP_LNKCAP2_SLS_8_0GB)
+		if (lnkcap2 & PCI_EXP_LNKCAP2_SLS_16_0GB)
+			return PCIE_SPEED_16_0GT;
+		else if (lnkcap2 & PCI_EXP_LNKCAP2_SLS_8_0GB)
 			return PCIE_SPEED_8_0GT;
 		else if (lnkcap2 & PCI_EXP_LNKCAP2_SLS_5_0GB)
 			return PCIE_SPEED_5_0GT;
@@ -1129,7 +1260,9 @@ static enum pci_bus_speed pcie_get_speed_cap(struct pci_dev *dev)
 	pci_read_config_word(dev, BNXT_PCIE_CAP + PCI_EXP_LNKCAP, &lnkcap);
 #endif
 	if (lnkcap) {
-		if (lnkcap & PCI_EXP_LNKCAP_SLS_8_0GB)
+		if (lnkcap & PCI_EXP_LNKCAP_SLS_16_0GB)
+			return PCIE_SPEED_16_0GT;
+		else if (lnkcap & PCI_EXP_LNKCAP_SLS_8_0GB)
 			return PCIE_SPEED_8_0GT;
 		else if (lnkcap & PCI_EXP_LNKCAP_SLS_5_0GB)
 			return PCIE_SPEED_5_0GT;
@@ -1201,6 +1334,32 @@ static inline bool pci_is_bridge(struct pci_dev *dev)
 {
 	return dev->hdr_type == PCI_HEADER_TYPE_BRIDGE ||
 		dev->hdr_type == PCI_HEADER_TYPE_CARDBUS;
+}
+#endif
+
+#ifndef HAVE_PCI_GET_DSN
+static inline u64 pci_get_dsn(struct pci_dev *dev)
+{
+	u32 dword;
+	u64 dsn;
+	int pos;
+
+	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_DSN);
+	if (!pos)
+		return 0;
+
+	/*
+	 * The Device Serial Number is two dwords offset 4 bytes from the
+	 * capability position. The specification says that the first dword is
+	 * the lower half, and the second dword is the upper half.
+	 */
+	pos += 4;
+	pci_read_config_dword(dev, pos, &dword);
+	dsn = (u64)dword;
+	pci_read_config_dword(dev, pos + 4, &dword);
+	dsn |= ((u64)dword) << 32;
+
+	return dsn;
 }
 #endif
 
@@ -1504,16 +1663,112 @@ static inline void devlink_flash_update_status_notify(struct devlink *devlink,
 #define DEVLINK_INFO_VERSION_GENERIC_ASIC_REV	"asic.rev"
 #define DEVLINK_INFO_VERSION_GENERIC_FW		"fw"
 #endif
-#ifndef DEVLINK_INFO_VERSION_GENERIC_FW_MGMT
-#define DEVLINK_INFO_VERSION_GENERIC_FW_MGMT	"fw.mgmt"
-#endif
-#ifndef DEVLINK_INFO_VERSION_GENERIC_FW_APP
-#define DEVLINK_INFO_VERSION_GENERIC_FW_APP	"fw.app"
-#endif
 #ifndef DEVLINK_INFO_VERSION_GENERIC_FW_PSID
 #define DEVLINK_INFO_VERSION_GENERIC_FW_PSID	"fw.psid"
 #endif
 #ifndef DEVLINK_INFO_VERSION_GENERIC_FW_ROCE
 #define DEVLINK_INFO_VERSION_GENERIC_FW_ROCE	"fw.roce"
 #endif
+#ifndef DEVLINK_INFO_VERSION_GENERIC_FW_MGMT_API
+#define DEVLINK_INFO_VERSION_GENERIC_FW_MGMT_API	"fw.mgmt.api"
+#endif
+
+#ifndef HAVE_DEVLINK_INFO_BSN_PUT
+static inline int devlink_info_board_serial_number_put(struct devlink_info_req *req,
+						       const char *bsn)
+{
+	return 0;
+}
+#endif
 #endif /* HAVE_DEVLINK_INFO */
+
+#ifndef HAVE_PCIE_FLR
+static inline int pcie_flr(struct pci_dev *dev)
+{
+	pcie_capability_set_word(dev, PCI_EXP_DEVCTL, PCI_EXP_DEVCTL_BCR_FLR);
+
+	msleep(100);
+
+	return 0;
+}
+#endif /* pcie_flr */
+
+#if defined(HAVE_FLOW_OFFLOAD_H) &&	\
+	!defined(HAVE_FLOW_ACTION_BASIC_HW_STATS_CHECK)
+static inline bool
+flow_action_basic_hw_stats_check(const struct flow_action *action,
+				 struct netlink_ext_ack *extack)
+{
+	return true;
+}
+
+#define flow_stats_update(flow_stats, bytes, pkts, last_used, used_hw_stats) \
+	flow_stats_update(flow_stats, bytes, pkts, last_used)
+#endif
+
+#ifndef fallthrough
+#define fallthrough do {} while (0)  /* fall through */
+#endif
+
+#ifndef __ALIGN_KERNEL_MASK
+#define __ALIGN_KERNEL_MASK(x, mask)	(((x) + (mask)) & ~(mask))
+#endif
+#ifndef __ALIGN_KERNEL
+#define __ALIGN_KERNEL(x, a)	__ALIGN_KERNEL_MASK(x, (typeof(x))(a) - 1)
+#endif
+#ifndef ALIGN_DOWN
+#define ALIGN_DOWN(x, a)	__ALIGN_KERNEL((x) - ((a) - 1), (a))
+#endif
+
+struct bnxt_compat_dma_pool {
+	struct dma_pool *pool;
+	size_t size;
+};
+
+static inline struct bnxt_compat_dma_pool*
+bnxt_compat_dma_pool_create(const char *name, struct device *dev, size_t size,
+			    size_t align, size_t allocation)
+{
+	struct bnxt_compat_dma_pool *wrapper;
+
+	wrapper = kmalloc_node(sizeof(*wrapper), GFP_KERNEL, dev_to_node(dev));
+	if (!wrapper)
+		return NULL;
+
+	wrapper->pool = dma_pool_create(name, dev, size, align, allocation);
+	wrapper->size = size;
+
+	return wrapper;
+}
+
+static inline void
+bnxt_compat_dma_pool_destroy(struct bnxt_compat_dma_pool *wrapper)
+{
+	dma_pool_destroy(wrapper->pool);
+	kfree(wrapper);
+}
+
+static inline void *
+bnxt_compat_dma_pool_alloc(struct bnxt_compat_dma_pool *wrapper,
+			   gfp_t mem_flags, dma_addr_t *handle)
+{
+	void *mem;
+
+	mem = dma_pool_alloc(wrapper->pool, mem_flags & ~__GFP_ZERO, handle);
+	if (mem_flags & __GFP_ZERO)
+		memset(mem, 0, wrapper->size);
+	return mem;
+}
+
+static inline void
+bnxt_compat_dma_pool_free(struct bnxt_compat_dma_pool *wrapper, void *vaddr,
+			  dma_addr_t addr)
+{
+	dma_pool_free(wrapper->pool, vaddr, addr);
+}
+
+#define dma_pool_create bnxt_compat_dma_pool_create
+#define dma_pool_destroy bnxt_compat_dma_pool_destroy
+#define dma_pool_alloc bnxt_compat_dma_pool_alloc
+#define dma_pool_free bnxt_compat_dma_pool_free
+#define dma_pool bnxt_compat_dma_pool

@@ -27,6 +27,7 @@
 #include "bnxt_compat.h"
 #include "bnxt_hsi.h"
 #include "bnxt.h"
+#include "bnxt_hwrm.h"
 #include "bnxt_sriov.h"
 #include "bnxt_tc.h"
 #include "bnxt_vfr.h"
@@ -57,7 +58,7 @@ static u16 bnxt_flow_get_dst_fid(struct bnxt *pf_bp, struct net_device *dev)
 
 	/* check if dev belongs to the same switch */
 	if (!netdev_port_same_parent_id(pf_bp->dev, dev)) {
-		netdev_info(pf_bp->dev, "dev(ifindex=%d) not on same switch",
+		netdev_info(pf_bp->dev, "dev(ifindex=%d) not on same switch\n",
 			    dev->ifindex);
 		return BNXT_FID_INVALID;
 	}
@@ -80,7 +81,7 @@ static int bnxt_tc_parse_redir(struct bnxt *bp,
 	struct net_device *dev = act->dev;
 
 	if (!dev) {
-		netdev_info(bp->dev, "no dev in mirred action");
+		netdev_info(bp->dev, "no dev in mirred action\n");
 		return -EINVAL;
 	}
 
@@ -179,7 +180,7 @@ static int bnxt_tc_parse_tunnel_set(struct bnxt *bp,
 #endif
 
 	if (ip_tunnel_info_af(tun_info) != AF_INET) {
-		netdev_info(bp->dev, "only IPv4 tunnel-encap is supported");
+		netdev_info(bp->dev, "only IPv4 tunnel-encap is supported\n");
 		return -EOPNOTSUPP;
 	}
 
@@ -355,7 +356,8 @@ bnxt_tc_parse_pedit(struct bnxt *bp, struct bnxt_tc_actions *actions,
 
 static int bnxt_tc_parse_actions(struct bnxt *bp,
 				 struct bnxt_tc_actions *actions,
-				 struct flow_action *flow_action)
+				 struct flow_action *flow_action,
+				 struct netlink_ext_ack *extack)
 {
 	/* Used to store the L2 rewrite mask for dmac (6 bytes) followed by
 	 * smac (6 bytes) if rewrite of both is specified, otherwise either
@@ -371,9 +373,12 @@ static int bnxt_tc_parse_actions(struct bnxt *bp,
 	int i, rc;
 
 	if (!flow_action_has_entries(flow_action)) {
-		netdev_info(bp->dev, "no actions");
+		netdev_info(bp->dev, "no actions\n");
 		return -EINVAL;
 	}
+
+	if (!flow_action_basic_hw_stats_check(flow_action, extack))
+		return -EOPNOTSUPP;
 
 	flow_action_for_each(i, act, flow_action) {
 		switch (act->id) {
@@ -660,7 +665,7 @@ static int bnxt_tc_parse_flow(struct bnxt *bp,
 	/* KEY_CONTROL and KEY_BASIC are needed for forming a meaningful key */
 	if ((dissector->used_keys & BIT(FLOW_DISSECTOR_KEY_CONTROL)) == 0 ||
 	    (dissector->used_keys & BIT(FLOW_DISSECTOR_KEY_BASIC)) == 0) {
-		netdev_info(bp->dev, "cannot form TC key: used_keys = 0x%x",
+		netdev_info(bp->dev, "cannot form TC key: used_keys = 0x%x\n",
 			    dissector->used_keys);
 		return -EOPNOTSUPP;
 	}
@@ -781,7 +786,8 @@ static int bnxt_tc_parse_flow(struct bnxt *bp,
 		flow->tun_mask.tp_src = match.mask->src;
 	}
 
-	return bnxt_tc_parse_actions(bp, &flow->actions, &rule->action);
+	return bnxt_tc_parse_actions(bp, &flow->actions, &rule->action,
+				     tc_flow_cmd->common.extack);
 }
 
 #else
@@ -949,18 +955,20 @@ static int bnxt_tc_parse_flow(struct bnxt *bp,
 static int bnxt_hwrm_cfa_flow_free(struct bnxt *bp,
 				   struct bnxt_tc_flow_node *flow_node)
 {
-	struct hwrm_cfa_flow_free_input req = { 0 };
+	struct hwrm_cfa_flow_free_input *req;
 	int rc;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_FLOW_FREE, -1, -1);
-	if (bp->fw_cap & BNXT_FW_CAP_OVS_64BIT_HANDLE)
-		req.ext_flow_handle = flow_node->ext_flow_handle;
-	else
-		req.flow_handle = flow_node->flow_handle;
+	rc = hwrm_req_init(bp, req, HWRM_CFA_FLOW_FREE);
+	if (!rc) {
+		if (bp->fw_cap & BNXT_FW_CAP_OVS_64BIT_HANDLE)
+			req->ext_flow_handle = flow_node->ext_flow_handle;
+		else
+			req->flow_handle = flow_node->flow_handle;
 
-	rc = hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
+		rc = hwrm_req_send(bp, req);
+	}
 	if (rc)
-		netdev_info(bp->dev, "%s: Error rc=%d", __func__, rc);
+		netdev_info(bp->dev, "%s: Error rc=%d\n", __func__, rc);
 
 	return rc;
 }
@@ -1034,20 +1042,22 @@ static int bnxt_hwrm_cfa_flow_alloc(struct bnxt *bp, struct bnxt_tc_flow *flow,
 	struct bnxt_tc_actions *actions = &flow->actions;
 	struct bnxt_tc_l3_key *l3_mask = &flow->l3_mask;
 	struct bnxt_tc_l3_key *l3_key = &flow->l3_key;
-	struct hwrm_cfa_flow_alloc_input req = { 0 };
 	struct hwrm_cfa_flow_alloc_output *resp;
+	struct hwrm_cfa_flow_alloc_input *req;
 	u16 flow_flags = 0, action_flags = 0;
 	int rc;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_FLOW_ALLOC, -1, -1);
+	rc = hwrm_req_init(bp, req, HWRM_CFA_FLOW_ALLOC);
+	if (rc)
+		return rc;
 
-	req.src_fid = cpu_to_le16(flow->src_fid);
-	req.ref_flow_handle = ref_flow_handle;
+	req->src_fid = cpu_to_le16(flow->src_fid);
+	req->ref_flow_handle = ref_flow_handle;
 
 	if (actions->flags & BNXT_TC_ACTION_FLAG_L2_REWRITE) {
-		memcpy(req.l2_rewrite_dmac, actions->l2_rewrite_dmac,
+		memcpy(req->l2_rewrite_dmac, actions->l2_rewrite_dmac,
 		       ETH_ALEN);
-		memcpy(req.l2_rewrite_smac, actions->l2_rewrite_smac,
+		memcpy(req->l2_rewrite_smac, actions->l2_rewrite_smac,
 		       ETH_ALEN);
 		action_flags |=
 			CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_L2_HEADER_REWRITE;
@@ -1062,71 +1072,71 @@ static int bnxt_hwrm_cfa_flow_alloc(struct bnxt *bp, struct bnxt_tc_flow *flow,
 				action_flags |=
 					CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_NAT_SRC;
 				/* L3 source rewrite */
-				req.nat_ip_address[0] =
+				req->nat_ip_address[0] =
 					actions->nat.l3.ipv4.saddr.s_addr;
 				/* L4 source port */
 				if (actions->nat.l4.ports.sport)
-					req.nat_port =
+					req->nat_port =
 						actions->nat.l4.ports.sport;
 			} else {
 				action_flags |=
 					CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_NAT_DEST;
 				/* L3 destination rewrite */
-				req.nat_ip_address[0] =
+				req->nat_ip_address[0] =
 					actions->nat.l3.ipv4.daddr.s_addr;
 				/* L4 destination port */
 				if (actions->nat.l4.ports.dport)
-					req.nat_port =
+					req->nat_port =
 						actions->nat.l4.ports.dport;
 			}
 			netdev_dbg(bp->dev,
 				   "req.nat_ip_address: %pI4 src_xlate: %d req.nat_port: %x\n",
-				   req.nat_ip_address, actions->nat.src_xlate,
-				   req.nat_port);
+				   req->nat_ip_address, actions->nat.src_xlate,
+				   req->nat_port);
 		} else {
 			if (actions->nat.src_xlate) {
 				action_flags |=
 					CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_NAT_SRC;
 				/* L3 source rewrite */
-				memcpy(req.nat_ip_address,
+				memcpy(req->nat_ip_address,
 				       actions->nat.l3.ipv6.saddr.s6_addr32,
-				       sizeof(req.nat_ip_address));
+				       sizeof(req->nat_ip_address));
 				/* L4 source port */
 				if (actions->nat.l4.ports.sport)
-					req.nat_port =
+					req->nat_port =
 						actions->nat.l4.ports.sport;
 			} else {
 				action_flags |=
 					CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_NAT_DEST;
 				/* L3 destination rewrite */
-				memcpy(req.nat_ip_address,
+				memcpy(req->nat_ip_address,
 				       actions->nat.l3.ipv6.daddr.s6_addr32,
-				       sizeof(req.nat_ip_address));
+				       sizeof(req->nat_ip_address));
 				/* L4 destination port */
 				if (actions->nat.l4.ports.dport)
-					req.nat_port =
+					req->nat_port =
 						actions->nat.l4.ports.dport;
 			}
 			netdev_dbg(bp->dev,
                                    "req.nat_ip_address: %pI6 src_xlate: %d req.nat_port: %x\n",
-				   req.nat_ip_address, actions->nat.src_xlate,
-				   req.nat_port);
+				   req->nat_ip_address, actions->nat.src_xlate,
+				   req->nat_port);
 		}
 	}
 
 	if (actions->flags & BNXT_TC_ACTION_FLAG_TUNNEL_DECAP ||
 	    actions->flags & BNXT_TC_ACTION_FLAG_TUNNEL_ENCAP) {
-		req.tunnel_handle = tunnel_handle;
+		req->tunnel_handle = tunnel_handle;
 		flow_flags |= CFA_FLOW_ALLOC_REQ_FLAGS_TUNNEL;
 		action_flags |= CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_TUNNEL;
 	}
 
-	req.ethertype = flow->l2_key.ether_type;
-	req.ip_proto = flow->l4_key.ip_proto;
+	req->ethertype = flow->l2_key.ether_type;
+	req->ip_proto = flow->l4_key.ip_proto;
 
 	if (flow->flags & BNXT_TC_FLOW_FLAGS_ETH_ADDRS) {
-		memcpy(req.dmac, flow->l2_key.dmac, ETH_ALEN);
-		memcpy(req.smac, flow->l2_key.smac, ETH_ALEN);
+		memcpy(req->dmac, flow->l2_key.dmac, ETH_ALEN);
+		memcpy(req->smac, flow->l2_key.smac, ETH_ALEN);
 	}
 
 	if (flow->l2_key.num_vlans > 0) {
@@ -1135,7 +1145,7 @@ static int bnxt_hwrm_cfa_flow_alloc(struct bnxt *bp, struct bnxt_tc_flow *flow,
 		 * in outer_vlan_tci when num_vlans is 1 (which is
 		 * always the case in TC.)
 		 */
-		req.outer_vlan_tci = flow->l2_key.inner_vlan_tci;
+		req->outer_vlan_tci = flow->l2_key.inner_vlan_tci;
 	}
 
 	/* If all IP and L4 fields are wildcarded then this is an L2 flow */
@@ -1148,68 +1158,67 @@ static int bnxt_hwrm_cfa_flow_alloc(struct bnxt *bp, struct bnxt_tc_flow *flow,
 				CFA_FLOW_ALLOC_REQ_FLAGS_FLOWTYPE_IPV6;
 
 		if (flow->flags & BNXT_TC_FLOW_FLAGS_IPV4_ADDRS) {
-			req.ip_dst[0] = l3_key->ipv4.daddr.s_addr;
-			req.ip_dst_mask_len =
+			req->ip_dst[0] = l3_key->ipv4.daddr.s_addr;
+			req->ip_dst_mask_len =
 				inet_mask_len(l3_mask->ipv4.daddr.s_addr);
-			req.ip_src[0] = l3_key->ipv4.saddr.s_addr;
-			req.ip_src_mask_len =
+			req->ip_src[0] = l3_key->ipv4.saddr.s_addr;
+			req->ip_src_mask_len =
 				inet_mask_len(l3_mask->ipv4.saddr.s_addr);
 		} else if (flow->flags & BNXT_TC_FLOW_FLAGS_IPV6_ADDRS) {
-			memcpy(req.ip_dst, l3_key->ipv6.daddr.s6_addr32,
-			       sizeof(req.ip_dst));
-			req.ip_dst_mask_len =
+			memcpy(req->ip_dst, l3_key->ipv6.daddr.s6_addr32,
+			       sizeof(req->ip_dst));
+			req->ip_dst_mask_len =
 					ipv6_mask_len(&l3_mask->ipv6.daddr);
-			memcpy(req.ip_src, l3_key->ipv6.saddr.s6_addr32,
-			       sizeof(req.ip_src));
-			req.ip_src_mask_len =
+			memcpy(req->ip_src, l3_key->ipv6.saddr.s6_addr32,
+			       sizeof(req->ip_src));
+			req->ip_src_mask_len =
 					ipv6_mask_len(&l3_mask->ipv6.saddr);
 		}
 	}
 
 	if (flow->flags & BNXT_TC_FLOW_FLAGS_PORTS) {
-		req.l4_src_port = flow->l4_key.ports.sport;
-		req.l4_src_port_mask = flow->l4_mask.ports.sport;
-		req.l4_dst_port = flow->l4_key.ports.dport;
-		req.l4_dst_port_mask = flow->l4_mask.ports.dport;
+		req->l4_src_port = flow->l4_key.ports.sport;
+		req->l4_src_port_mask = flow->l4_mask.ports.sport;
+		req->l4_dst_port = flow->l4_key.ports.dport;
+		req->l4_dst_port_mask = flow->l4_mask.ports.dport;
 	} else if (flow->flags & BNXT_TC_FLOW_FLAGS_ICMP) {
 		/* l4 ports serve as type/code when ip_proto is ICMP */
-		req.l4_src_port = htons(flow->l4_key.icmp.type);
-		req.l4_src_port_mask = htons(flow->l4_mask.icmp.type);
-		req.l4_dst_port = htons(flow->l4_key.icmp.code);
-		req.l4_dst_port_mask = htons(flow->l4_mask.icmp.code);
+		req->l4_src_port = htons(flow->l4_key.icmp.type);
+		req->l4_src_port_mask = htons(flow->l4_mask.icmp.type);
+		req->l4_dst_port = htons(flow->l4_key.icmp.code);
+		req->l4_dst_port_mask = htons(flow->l4_mask.icmp.code);
 	}
-	req.flags = cpu_to_le16(flow_flags);
+	req->flags = cpu_to_le16(flow_flags);
 
 	if (actions->flags & BNXT_TC_ACTION_FLAG_DROP) {
 		action_flags |= CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_DROP;
 	} else {
 		if (actions->flags & BNXT_TC_ACTION_FLAG_FWD) {
 			action_flags |= CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_FWD;
-			req.dst_fid = cpu_to_le16(actions->dst_fid);
+			req->dst_fid = cpu_to_le16(actions->dst_fid);
 		}
 		if (actions->flags & BNXT_TC_ACTION_FLAG_PUSH_VLAN) {
 			action_flags |=
 			    CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_L2_HEADER_REWRITE;
-			req.l2_rewrite_vlan_tpid = actions->push_vlan_tpid;
-			req.l2_rewrite_vlan_tci = actions->push_vlan_tci;
-			memcpy(&req.l2_rewrite_dmac, &req.dmac, ETH_ALEN);
-			memcpy(&req.l2_rewrite_smac, &req.smac, ETH_ALEN);
+			req->l2_rewrite_vlan_tpid = actions->push_vlan_tpid;
+			req->l2_rewrite_vlan_tci = actions->push_vlan_tci;
+			memcpy(&req->l2_rewrite_dmac, &req->dmac, ETH_ALEN);
+			memcpy(&req->l2_rewrite_smac, &req->smac, ETH_ALEN);
 		}
 		if (actions->flags & BNXT_TC_ACTION_FLAG_POP_VLAN) {
 			action_flags |=
 			    CFA_FLOW_ALLOC_REQ_ACTION_FLAGS_L2_HEADER_REWRITE;
 			/* Rewrite config with tpid = 0 implies vlan pop */
-			req.l2_rewrite_vlan_tpid = 0;
-			memcpy(&req.l2_rewrite_dmac, &req.dmac, ETH_ALEN);
-			memcpy(&req.l2_rewrite_smac, &req.smac, ETH_ALEN);
+			req->l2_rewrite_vlan_tpid = 0;
+			memcpy(&req->l2_rewrite_dmac, &req->dmac, ETH_ALEN);
+			memcpy(&req->l2_rewrite_smac, &req->smac, ETH_ALEN);
 		}
 	}
-	req.action_flags = cpu_to_le16(action_flags);
+	req->action_flags = cpu_to_le16(action_flags);
 
-	mutex_lock(&bp->hwrm_cmd_lock);
-	rc = _hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
+	resp = hwrm_req_hold(bp, req);
+	rc = hwrm_req_send(bp, req);
 	if (!rc) {
-		resp = bnxt_get_hwrm_resp_addr(bp, &req);
 		/* CFA_FLOW_ALLOC response interpretation:
 		 *		    fw with	     fw with
 		 *		    16-bit	     64-bit
@@ -1225,7 +1234,7 @@ static int bnxt_hwrm_cfa_flow_alloc(struct bnxt *bp, struct bnxt_tc_flow *flow,
 			flow_node->flow_id = resp->flow_id;
 		}
 	}
-	mutex_unlock(&bp->hwrm_cmd_lock);
+	hwrm_req_drop(bp, req);
 	return rc;
 }
 
@@ -1235,67 +1244,69 @@ static int hwrm_cfa_decap_filter_alloc(struct bnxt *bp,
 				       __le32 ref_decap_handle,
 				       __le32 *decap_filter_handle)
 {
-	struct hwrm_cfa_decap_filter_alloc_input req = { 0 };
 	struct hwrm_cfa_decap_filter_alloc_output *resp;
 	struct ip_tunnel_key *tun_key = &flow->tun_key;
+	struct hwrm_cfa_decap_filter_alloc_input *req;
 	u32 enables = 0;
 	int rc;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_DECAP_FILTER_ALLOC, -1, -1);
+	rc = hwrm_req_init(bp, req, HWRM_CFA_DECAP_FILTER_ALLOC);
+	if (rc)
+		goto exit;
 
-	req.flags = cpu_to_le32(CFA_DECAP_FILTER_ALLOC_REQ_FLAGS_OVS_TUNNEL);
+	req->flags = cpu_to_le32(CFA_DECAP_FILTER_ALLOC_REQ_FLAGS_OVS_TUNNEL);
 	enables |= CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_TUNNEL_TYPE |
 		   CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_IP_PROTOCOL;
-	req.tunnel_type = CFA_DECAP_FILTER_ALLOC_REQ_TUNNEL_TYPE_VXLAN;
-	req.ip_protocol = CFA_DECAP_FILTER_ALLOC_REQ_IP_PROTOCOL_UDP;
+	req->tunnel_type = CFA_DECAP_FILTER_ALLOC_REQ_TUNNEL_TYPE_VXLAN;
+	req->ip_protocol = CFA_DECAP_FILTER_ALLOC_REQ_IP_PROTOCOL_UDP;
 
 	if (flow->flags & BNXT_TC_FLOW_FLAGS_TUNL_ID) {
 		enables |= CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_TUNNEL_ID;
 		/* tunnel_id is wrongly defined in hsi defn. as __le32 */
-		req.tunnel_id = tunnel_id_to_key32(tun_key->tun_id);
+		req->tunnel_id = tunnel_id_to_key32(tun_key->tun_id);
 	}
 
 	if (flow->flags & BNXT_TC_FLOW_FLAGS_TUNL_ETH_ADDRS) {
 		enables |= CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_DST_MACADDR;
-		ether_addr_copy(req.dst_macaddr, l2_info->dmac);
+		ether_addr_copy(req->dst_macaddr, l2_info->dmac);
 	}
 	if (l2_info->num_vlans) {
 		enables |= CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_T_IVLAN_VID;
-		req.t_ivlan_vid = l2_info->inner_vlan_tci;
+		req->t_ivlan_vid = l2_info->inner_vlan_tci;
 	}
 
 	enables |= CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_ETHERTYPE;
-	req.ethertype = htons(ETH_P_IP);
+	req->ethertype = htons(ETH_P_IP);
 
 	if (flow->flags & BNXT_TC_FLOW_FLAGS_TUNL_IPV4_ADDRS) {
 		enables |= CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_SRC_IPADDR |
 			   CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_DST_IPADDR |
 			   CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_IPADDR_TYPE;
-		req.ip_addr_type = CFA_DECAP_FILTER_ALLOC_REQ_IP_ADDR_TYPE_IPV4;
-		req.dst_ipaddr[0] = tun_key->u.ipv4.dst;
-		req.src_ipaddr[0] = tun_key->u.ipv4.src;
+		req->ip_addr_type =
+			CFA_DECAP_FILTER_ALLOC_REQ_IP_ADDR_TYPE_IPV4;
+		req->dst_ipaddr[0] = tun_key->u.ipv4.dst;
+		req->src_ipaddr[0] = tun_key->u.ipv4.src;
 	}
 
 	if (flow->flags & BNXT_TC_FLOW_FLAGS_TUNL_PORTS) {
 		enables |= CFA_DECAP_FILTER_ALLOC_REQ_ENABLES_DST_PORT;
-		req.dst_port = tun_key->tp_dst;
+		req->dst_port = tun_key->tp_dst;
 	}
 
 	/* Eventhough the decap_handle returned by hwrm_cfa_decap_filter_alloc
 	 * is defined as __le32, l2_ctxt_ref_id is defined in HSI as __le16.
 	 */
-	req.l2_ctxt_ref_id = (__force __le16)ref_decap_handle;
-	req.enables = cpu_to_le32(enables);
+	req->l2_ctxt_ref_id = (__force __le16)ref_decap_handle;
+	req->enables = cpu_to_le32(enables);
 
-	mutex_lock(&bp->hwrm_cmd_lock);
-	rc = _hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
-	if (!rc) {
-		resp = bnxt_get_hwrm_resp_addr(bp, &req);
+	resp = hwrm_req_hold(bp, req);
+	rc = hwrm_req_send(bp, req);
+	if (!rc)
 		*decap_filter_handle = resp->decap_filter_id;
-	} else {
-		netdev_info(bp->dev, "%s: Error rc=%d", __func__, rc);
-	}
-	mutex_unlock(&bp->hwrm_cmd_lock);
+	hwrm_req_drop(bp, req);
+exit:
+	if (rc)
+		netdev_info(bp->dev, "%s: Error rc=%d\n", __func__, rc);
 
 	return rc;
 }
@@ -1303,15 +1314,16 @@ static int hwrm_cfa_decap_filter_alloc(struct bnxt *bp,
 static int hwrm_cfa_decap_filter_free(struct bnxt *bp,
 				      __le32 decap_filter_handle)
 {
-	struct hwrm_cfa_decap_filter_free_input req = { 0 };
+	struct hwrm_cfa_decap_filter_free_input *req;
 	int rc;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_DECAP_FILTER_FREE, -1, -1);
-	req.decap_filter_id = decap_filter_handle;
-
-	rc = hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
+	rc = hwrm_req_init(bp, req, HWRM_CFA_DECAP_FILTER_FREE);
+	if (!rc) {
+		req->decap_filter_id = decap_filter_handle;
+		rc = hwrm_req_send(bp, req);
+	}
 	if (rc)
-		netdev_info(bp->dev, "%s: Error rc=%d", __func__, rc);
+		netdev_info(bp->dev, "%s: Error rc=%d\n", __func__, rc);
 
 	return rc;
 }
@@ -1321,17 +1333,20 @@ static int hwrm_cfa_encap_record_alloc(struct bnxt *bp,
 				       struct bnxt_tc_l2_key *l2_info,
 				       __le32 *encap_record_handle)
 {
-	struct hwrm_cfa_encap_record_alloc_input req = { 0 };
 	struct hwrm_cfa_encap_record_alloc_output *resp;
-	struct hwrm_cfa_encap_data_vxlan *encap =
-			(struct hwrm_cfa_encap_data_vxlan *)&req.encap_data;
-	struct hwrm_vxlan_ipv4_hdr *encap_ipv4 =
-				(struct hwrm_vxlan_ipv4_hdr *)encap->l3;
+	struct hwrm_cfa_encap_record_alloc_input *req;
+	struct hwrm_cfa_encap_data_vxlan *encap;
+	struct hwrm_vxlan_ipv4_hdr *encap_ipv4;
 	int rc;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_ENCAP_RECORD_ALLOC, -1, -1);
+	rc = hwrm_req_init(bp, req, HWRM_CFA_ENCAP_RECORD_ALLOC);
+	if (rc)
+		goto exit;
 
-	req.encap_type = CFA_ENCAP_RECORD_ALLOC_REQ_ENCAP_TYPE_VXLAN;
+	encap = (struct hwrm_cfa_encap_data_vxlan *)&req->encap_data;
+	encap_ipv4 = (struct hwrm_vxlan_ipv4_hdr *)encap->l3;
+
+	req->encap_type = CFA_ENCAP_RECORD_ALLOC_REQ_ENCAP_TYPE_VXLAN;
 
 	ether_addr_copy(encap->dst_mac_addr, l2_info->dmac);
 	ether_addr_copy(encap->src_mac_addr, l2_info->smac);
@@ -1352,15 +1367,14 @@ static int hwrm_cfa_encap_record_alloc(struct bnxt *bp,
 	encap->dst_port = encap_key->tp_dst;
 	encap->vni = tunnel_id_to_key32(encap_key->tun_id);
 
-	mutex_lock(&bp->hwrm_cmd_lock);
-	rc = _hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
-	if (!rc) {
-		resp = bnxt_get_hwrm_resp_addr(bp, &req);
+	resp = hwrm_req_hold(bp, req);
+	rc = hwrm_req_send(bp, req);
+	if (!rc)
 		*encap_record_handle = resp->encap_record_id;
-	} else {
-		netdev_info(bp->dev, "%s: Error rc=%d", __func__, rc);
-	}
-	mutex_unlock(&bp->hwrm_cmd_lock);
+	hwrm_req_drop(bp, req);
+exit:
+	if (rc)
+		netdev_info(bp->dev, "%s: Error rc=%d\n", __func__, rc);
 
 	return rc;
 }
@@ -1368,15 +1382,16 @@ static int hwrm_cfa_encap_record_alloc(struct bnxt *bp,
 static int hwrm_cfa_encap_record_free(struct bnxt *bp,
 				      __le32 encap_record_handle)
 {
-	struct hwrm_cfa_encap_record_free_input req = { 0 };
+	struct hwrm_cfa_encap_record_free_input *req;
 	int rc;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_ENCAP_RECORD_FREE, -1, -1);
-	req.encap_record_id = encap_record_handle;
-
-	rc = hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
+	rc = hwrm_req_init(bp, req, HWRM_CFA_ENCAP_RECORD_FREE);
+	if (!rc) {
+		req->encap_record_id = encap_record_handle;
+		rc = hwrm_req_send(bp, req);
+	}
 	if (rc)
-		netdev_info(bp->dev, "%s: Error rc=%d", __func__, rc);
+		netdev_info(bp->dev, "%s: Error rc=%d\n", __func__, rc);
 
 	return rc;
 }
@@ -1395,7 +1410,7 @@ static int bnxt_tc_put_l2_node(struct bnxt *bp,
 					     tc_info->l2_ht_params);
 		if (rc)
 			netdev_err(bp->dev,
-				   "Error: %s: rhashtable_remove_fast: %d",
+				   "Error: %s: rhashtable_remove_fast: %d\n",
 				   __func__, rc);
 		kfree_rcu(l2_node, rcu);
 	}
@@ -1424,7 +1439,7 @@ bnxt_tc_get_l2_node(struct bnxt *bp, struct rhashtable *l2_table,
 		if (rc) {
 			kfree_rcu(l2_node, rcu);
 			netdev_err(bp->dev,
-				   "Error: %s: rhashtable_insert_fast: %d",
+				   "Error: %s: rhashtable_insert_fast: %d\n",
 				   __func__, rc);
 			return NULL;
 		}
@@ -1483,7 +1498,7 @@ static bool bnxt_tc_can_offload(struct bnxt *bp, struct bnxt_tc_flow *flow)
 	if ((flow->flags & BNXT_TC_FLOW_FLAGS_PORTS) &&
 	    (flow->l4_key.ip_proto != IPPROTO_TCP &&
 	     flow->l4_key.ip_proto != IPPROTO_UDP)) {
-		netdev_info(bp->dev, "Cannot offload non-TCP/UDP (%d) ports",
+		netdev_info(bp->dev, "Cannot offload non-TCP/UDP (%d) ports\n",
 			    flow->l4_key.ip_proto);
 		return false;
 	}
@@ -1548,7 +1563,7 @@ static int bnxt_tc_put_tunnel_node(struct bnxt *bp,
 		rc =  rhashtable_remove_fast(tunnel_table, &tunnel_node->node,
 					     *ht_params);
 		if (rc) {
-			netdev_err(bp->dev, "rhashtable_remove_fast rc=%d", rc);
+			netdev_err(bp->dev, "rhashtable_remove_fast rc=%d\n", rc);
 			rc = -1;
 		}
 		kfree_rcu(tunnel_node, rcu);
@@ -1590,7 +1605,7 @@ bnxt_tc_get_tunnel_node(struct bnxt *bp, struct rhashtable *tunnel_table,
 	tunnel_node->refcount++;
 	return tunnel_node;
 err:
-	netdev_info(bp->dev, "error rc=%d", rc);
+	netdev_info(bp->dev, "error rc=%d\n", rc);
 	return NULL;
 }
 
@@ -1648,7 +1663,7 @@ static void bnxt_tc_put_decap_l2_node(struct bnxt *bp,
 					     &decap_l2_node->node,
 					     tc_info->decap_l2_ht_params);
 		if (rc)
-			netdev_err(bp->dev, "rhashtable_remove_fast rc=%d", rc);
+			netdev_err(bp->dev, "rhashtable_remove_fast rc=%d\n", rc);
 		kfree_rcu(decap_l2_node, rcu);
 	}
 }
@@ -1688,7 +1703,7 @@ static int bnxt_tc_resolve_tunnel_hdrs(struct bnxt *bp,
 
 	rt = ip_route_output_key(dev_net(real_dst_dev), &flow);
 	if (IS_ERR(rt)) {
-		netdev_info(bp->dev, "no route to %pI4b", &flow.daddr);
+		netdev_info(bp->dev, "no route to %pI4b\n", &flow.daddr);
 		return -EOPNOTSUPP;
 	}
 
@@ -1702,7 +1717,7 @@ static int bnxt_tc_resolve_tunnel_hdrs(struct bnxt *bp,
 
 		if (vlan->real_dev != real_dst_dev) {
 			netdev_info(bp->dev,
-				    "dst_dev(%s) doesn't use PF-if(%s)",
+				    "dst_dev(%s) doesn't use PF-if(%s)\n",
 				    netdev_name(dst_dev),
 				    netdev_name(real_dst_dev));
 			rc = -EOPNOTSUPP;
@@ -1714,7 +1729,7 @@ static int bnxt_tc_resolve_tunnel_hdrs(struct bnxt *bp,
 #endif
 	} else if (dst_dev != real_dst_dev) {
 		netdev_info(bp->dev,
-			    "dst_dev(%s) for %pI4b is not PF-if(%s)",
+			    "dst_dev(%s) for %pI4b is not PF-if(%s)\n",
 			    netdev_name(dst_dev), &flow.daddr,
 			    netdev_name(real_dst_dev));
 		rc = -EOPNOTSUPP;
@@ -1723,7 +1738,7 @@ static int bnxt_tc_resolve_tunnel_hdrs(struct bnxt *bp,
 
 	nbr = dst_neigh_lookup(&rt->dst, &flow.daddr);
 	if (!nbr) {
-		netdev_info(bp->dev, "can't lookup neighbor for %pI4b",
+		netdev_info(bp->dev, "can't lookup neighbor for %pI4b\n",
 			    &flow.daddr);
 		rc = -EOPNOTSUPP;
 		goto put_rt;
@@ -1935,7 +1950,7 @@ static int __bnxt_tc_del_flow(struct bnxt *bp,
 	rc = rhashtable_remove_fast(&tc_info->flow_table, &flow_node->node,
 				    tc_info->flow_ht_params);
 	if (rc)
-		netdev_err(bp->dev, "Error: %s: rhashtable_remove_fast rc=%d",
+		netdev_err(bp->dev, "Error: %s: rhashtable_remove_fast rc=%d\n",
 			   __func__, rc);
 
 	kfree_rcu(flow_node, rcu);
@@ -2071,7 +2086,7 @@ unlock:
 free_node:
 	kfree_rcu(new_node, rcu);
 done:
-	netdev_err(bp->dev, "Error: %s: cookie=0x%lx error=%d",
+	netdev_err(bp->dev, "Error: %s: cookie=0x%lx error=%d\n",
 		   __func__, tc_flow_cmd->cookie, rc);
 	return rc;
 }
@@ -2139,7 +2154,7 @@ static int bnxt_tc_get_flow_stats(struct bnxt *bp,
 
 #ifdef HAVE_FLOW_OFFLOAD_H
 	flow_stats_update(&tc_flow_cmd->stats, stats.bytes, stats.packets,
-			  lastused);
+			  lastused, FLOW_ACTION_HW_STATS_DELAYED);
 #else
 	tcf_exts_stats_update(tc_flow_cmd->exts, stats.bytes, stats.packets,
 			      lastused);
@@ -2177,14 +2192,20 @@ static int
 bnxt_hwrm_cfa_flow_stats_get(struct bnxt *bp, int num_flows,
 			     struct bnxt_tc_stats_batch stats_batch[])
 {
-	struct hwrm_cfa_flow_stats_input req = { 0 };
 	struct hwrm_cfa_flow_stats_output *resp;
-	__le16 *req_flow_handles = &req.flow_handle_0;
-	__le32 *req_flow_ids = &req.flow_id_0;
+	struct hwrm_cfa_flow_stats_input *req;
+	__le16 *req_flow_handles;
+	__le32 *req_flow_ids;
 	int rc, i;
 
-	bnxt_hwrm_cmd_hdr_init(bp, &req, HWRM_CFA_FLOW_STATS, -1, -1);
-	req.num_flows = cpu_to_le16(num_flows);
+	rc = hwrm_req_init(bp, req, HWRM_CFA_FLOW_STATS);
+	if (rc)
+		goto exit;
+
+	req_flow_handles = &req->flow_handle_0;
+	req_flow_ids = &req->flow_id_0;
+
+	req->num_flows = cpu_to_le16(num_flows);
 	for (i = 0; i < num_flows; i++) {
 		struct bnxt_tc_flow_node *flow_node = stats_batch[i].flow_node;
 
@@ -2192,13 +2213,12 @@ bnxt_hwrm_cfa_flow_stats_get(struct bnxt *bp, int num_flows,
 					&req_flow_handles[i], &req_flow_ids[i]);
 	}
 
-	mutex_lock(&bp->hwrm_cmd_lock);
-	rc = _hwrm_send_message(bp, &req, sizeof(req), HWRM_CMD_TIMEOUT);
+	resp = hwrm_req_hold(bp, req);
+	rc = hwrm_req_send(bp, req);
 	if (!rc) {
 		__le64 *resp_packets;
 		__le64 *resp_bytes;
 
-		resp = bnxt_get_hwrm_resp_addr(bp, &req);
 		resp_packets = &resp->packet_0;
 		resp_bytes = &resp->byte_0;
 
@@ -2208,10 +2228,11 @@ bnxt_hwrm_cfa_flow_stats_get(struct bnxt *bp, int num_flows,
 			stats_batch[i].hw_stats.bytes =
 						le64_to_cpu(resp_bytes[i]);
 		}
-	} else {
-		netdev_info(bp->dev, "error rc=%d", rc);
 	}
-	mutex_unlock(&bp->hwrm_cmd_lock);
+	hwrm_req_drop(bp, req);
+exit:
+	if (rc)
+		netdev_info(bp->dev, "error rc=%d\n", rc);
 
 	return rc;
 }
@@ -2517,7 +2538,7 @@ static int bnxt_tc_indr_block_event(struct notifier_block *nb,
 						   bp);
 		if (rc)
 			netdev_info(bp->dev,
-				    "Failed to register indirect blk: dev: %s",
+				    "Failed to register indirect blk: dev: %s\n",
 				    netdev->name);
 		break;
 	case NETDEV_UNREGISTER:

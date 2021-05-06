@@ -133,8 +133,8 @@ module option, the vxlan.ko module must be loaded before the bnxt_en.ko module.
 Using newer kernels, the hwmon.ko module may need to be loaded first if
 CONFIG_HWMON_MODULE kernel option is set as a module option.
 
-Using newer kernels, devlink.ko module may need to be loaded first if
-CONFIG_NET_DEVLINK kernel option is set as a module option.
+Using kernel versions 4.6 or higher, devlink.ko module may need to be loaded
+first if CONFIG_NET_DEVLINK kernel option is set as a module option.
 
 BNXT_EN Driver Settings
 =======================
@@ -266,35 +266,67 @@ for rx and tx but must both be non-zero.
 
     ethtool -x eth0
 
+Note that the RSS indirection table size may vary depending on the device
+and the number of RX channels.
+
 13. Set 40-byte RSS hash key:
 
     ethtool -X eth0 hkey 00:01:02:03:04:05:06:07:08:09:0a:0b:0c:0d:0e:0f:10:11:12:13:14:15:16:17:18:19:1a:1b:1c:1d:1e:1f:20:21:22:23:24:25:26:27
 
-14. Run self test:
+14. Set RSS indirection table:
+
+    ethtool -X eth0 [start N] [ equal N | weight W0 W1 ... | default ]
+
+Example: Set RSS indirection table to have equal distribution for the first
+         four channels:
+
+    ethtool -X eth0 equal 4
+
+Example: Set RSS indirection table to have equal distribution for six
+         channels starting from channel 2:
+
+    ethtool -X eth0 start 2 equal 6
+
+Note that the start parameter is 0-based.
+
+Example: Set RSS indirection table to have weight distributions of 1:2:3:4
+         for four channels starting from channel 4:
+
+    ethtool -X eth0 start 4 weight 1 2 3 4
+
+Note that the number of channels being configured must be valid and must not
+exceed the number of RX or combined channels.  The configured settings will be
+preserved whenever possible even when the number of RX or combined channels is
+changed.  In some cases when the settings cannot be preserved, the indirection
+table will revert back to default even distribution for all channels.
+
+15. Run self test:
 
     ethtool -t eth0
 
     Note that only single function PFs can execute self tests.  If a PF has
     active VFs, only online tests can be executed.
 
-15. Collect Firmware Coredump:
+16. Collect Firmware Coredump:
 
     ethtool -w eth0 data FILENAME
 
-16. Set coredump flags:
+17. Set coredump flags:
 
     ethtool -W eth0 N
 
     Note that N is '0' for collecting live dump and '1' for collecting saved
-    crash dump.
+    crash dump. 'crash dump' is supported only on adapters that support
+    TEE_BNXT_FW option.
 
-17. Reset the device:
+18. Reset the device:
 
     ethtool --reset eth0 [flags N] [type]
 
-    Note that driver supports 'ap' and 'all' type of resets.
+    Note that driver supports 'ap' and 'all' type of resets. Also, '--reset'
+    option is available from ethtool version 4.15 or newer.
 
-18. Add receive network flow classification filters.
+19. Add receive network flow classification filters.
 
     ethtool -N eth0 flow-type ether|tcp4|udp4|tcp6|udp6 FLOW_SPEC
 
@@ -316,6 +348,9 @@ Example: UDP/IPv4 4-tuple filter to rx queue 2
     ethtool -N eth0 flow-type udp4 dst-ip 192.168.0.1 src-ip 192.168.0.2 \
     dst-port 2049 action 2
 
+The action parameter must be greater than or equal to 0 to specify the
+RX queue/ring number.  Negative action parameters are not supported.
+
 The flow-type is counted as the first tuple and must always be specified.
 At least one additional tuple must be specified for TCP/UDP filters.  A
 tuple must either be completely specified or not specified at all.  A
@@ -329,7 +364,10 @@ another 4-tuple filter, for example.  In general, the more specific
 
 If the filter is created succesfully, the ID of the filter will be returned
 by ethtool.  ethtool -n will also display the current list of filters with
-their IDs.  A specific filter can be deleted by specifying the ID.
+their IDs.  A specific filter can be deleted by specifying the ID.  The
+"loc" parameter that allows the user to specify the location of the filter
+is not supported.  It must be the default 0xffffffff which means that the
+driver will choose the location/ID.
 
 Example: Delete filter ID 3
 
@@ -340,7 +378,7 @@ filters, any duplicate 5-tuple filters added by ethtool will be rejected.
 It is generally not recommended to enable accelerated RFS and create
 static 5-tuple filters on the same function.
 
-19. See ethtool man page for more options.
+20. See ethtool man page for more options.
 
 
 Autoneg
@@ -1100,6 +1138,19 @@ packets bigger than 1518 bytes when using earlier versions of the firmware.
 Newer version of the firmware has reprogrammed the counter to count
 packets bigger than 9600 bytes.
 
+If the "rx_discards" and "rx_buf_errors" counters are high compared to the
+total recieve packets for that ring, it generally means that the host CPU
+is not processing the incoming packets fast enough and causing packet drops.
+The number of receive packets dropped is indicated by these counters.
+Increasing the receive ring size may reduce the number of dropped packets (See
+BNXT_EN Driver Settings section above, examples 5 and 6).
+
+The "rx_l4_csum_errors" counter will increment for every TCP/UDP checksum
+error detected by hardware on each ring if RX checksum offload is enabled.
+Such packets will be rejected by the stack and similar stack error
+counters for TCP/UDP will also increment.  Note that IPv4 checksum is
+always verified by the stack and not offloaded.
+
 
 Unloading and Removing Driver
 =============================
@@ -1162,13 +1213,20 @@ below steps
 Devlink
 =======
 
-In newer kernels, some operations on bnxt_en driver can be done using devlink.
+In kernel versions 4.6 or higher, some operations on bnxt_en driver can be done
+using devlink.
+
 Devlink tool is part of iproute2 routing commands and utilities. Latest devlink
 can be downloaded from http://www.kernel.org/pub/linux/utils/net/iproute2/,
-if it is not already installed. Following are some examples on how to use
-devlink. See the devlink man page for more information.
+if it is not already installed.
 
-devlink examples:
+As devlink tool is evolving, use latest kernel and iproute2 tool available for
+all features via devlink.
+
+Following are some examples on how to use devlink. See the devlink man page
+for more information.
+
+Some devlink examples:
 
 1. Command to display board information and firmware versions:
 
@@ -1184,14 +1242,18 @@ pci/0000:3b:00.0:
   serial_number B0-26-28-FF-FE-C8-85-20
   versions:
       fixed:
+        board.id BCM957508-P2100G
         asic.id 1750
         asic.rev 1
       running:
         fw 216.0.167.0
         fw.psid 0.0.6
-        fw.app 216.0.167.0
-        fw.mgmt 864.0.32.0
+        fw.mgmt 216.0.167.0
+        fw.mgmt.api 1.10.1
+        fw.ncsi 864.0.32.0
         fw.roce 216.0.157.0
+
+Note that 'info' is supported in 5.1 or higher kernel versions.
 
 2. Updating firmware:
 
@@ -1201,6 +1263,8 @@ Example:
    devlink dev flash pci/0000:3b:00.0 file BCM957454A4540C.pkg
 
 Note: File path is relative to /lib/firmware directory.
+
+Note that 'flash' is supported in 5.1 or higher kernel versions.
 
 3. Dump device level driver parameter information:
 
@@ -1220,6 +1284,8 @@ pci/0000:3b:00.0:
     values:
       cmode permanent value true
 
+Note that 'param' is supported in 4.19 or higher kernel versions.
+
 5. Set the device level driver parameter information:
 
    devlink dev param set DEV name PARAMETER value VALUE cmode \
@@ -1234,13 +1300,13 @@ Example:
    devlink health show [ DEV reporter REPORTER ]
 
 Example:
-   devlink health show pci/0000:3b:00.0 reporter fw
+   devlink health show pci/0000:3b:00.0 reporter fw_fatal
 
 will show:
 
 pci/0000:3b:00.0:
-  name fw
-    state healthy error 0 recover 0
+  name fw_fatal
+    state healthy error 2 recover 2 grace_period 0 auto_recover true
 
 Example2:
     devlink health show pci/0000:af:00.0 reporter fw_reset
@@ -1253,6 +1319,9 @@ pci/0000:af:00.0:
 
 Note that health reporters are created only when corresponding features
 are enabled in NVM configuration.
+
+Note that "fw" health reporter information does not support any type of
+reset, so the counters displayed by show command will be 0's.
 
 7. Run diagnostics via health reporter:
 

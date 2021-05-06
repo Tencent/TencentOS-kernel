@@ -46,6 +46,6 @@ struct bnxt_dscp2pri_entry {
 
 #define HWRM_STRUCT_DATA_SUBTYPE_HOST_OPERATIONAL	0x0300
 
-void bnxt_dcb_init(struct bnxt *);
-void bnxt_dcb_free(struct bnxt *);
+void bnxt_dcb_init(struct bnxt *bp);
+void bnxt_dcb_free(struct bnxt *bp, bool reset);
 #endif
