@@ -154,6 +154,9 @@ bool bnxt_rx_xdp(struct bnxt *bp, struct bnxt_rx_ring_info *rxr, u16 cons,
 #ifdef HAVE_XDP_RXQ_INFO
 	xdp.rxq = &rxr->xdp_rxq;
 #endif
+#ifdef HAVE_XDP_FRAME_SZ
+	xdp.frame_sz = PAGE_SIZE; /* BNXT_RX_PAGE_MODE(bp) when XDP enabled */
+#endif
 	orig_data = xdp.data;
 
 	rcu_read_lock();

@@ -18,10 +18,13 @@
 #include <linux/uaccess.h>
 #include <linux/interrupt.h>
 #include <linux/rtnetlink.h>
+#include <linux/dma-buf.h>
 
 #include "bnxt_compat.h"
 #include "bnxt_hsi.h"
 #include "bnxt.h"
+#include "bnxt_eem.h"
+#include "bnxt_hwrm.h"
 #include "bnxt_ulp.h"
 #include "bnxt_lfc.h"
 #include "bnxt_lfc_ioctl.h"
@@ -546,6 +549,394 @@ err1:
 	return rc;
 }
 
+static void bnxt_eem_dmabuf_release(struct bnxt *bp,
+				    struct bnxt_eem_dmabuf_info *dmabuf_priv)
+{
+	struct bnxt_eem_dmabuf_info *priv;
+	int tbl_type;
+	int dir;
+
+	for (dir = BNXT_EEM_DIR_TX; dir < BNXT_EEM_NUM_DIR; dir++) {
+		for (tbl_type = 0; tbl_type < MAX_TABLE; tbl_type++) {
+			if (tbl_type == EFC_TABLE)
+				continue;
+
+			priv = dmabuf_priv + (dir * MAX_TABLE + tbl_type);
+			netdev_dbg(bp->dev,
+				   "Dir:%d, tbl_type:%d, priv->fd %d\n",
+				   dir, priv->type, priv->fd);
+
+			if (priv->type != MAX_TABLE) {
+				if (priv->buf)
+					dma_buf_put(priv->buf);
+
+				if (priv->pages) {
+					sg_free_table(&priv->sg);
+					kfree(priv->pages);
+				}
+
+				priv->buf = NULL;
+				priv->fd = 0;
+				priv->pages = NULL;
+				priv->type = MAX_TABLE;
+			}
+		}
+		dmabuf_priv->dir &= ~(1 << dir);
+	}
+}
+
+static int bnxt_eem_dmabuf_close(struct bnxt *bp)
+{
+	struct bnxt_eem_dmabuf_info *dmabuf_priv;
+
+	if (!bp->dmabuf_data)
+		return 0;
+
+	dmabuf_priv = bp->dmabuf_data;
+	bnxt_eem_dmabuf_release(bp, dmabuf_priv);
+
+	if (!dmabuf_priv->dir) {
+		kfree(dmabuf_priv);
+		bp->dmabuf_data = NULL;
+		netdev_dbg(bp->dev, "release dmabuf data\n");
+	}
+
+	return 0;
+}
+
+static int32_t bnxt_lfc_process_dmabuf_close(struct bnxt_lfc_dev *blfc_dev)
+{
+	struct bnxt *bp = blfc_dev->bp;
+
+	return bnxt_eem_dmabuf_close(bp);
+}
+
+static int bnxt_eem_dmabuf_reg(struct bnxt *bp)
+{
+	struct bnxt_eem_dmabuf_info *priv;
+	int i;
+
+	if (bp->dmabuf_data) {
+		bnxt_eem_dmabuf_close(bp);
+		netdev_warn(bp->dev, "clear existed dmabuf\n");
+	}
+
+	priv = kzalloc(sizeof(*priv) * BNXT_EEM_NUM_DIR * MAX_TABLE,
+		       GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+
+	bp->dmabuf_data = priv;
+	for (i = 0; i < BNXT_EEM_NUM_DIR * MAX_TABLE; i++) {
+		priv[i].dev = &bp->pdev->dev;
+		priv[i].type = MAX_TABLE;
+	}
+
+	return 0;
+}
+
+#ifdef HAVE_DMABUF_ATTACH_DEV
+static int bnxt_dmabuf_attach(struct dma_buf *buf, struct device *dev,
+			      struct dma_buf_attachment *attach)
+#else
+static int bnxt_dmabuf_attach(struct dma_buf *buf,
+			      struct dma_buf_attachment *attach)
+#endif
+{
+	return 0;
+}
+
+static void bnxt_dmabuf_detach(struct dma_buf *buf,
+			       struct dma_buf_attachment *attach)
+{
+}
+
+static
+struct sg_table *bnxt_dmabuf_map_dma_buf(struct dma_buf_attachment *attach,
+					 enum dma_data_direction dir)
+{
+	return NULL;
+}
+
+static void bnxt_dmabuf_unmap_dma_buf(struct dma_buf_attachment *attach,
+				      struct sg_table *sgt,
+				      enum dma_data_direction dir)
+{
+}
+
+static void bnxt_dmabuf_release(struct dma_buf *buf)
+{
+}
+
+#if defined(HAVE_DMABUF_KMAP_ATOMIC) || defined(HAVE_DMABUF_KMAP) || \
+    defined(HAVE_DMABUF_MAP_ATOMIC) || defined(HAVE_DMABUF_MAP)
+static void *bnxt_dmabuf_kmap(struct dma_buf *buf, unsigned long page)
+{
+	return NULL;
+}
+
+static void bnxt_dmabuf_kunmap(struct dma_buf *buf, unsigned long page,
+			       void *vaddr)
+{
+}
+#endif
+
+static void bnxt_dmabuf_vm_open(struct vm_area_struct *vma)
+{
+}
+
+static void bnxt_dmabuf_vm_close(struct vm_area_struct *vma)
+{
+}
+
+static const struct vm_operations_struct dmabuf_vm_ops = {
+	.open = bnxt_dmabuf_vm_open,
+	.close = bnxt_dmabuf_vm_close,
+};
+
+static int bnxt_dmabuf_mmap(struct dma_buf *buf, struct vm_area_struct *vma)
+{
+	pgprot_t prot = vm_get_page_prot(vma->vm_flags);
+	struct bnxt_eem_dmabuf_info *priv = buf->priv;
+	int page_block = vma->vm_pgoff / MAX_CTX_PAGES;
+	int page_no = vma->vm_pgoff % MAX_CTX_PAGES;
+	struct bnxt_ctx_pg_info *ctx_pg;
+	dma_addr_t pg_phys;
+
+	vma->vm_flags |= VM_IO | VM_PFNMAP | VM_DONTEXPAND;
+	vma->vm_ops = &dmabuf_vm_ops;
+	vma->vm_private_data = priv;
+	vma->vm_page_prot = pgprot_writecombine(prot);
+
+	ctx_pg = priv->tbl->ctx_pg_tbl[page_block];
+	pg_phys = ctx_pg->ctx_dma_arr[page_no];
+	return remap_pfn_range(vma, vma->vm_start, pg_phys >> PAGE_SHIFT,
+			       vma->vm_end - vma->vm_start, vma->vm_page_prot);
+}
+
+static void *bnxt_dmabuf_vmap(struct dma_buf *buf)
+{
+	return NULL;
+}
+
+static void bnxt_dmabuf_vunmap(struct dma_buf *buf, void *vaddr)
+{
+}
+
+static const struct dma_buf_ops bnxt_dmabuf_ops = {
+	.attach = bnxt_dmabuf_attach,
+	.detach = bnxt_dmabuf_detach,
+	.map_dma_buf = bnxt_dmabuf_map_dma_buf,
+	.unmap_dma_buf = bnxt_dmabuf_unmap_dma_buf,
+	.release = bnxt_dmabuf_release,
+#ifdef HAVE_DMABUF_KMAP_ATOMIC
+	.kmap_atomic = bnxt_dmabuf_kmap,
+	.kunmap_atomic = bnxt_dmabuf_kunmap,
+#endif
+#ifdef HAVE_DMABUF_KMAP
+	.kmap = bnxt_dmabuf_kmap,
+	.kunmap = bnxt_dmabuf_kunmap,
+#endif
+#ifdef HAVE_DMABUF_MAP_ATOMIC
+	.map_atomic = bnxt_dmabuf_kmap,
+	.unmap_atomic = bnxt_dmabuf_kunmap,
+#endif
+#ifdef HAVE_DMABUF_MAP
+	.map = bnxt_dmabuf_kmap,
+	.unmap = bnxt_dmabuf_kunmap,
+#endif
+	.mmap = bnxt_dmabuf_mmap,
+	.vmap = bnxt_dmabuf_vmap,
+	.vunmap = bnxt_dmabuf_vunmap,
+};
+
+static int bnxt_dmabuf_page_map(struct bnxt *bp, int dir, int tbl_type,
+				struct bnxt_eem_dmabuf_info *priv)
+{
+	struct bnxt_ctx_pg_info *pg_tbl = NULL;
+	struct bnxt_ctx_pg_info *ctx_pg;
+	int page_no = 0;
+	int ctx_block;
+	int i, j;
+
+	priv->tbl = &bp->eem_info->eem_ctx_info[dir].eem_tables[tbl_type];
+	ctx_pg = &bp->eem_info->eem_ctx_info[dir].eem_tables[tbl_type];
+
+	if (!ctx_pg->nr_pages)
+		return -EINVAL;
+
+	priv->pg_count = ctx_pg->nr_pages;
+	priv->pages = kcalloc(priv->pg_count, sizeof(*priv->pages), GFP_KERNEL);
+	if (!priv->pages)
+		return -ENOMEM;
+
+	ctx_block = priv->pg_count / MAX_CTX_PAGES;
+	for (i = 0; i < ctx_block; i++) {
+		pg_tbl = ctx_pg->ctx_pg_tbl[i];
+		if (pg_tbl) {
+			for (j = 0; j < MAX_CTX_PAGES; j++) {
+				priv->pages[page_no] =
+					virt_to_page(pg_tbl->ctx_pg_arr[j]);
+				page_no++;
+				if (page_no == priv->pg_count)
+					break;
+			}
+		}
+	}
+
+	if (sg_alloc_table_from_pages(&priv->sg, priv->pages, priv->pg_count,
+				      0, (priv->pg_count << PAGE_SHIFT),
+				      GFP_KERNEL)) {
+		kfree(priv->pages);
+		return -ENOMEM;
+	}
+
+	if (!dma_map_sg(priv->dev, priv->sg.sgl,
+			priv->sg.nents, DMA_BIDIRECTIONAL)) {
+		sg_free_table(&priv->sg);
+		kfree(priv->pages);
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
+static int bnxt_dmabuf_export(struct bnxt_eem_dmabuf_info *priv)
+{
+	int rc = 0;
+
+	priv->buf = dma_buf_export_attr(priv, priv->pg_count, &bnxt_dmabuf_ops);
+	if (!priv->buf)
+		rc = -EBUSY;
+
+	if (IS_ERR(priv->buf))
+		rc = PTR_ERR(priv->buf);
+
+	return rc;
+}
+
+static int bnxt_eem_dmabuf_export(struct bnxt *bp, u32 flags)
+{
+	struct bnxt_eem_dmabuf_info *dmabuf_priv;
+	struct bnxt_eem_dmabuf_info *priv;
+	int tbl_type;
+	int dir;
+	int rc;
+
+	dmabuf_priv = bp->dmabuf_data;
+	for (dir = BNXT_EEM_DIR_TX; dir < BNXT_EEM_NUM_DIR; dir++) {
+		for (tbl_type = KEY0_TABLE; tbl_type < MAX_TABLE; tbl_type++) {
+			if (tbl_type == EFC_TABLE)
+				continue;
+
+			priv = dmabuf_priv + (dir * MAX_TABLE + tbl_type);
+			netdev_dbg(bp->dev,
+				   "export: dir %d, tbl:%d\n", dir, tbl_type);
+
+			if (priv->type != MAX_TABLE && priv->fd) {
+				rc = -EIO;
+				return rc;
+			}
+
+			rc = bnxt_dmabuf_page_map(bp, dir, tbl_type, priv);
+			if (rc)
+				return rc;
+
+			rc = bnxt_dmabuf_export(priv);
+			if (rc)
+				return rc;
+
+			priv->type = tbl_type;
+		}
+		dmabuf_priv->dir |= (1 << dir);
+	}
+	return 0;
+}
+
+static int bnxt_eem_dmabuf_fd(struct bnxt *bp)
+{
+	struct bnxt_eem_dmabuf_info *priv;
+	int fd;
+	int i;
+
+	if (!bp->dmabuf_data) {
+		netdev_err(bp->dev, "Failed to export dmabuf file");
+		return -EINVAL;
+	}
+
+	for (priv = bp->dmabuf_data, i = 0;
+	     i < BNXT_EEM_NUM_DIR * MAX_TABLE; i++, priv++) {
+		if (!priv->buf) {
+			priv->fd = 0;
+			continue;
+		}
+
+		get_dma_buf(priv->buf);
+		fd = dma_buf_fd(priv->buf, O_ACCMODE);
+		if (fd < 0) {
+			dma_buf_put(priv->buf);
+			return -EINVAL;
+		}
+		priv->fd = fd;
+	}
+
+	return 0;
+}
+
+int bnxt_eem_dmabuf_export_fd(struct bnxt *bp)
+{
+	int rc;
+
+	rc = bnxt_eem_dmabuf_reg(bp);
+	if (rc) {
+		netdev_err(bp->dev, "dmabuf private data initial failed\n");
+		return rc;
+	}
+
+	rc = bnxt_eem_dmabuf_export(bp, O_ACCMODE);
+	if (rc) {
+		netdev_err(bp->dev, "prepare dmabuf fail.\n");
+		goto clean;
+	}
+
+	rc = bnxt_eem_dmabuf_fd(bp);
+	if (rc) {
+		netdev_err(bp->dev, "dmabuf fd fail.\n");
+		goto clean;
+	}
+
+	return rc;
+clean:
+	bnxt_eem_dmabuf_close(bp);
+	return rc;
+}
+
+static
+int32_t bnxt_lfc_process_dmabuf_export(struct bnxt_lfc_dev *blfc_dev,
+				       struct bnxt_lfc_req *lfc_req)
+{
+	struct bnxt_lfc_dmabuf_fd dmabuf_fd;
+	struct bnxt_eem_dmabuf_info *priv;
+	struct bnxt *bp = blfc_dev->bp;
+	int32_t rc;
+	int i;
+
+	rc = bnxt_eem_dmabuf_export_fd(bp);
+	if (rc)
+		return rc;
+
+	for (priv = bp->dmabuf_data, i = 0;
+	     i < BNXT_LFC_EEM_MAX_TABLE; i++, priv++)
+		dmabuf_fd.fd[i] = priv->fd;
+
+	rc = copy_to_user(lfc_req->req.eem_dmabuf_export_fd_req.dma_fd,
+			  &dmabuf_fd, sizeof(dmabuf_fd));
+	if (rc)
+		rc = -EFAULT;
+
+	return rc;
+}
+
 static int32_t bnxt_lfc_process_req(struct bnxt_lfc_dev *blfc_dev,
 			struct bnxt_lfc_req *lfc_req)
 {
@@ -565,6 +956,12 @@ static int32_t bnxt_lfc_process_req(struct bnxt_lfc_dev *blfc_dev,
 		break;
 	case BNXT_LFC_GENERIC_HWRM_REQ:
 		rc = bnxt_lfc_process_hwrm(blfc_dev, lfc_req);
+		break;
+	case BNXT_LFC_DMABUF_CLOSE_REQ:
+		rc = bnxt_lfc_process_dmabuf_close(blfc_dev);
+		break;
+	case BNXT_LFC_EEM_DMABUF_EXPORT_FD_REQ:
+		rc = bnxt_lfc_process_dmabuf_export(blfc_dev, lfc_req);
 		break;
 	default:
 		BNXT_LFC_DEBUG(&blfc_dev->pdev->dev,
@@ -693,6 +1090,7 @@ not_taken:
 
 			if (bnxt_lfc_is_valid_pdev(blfc_dev->pdev) != true) {
 				mutex_unlock(&blfc_global_dev.bnxt_lfc_lock);
+				kfree(blfc_dev);
 				return -EINVAL;
 			}
 
@@ -703,6 +1101,7 @@ not_taken:
 				pci_dev_put(blfc_dev->pdev);
 				rtnl_unlock();
 				mutex_unlock(&blfc_global_dev.bnxt_lfc_lock);
+				kfree(blfc_dev);
 				return -EINVAL;
 			}
 

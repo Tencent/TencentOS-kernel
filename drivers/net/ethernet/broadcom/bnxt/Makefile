@@ -1,19 +1,75 @@
 #!/usr/bin/make
 # Makefile for building Linux Broadcom Gigabit ethernet driver as a module.
 # $id$
+KVER=
+ifeq ($(KVER),)
+  KVER=$(shell uname -r)
+endif
 
-KERNELDIR=$(shell pwd)
+KVER_MAJ=$(shell echo $(KVER) | cut -d "." -f1)
 
-ifneq ($(shell ls /$(KERNELDIR)/source > /dev/null 2>&1 && echo source),)
-  LINUXSRC=/$(KERNELDIR)/source
+__ARCH=$(shell uname -m)
+
+# PREFIX may be set by the RPM build to set the effective root.
+PREFIX=
+ifeq ($(shell ls /lib/modules/$(KVER)/build > /dev/null 2>&1 && echo build),)
+# SuSE source RPMs
+  _KVER=$(shell echo $(KVER) | cut -d "-" -f1,2)
+  _KFLA=$(shell echo $(KVER) | cut -d "-" -f3)
+  _ARCH=$(shell file -b /lib/modules/$(shell uname -r)/build | cut -d "/" -f5)
+  ifeq ($(_ARCH),)
+    _ARCH=$(__ARCH)
+  endif
+  ifeq ($(shell ls /usr/src/linux-$(_KVER)-obj > /dev/null 2>&1 && echo linux),)
+    ifeq ($(shell ls /usr/src/kernels/$(KVER)-$(__ARCH) > /dev/null 2>&1 && echo linux),)
+      LINUX=
+    else
+      LINUX=/usr/src/kernels/$(KVER)-$(__ARCH)
+      LINUXSRC=$(LINUX)
+    endif
+  else
+    LINUX=/usr/src/linux-$(_KVER)-obj/$(_ARCH)/$(_KFLA)
+    LINUXSRC=/usr/src/linux-$(_KVER)
+  endif
 else
-  LINUXSRC=$(KERNELDIR)
+  LINUX=/lib/modules/$(KVER)/build
+  ifeq ($(shell ls /lib/modules/$(KVER)/source > /dev/null 2>&1 && echo source),)
+    LINUXSRC=$(LINUX)
+  else
+    LINUXSRC=/lib/modules/$(KVER)/source
+  endif
+endif
+
+KDIR ?= $(srctree)
+ifneq ($(KDIR),)
+  LINUX=$(KDIR)
+  LINUXSRC=$(LINUX)
 endif
 
 ifeq ($(shell ls $(LINUXSRC)/include/uapi/linux > /dev/null 2>&1 && echo uapi),)
   UAPI=
 else
   UAPI=uapi
+endif
+
+ifeq ($(BCMMODDIR),)
+  ifeq ($(shell ls /lib/modules/$(KVER)/updates > /dev/null 2>&1 && echo 1),1)
+    BCMMODDIR=/lib/modules/$(KVER)/updates
+  else
+    ifeq ($(shell grep -q "search.*[[:space:]]updates" /etc/depmod.conf > /dev/null 2>&1 && echo 1),1)
+      BCMMODDIR=/lib/modules/$(KVER)/updates
+    else
+      ifeq ($(shell grep -q "search.*[[:space:]]updates" /etc/depmod.d/* > /dev/null 2>&1 && echo 1),1)
+        BCMMODDIR=/lib/modules/$(KVER)/updates
+      else
+        ifeq ($(shell expr $(KVER_MAJ) \>= 3), 1)
+          BCMMODDIR=/lib/modules/$(KVER)/updates
+        else
+          BCMMODDIR=/lib/modules/$(KVER)/kernel/drivers/net
+        endif
+      endif
+    endif
+  endif
 endif
 
 ifneq ($(shell grep -o "pci_enable_msix_range" $(LINUXSRC)/include/linux/pci.h),)
@@ -26,10 +82,6 @@ ifneq ($(shell grep -o "msix_cap" $(LINUXSRC)/include/linux/pci.h),)
   ifeq ($(shell grep -o "pci_dev_rh1" $(LINUXSRC)/include/linux/pci.h),)
     DISTRO_CFLAG += -DHAVE_MSIX_CAP
   endif
-endif
-
-ifneq ($(shell grep -o "module_pci_driver" $(LINUXSRC)/include/linux/pci.h),)
-  DISTRO_CFLAG += -DHAVE_MODULE_PCI_DRIVER
 endif
 
 ifneq ($(shell grep -so "GENL_ID_GENERATE" $(LINUXSRC)/include/uapi/linux/genetlink.h),)
@@ -123,6 +175,38 @@ ifneq ($(shell grep -o "dma_set_coherent_mask" $(LINUXSRC)/include/linux/dma-map
   DISTRO_CFLAG += -DHAVE_SET_COHERENT_MASK
 endif
 
+ifneq ($(shell grep "dma_buf_export" $(LINUXSRC)/include/linux/dma-buf.h | grep "exp_info"),)
+  DISTRO_CFLAG += -DHAVE_DMA_EXPORT
+endif
+
+ifneq ($(shell grep -w "dma_buf_export" $(LINUXSRC)/include/linux/dma-buf.h | grep "define"),)
+  ifneq ($(shell grep "dma_buf_export" $(LINUXSRC)/include/linux/dma-buf.h | grep "resv"),)
+    DISTRO_CFLAG += -DHAVE_DMA_EXPORT_FLAG_RESV
+  else
+    DISTRO_CFLAG += -DHAVE_DMA_EXPORT_FLAG
+  endif
+endif
+
+ifneq ($(shell grep -w "(*kmap_atomic)" $(LINUXSRC)/include/linux/dma-buf.h),)
+  DISTRO_CFLAG += -DHAVE_DMABUF_KMAP_ATOMIC
+endif
+
+ifneq ($(shell grep -w "(*kmap)" $(LINUXSRC)/include/linux/dma-buf.h),)
+  DISTRO_CFLAG += -DHAVE_DMABUF_KMAP
+endif
+
+ifneq ($(shell grep -w "(*map_atomic)" $(LINUXSRC)/include/linux/dma-buf.h),)
+  DISTRO_CFLAG += -DHAVE_DMABUF_MAP_ATOMIC
+endif
+
+ifneq ($(shell grep -w "(*map)" $(LINUXSRC)/include/linux/dma-buf.h),)
+  DISTRO_CFLAG += -DHAVE_DMABUF_MAP
+endif
+
+ifneq ($(shell grep -w "attach" $(LINUXSRC)/include/linux/dma-buf.h | grep "struct device"),)
+  DISTRO_CFLAG += -DHAVE_DMABUF_ATTACH_DEV
+endif
+
 ifneq ($(shell ls $(LINUXSRC)/include/linux/dma-attrs.h > /dev/null 2>&1 && echo dma_attrs),)
   DISTRO_CFLAG += -DHAVE_DMA_ATTRS_H
 endif
@@ -139,15 +223,18 @@ ifneq ($(shell grep -o "dma_zalloc_coherent" $(LINUXSRC)/include/linux/dma-mappi
   DISTRO_CFLAG += -DHAVE_DMA_ZALLOC_COHERENT
 endif
 
-ifneq ($(shell grep -o "ndo_add_vxlan_port" $(LINUXSRC)/include/linux/netdevice.h),)
-  DISTRO_CFLAG += -DHAVE_NDO_ADD_VXLAN
-  ifneq ($(shell grep -so "vxlan_get_rx_port" $(LINUXSRC)/include/net/vxlan.h),)
-    DISTRO_CFLAG += -DHAVE_VXLAN_GET_RX_PORT
-  endif
-endif
-
 ifneq ($(shell grep -o "ndo_udp_tunnel_add" $(LINUXSRC)/include/linux/netdevice.h),)
   DISTRO_CFLAG += -DHAVE_NDO_UDP_TUNNEL
+  ifneq ($(shell grep -A 24 "net_device_ops_extended" $(LINUXSRC)/include/linux/netdevice.h | grep -o "ndo_udp_tunnel_add"),)
+    DISTRO_CFLAG += -DHAVE_NDO_UDP_TUNNEL_RH
+  endif
+else
+  ifneq ($(shell grep -o "ndo_add_vxlan_port" $(LINUXSRC)/include/linux/netdevice.h),)
+    DISTRO_CFLAG += -DHAVE_NDO_ADD_VXLAN
+    ifneq ($(shell grep -so "vxlan_get_rx_port" $(LINUXSRC)/include/net/vxlan.h),)
+      DISTRO_CFLAG += -DHAVE_VXLAN_GET_RX_PORT
+    endif
+  endif
 endif
 
 ifneq ($(shell grep -o "struct dev_addr_list" $(LINUXSRC)/include/linux/netdevice.h),)
@@ -196,6 +283,9 @@ ifneq ($(shell ls $(LINUXSRC)/include/net/flow_offload.h > /dev/null 2>&1 && ech
   endif
   ifneq ($(shell grep -o "FLOW_ACTION_POLICE" $(LINUXSRC)/include/net/flow_offload.h),)
     DISTRO_CFLAG += -DHAVE_FLOW_ACTION_POLICE
+  endif
+  ifneq ($(shell grep -o "flow_action_basic_hw_stats_check" $(LINUXSRC)/include/net/flow_offload.h),)
+    DISTRO_CFLAG += -DHAVE_FLOW_ACTION_BASIC_HW_STATS_CHECK
   endif
 endif
 
@@ -256,6 +346,10 @@ ifneq ($(shell grep -so "ETHTOOL_LINK_MODE_25000baseCR_Full_BIT" $(LINUXSRC)/inc
   ifeq ($(shell grep -o "^struct new_ethtool_ops {" $(LINUXSRC)/include/linux/ethtool.h),)
     DISTRO_CFLAG += -DHAVE_ETHTOOL_GLINKSETTINGS_25G
   endif
+endif
+
+ifneq ($(shell grep -so "ETHTOOL_LINK_MODE_50000baseCR_Full_BIT" $(LINUXSRC)/include/$(UAPI)/linux/ethtool.h),)
+    DISTRO_CFLAG += -DHAVE_ETHTOOL_GLINKSETTINGS_PAM4
 endif
 
 ifneq ($(shell grep -so "ethtool_tcpip6_spec" $(LINUXSRC)/include/$(UAPI)/linux/ethtool.h),)
@@ -380,11 +474,8 @@ ifneq ($(shell grep -o "ndo_set_vf_vlan_rh73" $(LINUXSRC)/include/linux/netdevic
 endif
 
 ifneq ($(shell grep -o "ndo_set_vf_trust" $(LINUXSRC)/include/linux/netdevice.h),)
-  ifeq ($(shell grep -o "net_device_ops_ext" $(LINUXSRC)/include/linux/netdevice.h),)
-    DISTRO_CFLAG += -DHAVE_NDO_SET_VF_TRUST
-  endif
+  DISTRO_CFLAG += -DHAVE_NDO_SET_VF_TRUST
   ifneq ($(shell grep -A 3 "net_device_ops_extended" $(LINUXSRC)/include/linux/netdevice.h | grep -o "ndo_set_vf_trust"),)
-    DISTRO_CFLAG += -DHAVE_NDO_SET_VF_TRUST
     DISTRO_CFLAG += -DHAVE_NDO_SET_VF_TRUST_RH
   endif
 endif
@@ -553,6 +644,10 @@ ifneq ($(shell grep -so "struct xdp_rxq_info" $(LINUXSRC)/include/net/xdp.h),)
   endif
 endif
 
+ifneq ($(shell grep -so "xdp_data_hard_end" $(LINUXSRC)/include/net/xdp.h),)
+  DISTRO_CFLAG += -DHAVE_XDP_FRAME_SZ
+endif
+
 ifneq ($(shell grep -so "page_pool_release_page" $(LINUXSRC)/include/net/page_pool.h),)
   DISTRO_CFLAG += -DHAVE_PAGE_POOL_RELEASE_PAGE
 endif
@@ -649,6 +744,14 @@ ifneq ($(shell grep -o "pci_physfn" $(LINUXSRC)/include/linux/pci.h),)
   DISTRO_CFLAG += -DHAVE_PCI_PHYSFN
 endif
 
+ifneq ($(shell grep -o "pcie_flr" $(LINUXSRC)/include/linux/pci.h),)
+  DISTRO_CFLAG += -DHAVE_PCIE_FLR
+endif
+
+ifneq ($(shell grep -o "pci_get_dsn" $(LINUXSRC)/include/linux/pci.h),)
+  DISTRO_CFLAG += -DHAVE_PCI_GET_DSN
+endif
+
 ifneq ($(shell ls $(LINUXSRC)/include/$(UAPI)/linux/net_tstamp.h > /dev/null 2>&1 && echo net_tstamp),)
   ifneq ($(shell ls $(LINUXSRC)/include/linux/timecounter.h > /dev/null 2>&1 && echo timecounter),)
     ifneq ($(shell ls $(LINUXSRC)/include/linux/timekeeping.h > /dev/null 2>&1 && echo timekeeping),)
@@ -657,6 +760,10 @@ ifneq ($(shell ls $(LINUXSRC)/include/$(UAPI)/linux/net_tstamp.h > /dev/null 2>&
       endif
     endif
   endif
+endif
+
+ifneq ($(shell grep -so "gettimex64" $(LINUXSRC)/include/linux/ptp_clock_kernel.h),)
+  DISTRO_CFLAG += -DHAVE_PTP_GETTIMEX64
 endif
 
 ifneq ($(shell grep -o "time64_to_tm" $(LINUXSRC)/include/linux/time.h),)
@@ -704,6 +811,9 @@ endif
 
 ifneq ($(shell grep -so "info_get" $(LINUXSRC)/include/net/devlink.h),)
   DISTRO_CFLAG += -DHAVE_DEVLINK_INFO
+  ifneq ($(shell grep -so "devlink_info_board_serial_number_put" $(LINUXSRC)/include/net/devlink.h),)
+    DISTRO_CFLAG += -DHAVE_DEVLINK_INFO_BSN_PUT
+  endif
 endif
 
 ifneq ($(shell grep -so "flash_update" $(LINUXSRC)/include/net/devlink.h),)
@@ -730,6 +840,10 @@ ifneq ($(shell grep -so "devlink_health_reporter_recovery_done" $(LINUXSRC)/incl
   DISTRO_CFLAG += -DHAVE_DEVLINK_HEALTH_REPORTER_RECOVERY_DONE
 endif
 
+ifneq ($(shell grep -s -A 2 "devlink_health_reporter_create" $(LINUXSRC)/include/net/devlink.h | grep auto_recover),)
+  DISTRO_CFLAG += -DHAVE_DEVLINK_HEALTH_AUTO_RECOVER
+endif
+
 # Check if the file exists or not
 ifneq ($(shell grep -s "switchdev_ops" $(LINUXSRC)/include/net/switchdev.h),)
   DISTRO_CFLAG += -DHAVE_SWITCHDEV
@@ -741,6 +855,10 @@ endif
 
 ifneq ($(shell grep -so "(*ieee_delapp)" $(LINUXSRC)/include/net/dcbnl.h),)
   DISTRO_CFLAG += -DHAVE_IEEE_DELAPP
+endif
+
+ifneq ($(shell grep -so "dcb_ieee_getapp_prio_dscp_mask_map" $(LINUXSRC)/include/net/dcbnl.h),)
+  DISTRO_CFLAG += -DHAVE_DSCP_MASK_MAP
 endif
 
 ifneq ($(shell grep -o cpumask_local_spread $(LINUXSRC)/include/linux/cpumask.h),)
@@ -767,11 +885,59 @@ ifneq ($(shell grep -o hwmon_device_register_with_groups $(LINUXSRC)/include/lin
   DISTRO_CFLAG += -DHAVE_NEW_HWMON_API
 endif
 
-EXTRA_CFLAGS += ${DISTRO_CFLAG} -g -DCHIMP_FW -D__LINUX -DCONFIG_BNXT_SRIOV -DCONFIG_BNXT_DCB -DCONFIG_BNXT_FLASHDEV -DHSI_DBG_DISABLE -DCONFIG_BNXT_LFC
+ifneq ($(shell grep -o ETH_RESET_CRASHDUMP $(LINUXSRC)/include/uapi/linux/ethtool.h),)
+  DISTRO_CFLAG += -DHAVE_ETHTOOL_RESET_CRASHDUMP
+endif
+
+override EXTRA_CFLAGS += ${DISTRO_CFLAG} -g -DCHIMP_FW -D__LINUX -DCONFIG_BNXT_SRIOV -DCONFIG_BNXT_DCB -DCONFIG_BNXT_FLASHDEV -DHSI_DBG_DISABLE -DCONFIG_BNXT_LFC
 
 cflags-y += $(EXTRA_CFLAGS)
 
-BNXT_DBGFS_OBJ = bnxt_debugfs_cpt.o
+BCM_DRV = bnxt_en.ko
+ifneq ($(KERNELRELEASE),)
 
-obj-$(CONFIG_BNXT) += bnxt_en.o
-bnxt_en-y := bnxt.o bnxt_ethtool.o bnxt_sriov.o bnxt_dcb.o bnxt_ulp.o bnxt_xdp.o bnxt_ptp.o bnxt_vfr.o bnxt_tc.o bnxt_devlink.o bnxt_lfc.o bnxt_netlink.o bnxt_dim.o $(BNXT_DBGFS_OBJ) #decode_hsi.o
+ifeq ($(shell expr $(KVER_MAJ) \>= 5), 1)
+        BNXT_DBGFS_OBJ = bnxt_debugfs.o
+else
+        BNXT_DBGFS_OBJ = bnxt_debugfs_cpt.o
+endif
+
+obj-m += bnxt_en.o
+bnxt_en-y := bnxt.o bnxt_hwrm.o bnxt_ethtool.o bnxt_sriov.o bnxt_dcb.o bnxt_ulp.o bnxt_xdp.o bnxt_ptp.o bnxt_vfr.o bnxt_tc.o bnxt_devlink.o bnxt_lfc.o bnxt_netlink.o bnxt_dim.o bnxt_eem.o $(BNXT_DBGFS_OBJ) #decode_hsi.o
+
+else
+
+default:
+ifeq ($(CROSS_COMPILE),)
+	make -C $(LINUX) M=$(shell pwd) modules
+else ifneq ($(CROSS_COMPILE),)
+	make -C $(LINUXSRC) M=$(shell pwd) modules CROSS_COMPILE=$(CROSS_COMPILE) ARCH=$(ARCH)
+endif
+
+yocto_all:
+	$(MAKE) -C $(LINUXSRC) M=$(shell pwd)
+
+modules_install:
+	$(MAKE) -C $(LINUXSRC) M=$(shell pwd) modules_install
+
+endif
+
+install: default
+	@if [ "$(KDIR)" != "" ]; then \
+	echo "Cannot use install with KDIR option"; exit 2;\
+	fi
+	mkdir -p $(PREFIX)$(BCMMODDIR);
+	install -m 444 $(BCM_DRV) $(PREFIX)$(BCMMODDIR);
+	@if [ "$(PREFIX)" = "" ]; then /sbin/depmod -a ;\
+	else echo " *** Run '/sbin/depmod -a' to update the module database.";\
+	fi
+
+.PHONEY: all clean install
+
+clean:
+	-rm -f bnxt.o bnxt.mod.c bnxt.mod.o .bnxt.*.cmd *.cmd *.markers *.order *.symvers decode_hsi.o .decode_*
+	-rm -rf .tmp_versions
+	-rm -rf bnxt_en.o bnxt_en.ko bnxt_en.mod.o bnxt_en.mod.c .bnxt_en.* bnxt_sriov.o .bnxt_sriov.* bnxt_ethtool.o .bnxt_ethtool.* bnxt_dcb.o .bnxt_dcb.* bnxt_ulp.o .bnxt_ulp.* bnxt_ptp.o .bnxt_ptp.* bnxt_xdp.o .bnxt_xdp.* bnxt_lfc.o .bnxt_lfc.* bnxt_hwrm.o .bnxt_hwrm.*
+	-rm -rf bnxt_vfr.o .bnxt_vfr.* bnxt_tc.o .bnxt_tc.* bnxt_devlink.o .bnxt_devlink.* bnxt_netlink.o .bnxt_netlink.*
+	-rm -rf bnxt_dim.o .bnxt_dim.* bnxt_debugfs*.o .bnxt_debugfs* bnxt_eem.o .bnxt_eem*
+	-rm -f Module.markers Module.symvers modules.order

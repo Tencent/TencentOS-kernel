@@ -82,6 +82,18 @@ struct bnxt_gloabl_dev {
 	struct mutex bnxt_lfc_lock;
 };
 
+struct bnxt_eem_dmabuf_info {
+	int	fd;
+	u32	dir;
+	int	type;
+	int	pg_count;
+	struct dma_buf	*buf;
+	struct sg_table	sg;
+	struct device	*dev;
+	struct page	**pages;
+	struct bnxt_ctx_pg_info	*tbl;
+};
+
 int32_t bnxt_lfc_init(void);
 void bnxt_lfc_exit(void);
 

@@ -13,6 +13,7 @@
 #include "bnxt_hsi.h"
 #include "bnxt_netlink.h"
 #include "bnxt.h"
+#include "bnxt_hwrm.h"
 
 /* attribute policy */
 static struct nla_policy bnxt_netlink_policy[BNXT_NUM_ATTRS] = {
@@ -86,14 +87,13 @@ err_inval:
 static int bnxt_netlink_hwrm(struct sk_buff *skb, struct genl_info *info)
 {
 	struct nlattr **a = info->attrs;
-	int len;
-	struct sk_buff *reply = NULL;
-	struct input *req;
-	struct output *resp;
-	struct bnxt *bp = NULL;
-	int rc = 0;
-	void *hdr;
 	struct net_device *dev = NULL;
+	struct sk_buff *reply = NULL;
+	struct input *req, *nl_req;
+	struct bnxt *bp = NULL;
+	struct output *resp;
+	int len, rc;
+	void *hdr;
 
 	rc = bnxt_parse_attrs(a, &bp, &dev);
 	if (rc)
@@ -104,17 +104,9 @@ static int bnxt_netlink_hwrm(struct sk_buff *skb, struct genl_info *info)
 		goto err_rc;
 	}
 
-	if (!bp->hwrm_cmd_resp_addr) {
+	if (!bp->hwrm_dma_pool) {
 		netdev_warn(bp->dev, "HWRM interface not currently available on %s\n",
 		       dev->name);
-		rc = -EINVAL;
-		goto err_rc;
-	}
-
-	if (bp->fw_cap & BNXT_FW_CAP_KONG_MB_CHNL &&
-	    !bp->hwrm_cmd_kong_resp_addr) {
-		netdev_warn(bp->dev, "HWRM Kong interface not currently available on %s\n",
-			    dev->name);
 		rc = -EINVAL;
 		goto err_rc;
 	}
@@ -125,7 +117,7 @@ static int bnxt_netlink_hwrm(struct sk_buff *skb, struct genl_info *info)
 		goto err_rc;
 	}
 	len = nla_len(a[BNXT_ATTR_REQUEST]);
-	req = nla_data(a[BNXT_ATTR_REQUEST]);
+	nl_req = nla_data(a[BNXT_ATTR_REQUEST]);
 
 	reply = genlmsg_new(PAGE_SIZE, GFP_KERNEL);
 	if (!reply) {
@@ -134,9 +126,16 @@ static int bnxt_netlink_hwrm(struct sk_buff *skb, struct genl_info *info)
 		goto err_rc;
 	}
 
-	bnxt_hwrm_cmd_hdr_init(bp, req, req->req_type, -1, -1);
-	mutex_lock(&bp->hwrm_cmd_lock);
-	rc = _hwrm_send_message_silent(bp, req, len, HWRM_CMD_TIMEOUT);
+	rc = hwrm_req_init(bp, req, nl_req->req_type);
+	if (rc)
+		goto err_rc;
+
+	rc = hwrm_req_replace(bp, req, nl_req, len);
+	if (rc)
+		goto err_rc;
+
+	resp = hwrm_req_hold(bp, req);
+	rc = hwrm_req_send_silent(bp, req);
 	if (rc) {
 		/*
 		 * Indicate success for the hwrm transport, while letting
@@ -150,15 +149,14 @@ static int bnxt_netlink_hwrm(struct sk_buff *skb, struct genl_info *info)
 	}
 	hdr = genlmsg_put_reply(reply, info, &bnxt_netlink_family, 0,
 				BNXT_CMD_HWRM);
-	resp = (struct output *)bnxt_get_hwrm_resp_addr(bp, req);
 	if (nla_put(reply, BNXT_ATTR_RESPONSE, resp->resp_len, resp)) {
 		netdev_warn(bp->dev, "No space for response attribte\n");
-		mutex_unlock(&bp->hwrm_cmd_lock);
+		hwrm_req_drop(bp, req);
 		rc = -ENOMEM;
 		goto err_rc;
 	}
 	genlmsg_end(reply, hdr);
-	mutex_unlock(&bp->hwrm_cmd_lock);
+	hwrm_req_drop(bp, req);
 
 	dev_put(dev);
 	dev = NULL;

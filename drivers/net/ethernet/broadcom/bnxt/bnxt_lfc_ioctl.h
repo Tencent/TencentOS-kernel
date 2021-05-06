@@ -18,6 +18,8 @@ enum bnxt_lfc_req_type {
 	BNXT_LFC_NVM_SET_VAR_REQ,
 	BNXT_LFC_NVM_FLUSH_REQ,
 	BNXT_LFC_GENERIC_HWRM_REQ,
+	BNXT_LFC_EEM_DMABUF_EXPORT_FD_REQ,
+	BNXT_LFC_DMABUF_CLOSE_REQ,
 };
 
 struct bnxt_lfc_req_hdr {
@@ -93,11 +95,23 @@ struct bnxt_lfc_generic_msg {
 	__u32 value;
 };
 
+#define  BNXT_LFC_EEM_MAX_TABLE         8
+
+struct bnxt_lfc_dmabuf_fd {
+	int fd[BNXT_LFC_EEM_MAX_TABLE];
+};
+
+struct bnxt_lfc_eem_dmabuf_export_fd_req {
+	void __user *dma_fd;
+};
+
 struct bnxt_lfc_req {
 	struct bnxt_lfc_req_hdr hdr;
 	union {
 		struct bnxt_lfc_nvm_get_var_req nvm_get_var_req;
 		struct bnxt_lfc_nvm_set_var_req nvm_set_var_req;
+		struct bnxt_lfc_eem_dmabuf_export_fd_req
+					eem_dmabuf_export_fd_req;
 		__u64 hreq; /* Pointer to "struct blfc_fw_msg" */
 	} req;
 };

@@ -10,6 +10,6 @@
 #ifndef BNXT_EXTRA_VER_H
 #define BNXT_EXTRA_VER_H
 
-#define DRV_MODULE_EXTRA_VER  "-216.1.92.0"
+#define DRV_MODULE_EXTRA_VER  "-216.1.192.4"
 
 #endif
