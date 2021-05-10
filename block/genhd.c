@@ -564,7 +564,8 @@ static int exact_lock(dev_t devt, void *data)
 	return 0;
 }
 
-static void register_disk(struct device *parent, struct gendisk *disk)
+static void register_disk(struct device *parent, struct gendisk *disk,
+			  const struct attribute_group **groups)
 {
 	struct device *ddev = disk_to_dev(disk);
 	struct block_device *bdev;
@@ -579,6 +580,10 @@ static void register_disk(struct device *parent, struct gendisk *disk)
 	/* delay uevents, until we scanned partition table */
 	dev_set_uevent_suppress(ddev, 1);
 
+	if (groups) {
+		WARN_ON(ddev->groups);
+		ddev->groups = groups;
+	}
 	if (device_add(ddev))
 		return;
 	if (!sysfs_deprecated) {
@@ -640,7 +645,8 @@ exit:
  *
  * FIXME: error handling
  */
-void device_add_disk(struct device *parent, struct gendisk *disk)
+void device_add_disk(struct device *parent, struct gendisk *disk,
+		     const struct attribute_group **groups)
 {
 	struct backing_dev_info *bdi;
 	dev_t devt;
@@ -676,7 +682,7 @@ void device_add_disk(struct device *parent, struct gendisk *disk)
 
 	blk_register_region(disk_devt(disk), disk->minors, NULL,
 			    exact_match, exact_lock, disk);
-	register_disk(parent, disk);
+	register_disk(parent, disk, groups);
 	blk_register_queue(disk);
 
 	/*
