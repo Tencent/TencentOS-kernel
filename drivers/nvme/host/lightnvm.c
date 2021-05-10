@@ -939,19 +939,27 @@ static struct attribute *nvm_dev_attrs[] = {
 	NULL,
 };
 
-static const struct attribute_group nvm_dev_attr_group = {
-	.name		= "lightnvm",
-	.attrs		= nvm_dev_attrs,
+static umode_t nvm_dev_attrs_visible(struct kobject *kobj,
+					struct attribute *attr, int index)
+{
+	struct device *dev = container_of(kobj, struct device, kobj);
+	struct gendisk *disk = dev_to_disk(dev);
+	struct nvme_ns *ns = disk->private_data;
+	struct nvm_dev *ndev = ns->ndev;
+	struct device_attribute *dev_attr =
+		container_of(attr, typeof(*dev_attr), attr);
+
+	if (!ndev)
+		return 0;
+
+	if (dev_attr->show == nvm_dev_attr_show)
+		return attr->mode;
+
+	return 0;
+}
+
+const struct attribute_group nvme_nvm_attr_group = {
+	.name           = "lightnvm",
+	.attrs          = nvm_dev_attrs,
+	.is_visible     = nvm_dev_attrs_visible,
 };
-
-int nvme_nvm_register_sysfs(struct nvme_ns *ns)
-{
-	return sysfs_create_group(&disk_to_dev(ns->disk)->kobj,
-					&nvm_dev_attr_group);
-}
-
-void nvme_nvm_unregister_sysfs(struct nvme_ns *ns)
-{
-	sysfs_remove_group(&disk_to_dev(ns->disk)->kobj,
-					&nvm_dev_attr_group);
-}
