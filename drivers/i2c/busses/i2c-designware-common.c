@@ -305,6 +305,16 @@ int i2c_dw_wait_bus_not_busy(struct dw_i2c_dev *dev)
 {
 	int timeout = TIMEOUT;
 
+	/*
+	 * Workaround: When a slave goes offline and the master tries to send
+	 * it data, the bus gets stuck. Issuing abort seems to work.
+	 */
+	if (dw_readl(dev, DW_IC_STATUS) & DW_IC_STATUS_MASTER_ACTIVITY) {
+		/* printk(KERN_ERR "DEBUG: Issue abort\n"); */
+		dw_writel(dev, 3, DW_IC_ENABLE);
+		usleep_range(50000, 100000);
+	}
+
 	while (dw_readl(dev, DW_IC_STATUS) & DW_IC_STATUS_ACTIVITY) {
 		if (timeout <= 0) {
 			dev_warn(dev->dev, "timeout waiting for bus ready\n");
