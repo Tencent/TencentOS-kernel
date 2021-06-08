@@ -1366,17 +1366,39 @@ static inline int check_modstruct_version(const struct load_info *info,
 static inline int same_magic(const char *amagic, const char *bmagic,
 			     bool has_crcs)
 {
-	int l1, l2;
+	int l1, l2, l3, l4, l5, l6;
 	if (has_crcs) {
 		l1 = strcspn(amagic, " ");
 		l2 = strcspn(bmagic, " ");
-		if (l1 != l2)
+		l3 = strcspn(amagic, "-");
+		l4 = strcspn(bmagic, "-");
+
+		if (l3 > l1 || l4 > l2)
+			goto check_all;
+
+		if (l3 != l4 || memcmp(amagic, bmagic, l3))
 			return false;
-		if (memcmp(amagic, bmagic, l1))
+
+		amagic += l3;
+		bmagic += l3;
+
+		l5 = strcspn(amagic, ". ");
+		l6 = strcspn(bmagic, ". ");
+
+		if (l5 != l6)
+			goto check_all;
+
+		if (memcmp(amagic, bmagic, l5))
 			return false;
-		amagic += l1;
-		bmagic += l2;
+
+		l5 = strcspn(amagic, " ");
+		l6 = strcspn(bmagic, " ");
+
+		amagic += l5;
+		bmagic += l6;
 	}
+
+check_all:
 	return strcmp(amagic, bmagic) == 0;
 }
 #else
@@ -3261,10 +3283,19 @@ static int check_modinfo(struct module *mod, struct load_info *info, int flags)
 		err = try_to_force_load(mod, "bad vermagic");
 		if (err)
 			return err;
-	} else if (!same_magic(modmagic, vermagic, info->index.vers)) {
-		pr_err("%s: version magic '%s' should be '%s'\n",
-		       info->name, modmagic, vermagic);
-		return -ENOEXEC;
+	} else {
+		if ((strstr(mod->name, "patch") || strstr(mod->name, "hotfix")) &&
+		    strcmp(modmagic, vermagic) != 0) {
+			printk(KERN_ERR "%s: version magic '%s' should be '%s'\n",
+				mod->name, modmagic, vermagic);
+			return -ENOEXEC;
+		}
+
+		if (!same_magic(modmagic, vermagic, info->index.vers)) {
+			printk(KERN_ERR "%s: version magic '%s' should be compatible with '%s'\n",
+				mod->name, modmagic, vermagic);
+			return -ENOEXEC;
+		}
 	}
 
 	if (!get_modinfo(info, "intree")) {
