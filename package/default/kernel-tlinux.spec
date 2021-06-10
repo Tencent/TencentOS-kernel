@@ -503,6 +503,7 @@ echo -e "Remove \"%{tagged_name}%{?dist}\" Done."
 /boot/vmlinuz-%{tagged_name}%{?dist}
 /boot/System.map-%{tagged_name}%{?dist}
 /boot/config-%{tagged_name}%{?dist}
+/boot/.vmlinuz-%{tagged_name}%{?dist}.hmac
 %endif
 /boot/symvers-%{tagged_name}%{?dist}*
 /etc/sysconfig/modules/tlinux_cciss_link.modules
