@@ -13,6 +13,7 @@
 #include <linux/atomic.h>
 #include <linux/page-flags.h>
 #include <asm/page.h>
+#include <linux/kabi.h>
 
 struct notifier_block;
 
@@ -275,6 +276,10 @@ struct swap_info_struct {
 					 */
 	struct work_struct discard_work; /* discard worker */
 	struct swap_cluster_list discard_clusters; /* discard clusters list */
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+
 	struct plist_node avail_lists[0]; /*
 					   * entries in swap_avail_heads, one
 					   * entry per node.

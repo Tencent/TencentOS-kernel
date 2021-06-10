@@ -24,6 +24,7 @@
 #include <linux/rcupdate.h>
 #include <linux/seq_file.h>
 #include <linux/bitmap.h>
+#include <linux/kabi.h>
 
 #include <linux/err.h>
 #include <linux/sysctl.h>
@@ -157,6 +158,10 @@ struct neighbour {
 	struct list_head	gc_list;
 	struct rcu_head		rcu;
 	struct net_device	*dev;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+
 	u8			primary_key[0];
 } __randomize_layout;
 

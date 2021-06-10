@@ -27,6 +27,7 @@
 #include <linux/percpu-refcount.h>
 #include <linux/scatterlist.h>
 #include <linux/blkzoned.h>
+#include <linux/kabi.h>
 
 struct module;
 struct scsi_ioctl_command;
@@ -348,6 +349,10 @@ struct queue_limits {
 	unsigned char		discard_misaligned;
 	unsigned char		raid_partial_stripes_expensive;
 	enum blk_zoned_model	zoned;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
 };
 
 #ifdef CONFIG_BLK_DEV_ZONED
@@ -1535,6 +1540,9 @@ struct blk_integrity_profile {
 	integrity_prepare_fn		*prepare_fn;
 	integrity_complete_fn		*complete_fn;
 	const char			*name;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 };
 
 extern void blk_integrity_register(struct gendisk *, struct blk_integrity *);
@@ -1714,6 +1722,9 @@ struct block_device_operations {
 			    struct blk_zone *zones, unsigned int *nr_zones);
 	struct module *owner;
 	const struct pr_ops *pr_ops;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 };
 
 extern int __blkdev_driver_ioctl(struct block_device *, fmode_t, unsigned int,

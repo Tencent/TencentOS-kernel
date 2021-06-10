@@ -43,6 +43,7 @@
 #include <linux/mutex.h>
 #include <linux/netdevice.h>
 #include <linux/rcupdate.h>
+#include <linux/kabi.h>
 
 #include <net/tcp.h>
 #include <net/strparser.h>
@@ -232,6 +233,9 @@ enum tls_context_flags {
 struct cipher_context {
 	char *iv;
 	char *rec_seq;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 };
 
 union tls_crypto_context {

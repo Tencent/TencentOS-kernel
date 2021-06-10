@@ -13,6 +13,7 @@
 #include <linux/atomic.h>
 #include <net/flow_dissector.h>
 #include <linux/uidgid.h>
+#include <linux/kabi.h>
 
 /*
  * ifindex generation is per-net namespace, and loopback is
@@ -41,6 +42,9 @@ struct flowi_common {
 	kuid_t  flowic_uid;
 	struct flowi_tunnel flowic_tun_key;
 	__u32		flowic_multipath_hash;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 };
 
 union flowi_uli {
@@ -93,6 +97,8 @@ struct flowi4 {
 #define fl4_ipsec_spi		uli.spi
 #define fl4_mh_type		uli.mht.type
 #define fl4_gre_key		uli.gre_key
+
+	KABI_RESERVE(1);
 } __attribute__((__aligned__(BITS_PER_LONG/8)));
 
 static inline void flowi4_init_output(struct flowi4 *fl4, int oif,
@@ -154,6 +160,8 @@ struct flowi6 {
 #define fl6_mh_type		uli.mht.type
 #define fl6_gre_key		uli.gre_key
 	__u32			mp_hash;
+
+	KABI_RESERVE(1);
 } __attribute__((__aligned__(BITS_PER_LONG/8)));
 
 struct flowidn {

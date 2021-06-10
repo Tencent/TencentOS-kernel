@@ -4,6 +4,7 @@
 #include <linux/types.h>
 #include <linux/percpu_counter.h>
 #include <linux/cache.h>
+#include <linux/kabi.h>
 
 struct dst_entry;
 struct kmem_cachep;
@@ -39,6 +40,11 @@ struct dst_ops {
 						 const void *daddr);
 
 	struct kmem_cache	*kmem_cachep;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
+	KABI_RESERVE(4);
 
 	struct percpu_counter	pcpuc_entries ____cacheline_aligned_in_smp;
 };

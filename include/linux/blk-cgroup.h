@@ -22,6 +22,7 @@
 #include <linux/atomic.h>
 #include <linux/kthread.h>
 #include <linux/fs.h>
+#include <linux/kabi.h>
 
 /* percpu_counter batch for blkg_[rw]stats, per-cpu drift doesn't matter */
 #define BLKG_STAT_CPU_BATCH	(INT_MAX / 2)
@@ -75,6 +76,11 @@ struct blkcg {
 	unsigned int			dkstats_on;
 	struct list_head		dkstats_list;
 	struct blkcg_dkstats		*dkstats_hint;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
+	KABI_RESERVE(4);
 };
 
 /*
@@ -194,6 +200,9 @@ struct blkcg_policy {
 	blkcg_pol_free_pd_fn		*pd_free_fn;
 	blkcg_pol_reset_pd_stats_fn	*pd_reset_stats_fn;
 	blkcg_pol_stat_pd_fn		*pd_stat_fn;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 };
 
 extern struct blkcg blkcg_root;
