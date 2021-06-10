@@ -105,33 +105,6 @@ void invalidate_bdev(struct block_device *bdev)
 }
 EXPORT_SYMBOL(invalidate_bdev);
 
-/*
- * Drop all buffers & page cache for given bdev range. This function bails
- * with error if bdev has other exclusive owner (such as filesystem).
- */
-int truncate_bdev_range(struct block_device *bdev, fmode_t mode,
-			loff_t lstart, loff_t lend)
-{
-	struct block_device *claimed_bdev = NULL;
-	int err;
-
-	/*
-	 * If we don't hold exclusive handle for the device, upgrade to it
-	 * while we discard the buffer cache to avoid discarding buffers
-	 * under live filesystem.
-	 */
-	if (!(mode & FMODE_EXCL)) {
-		claimed_bdev = bdev->bd_contains;
-		err = bd_prepare_to_claim(bdev, claimed_bdev,
-					  truncate_bdev_range);
-		if (err)
-			return err;
-	}
-	truncate_inode_pages_range(bdev->bd_inode->i_mapping, lstart, lend);
-	return 0;
-}
-EXPORT_SYMBOL(truncate_bdev_range);
-
 static void set_init_blocksize(struct block_device *bdev)
 {
 	unsigned bsize = bdev_logical_block_size(bdev);
@@ -1274,6 +1247,33 @@ void bd_abort_claiming(struct block_device *bdev, struct block_device *whole,
 	spin_unlock(&bdev_lock);
 }
 EXPORT_SYMBOL(bd_abort_claiming);
+
+/*
+ * Drop all buffers & page cache for given bdev range. This function bails
+ * with error if bdev has other exclusive owner (such as filesystem).
+ */
+int truncate_bdev_range(struct block_device *bdev, fmode_t mode,
+			loff_t lstart, loff_t lend)
+{
+	struct block_device *claimed_bdev = NULL;
+	int err;
+
+	/*
+	 * If we don't hold exclusive handle for the device, upgrade to it
+	 * while we discard the buffer cache to avoid discarding buffers
+	 * under live filesystem.
+	 */
+	if (!(mode & FMODE_EXCL)) {
+		claimed_bdev = bdev->bd_contains;
+		err = bd_prepare_to_claim(bdev, claimed_bdev,
+					  truncate_bdev_range);
+		if (err)
+			return err;
+	}
+	truncate_inode_pages_range(bdev->bd_inode->i_mapping, lstart, lend);
+	return 0;
+}
+EXPORT_SYMBOL(truncate_bdev_range);
 
 #ifdef CONFIG_SYSFS
 struct bd_holder_disk {
