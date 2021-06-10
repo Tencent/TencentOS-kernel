@@ -257,6 +257,18 @@ do
     #   rm -f %{_tmppath}/kernel-$KernelVer-kabideps
     #   %_sourcedir/kabitool -s Module.symvers -o %{_tmppath}/kernel-$KernelVer-kabideps
 
+%if %{with_kabichk}
+    echo "**** kABI checking is enabled in kernel SPEC file. ****"
+    chmod 0755 scripts/check-kabi
+    if [ -e package/arm/Module.kabi_%{_target_cpu}$Flavour ]; then
+        scripts/check-kabi -k package/arm/Module.kabi_%{_target_cpu}$Flavour -s ${builddir}/Module.symvers || exit 1
+        echo "**** kABI checking SUCCESS. ****"
+    else
+        echo "**** NOTE: Cannot find reference Module.kabi file. ****"
+	exit 1
+    fi
+%endif
+
     rm -rf %buildroot/lib/modules/${KernelVer}/build/Documentation
     rm -rf %buildroot/lib/modules/${KernelVer}/build/scripts
     rm -rf %buildroot/lib/modules/${KernelVer}/build/include

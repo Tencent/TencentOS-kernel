@@ -39,6 +39,8 @@ usage()
 	echo "        Specifies the number of jobs (threads) to run make."
 	echo "     -p"
 	echo "        build perf rpm only."
+	echo "     -c"
+	echo "        enable kabi check."
 
 	echo -e "\n"
 	echo "     Note:By default, we only generate latest tag kernel for standard kernels" 
@@ -139,6 +141,14 @@ prepare_tlinux_spec()
 	spec_contents+="%define release_os ${tlinux_release} \n"
 	spec_contents+="%define tagged_name ${tagged_name} \n"
 	spec_contents+="%define extra_version ${extra_version} \n"
+	
+	if [ "${check_kabi}" = "yes" ]; then
+		check_kabi=1
+	else
+		check_kabi=0
+	fi
+	spec_contents+="%define with_kabichk ${check_kabi} \n"
+
 	sign_token=
 	if [ "$sign_token" = "" ]; then
 		sign_token=0
@@ -178,7 +188,7 @@ prepare_tlinux_spec()
 #main function
 
 #Parse Parameters
-while getopts ":t:j:hdp" option "$@"
+while getopts ":t:j:hdcp" option "$@"
 do
 	case $option in 
 	"t" )
@@ -193,6 +203,10 @@ do
 		;;
 	"p" )
 		build_perf="yes"
+		;;
+	"c" )
+		echo "-c kabi check enabled!"
+		check_kabi="yes"
 		;;
 	"?" )  
 		usage
