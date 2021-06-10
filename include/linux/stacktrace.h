@@ -4,6 +4,7 @@
 
 #include <linux/types.h>
 #include <asm/errno.h>
+#include <linux/kabi.h>
 
 struct task_struct;
 struct pt_regs;
@@ -65,6 +66,7 @@ struct stack_trace {
 	unsigned int nr_entries, max_entries;
 	unsigned long *entries;
 	int skip;	/* input argument: How many entries to skip */
+	KABI_RESERVE(1);
 };
 
 extern void save_stack_trace(struct stack_trace *trace);

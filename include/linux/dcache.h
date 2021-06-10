@@ -13,6 +13,7 @@
 #include <linux/lockref.h>
 #include <linux/stringhash.h>
 #include <linux/wait.h>
+#include <linux/kabi.h>
 
 struct path;
 struct vfsmount;
@@ -118,6 +119,11 @@ struct dentry {
 		struct hlist_bl_node d_in_lookup_hash;	/* only for in-lookup ones */
 	 	struct rcu_head d_rcu;
 	} d_u;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
+	KABI_RESERVE(4);
 } __randomize_layout;
 
 /*
@@ -147,6 +153,11 @@ struct dentry_operations {
 	struct vfsmount *(*d_automount)(struct path *);
 	int (*d_manage)(const struct path *, bool);
 	struct dentry *(*d_real)(struct dentry *, const struct inode *);
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
+	KABI_RESERVE(4);
 } ____cacheline_aligned;
 
 /*

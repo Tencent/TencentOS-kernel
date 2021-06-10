@@ -13,6 +13,7 @@
  */
 #ifndef _PCI_HOTPLUG_H
 #define _PCI_HOTPLUG_H
+#include <linux/kabi.h>
 
 /**
  * struct hotplug_slot_ops -the callbacks that the hotplug pci core can use
@@ -45,6 +46,10 @@ struct hotplug_slot_ops {
 	int (*get_latch_status)		(struct hotplug_slot *slot, u8 *value);
 	int (*get_adapter_status)	(struct hotplug_slot *slot, u8 *value);
 	int (*reset_slot)		(struct hotplug_slot *slot, int probe);
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
 };
 
 /**
@@ -61,6 +66,9 @@ struct hotplug_slot {
 	struct pci_slot			*pci_slot;
 	struct module			*owner;
 	const char			*mod_name;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 };
 
 static inline const char *hotplug_slot_name(const struct hotplug_slot *slot)

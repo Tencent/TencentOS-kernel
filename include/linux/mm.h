@@ -27,6 +27,7 @@
 #include <linux/memremap.h>
 #include <linux/overflow.h>
 #include <linux/sizes.h>
+#include <linux/kabi.h>
 
 struct mempolicy;
 struct anon_vma;
@@ -525,6 +526,7 @@ struct vm_operations_struct {
 	 */
 	struct page *(*find_special_page)(struct vm_area_struct *vma,
 					  unsigned long addr);
+	KABI_RESERVE(1);
 };
 
 static inline void vma_init(struct vm_area_struct *vma, struct mm_struct *mm)

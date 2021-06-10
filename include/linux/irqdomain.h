@@ -35,6 +35,7 @@
 #include <linux/of.h>
 #include <linux/mutex.h>
 #include <linux/radix-tree.h>
+#include <linux/kabi.h>
 
 struct device_node;
 struct irq_domain;
@@ -182,6 +183,12 @@ struct irq_domain {
 	unsigned int revmap_size;
 	struct radix_tree_root revmap_tree;
 	struct mutex revmap_tree_mutex;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
+	KABI_RESERVE(4);
+
 	unsigned int linear_revmap[];
 };
 

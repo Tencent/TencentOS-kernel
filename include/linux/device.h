@@ -27,6 +27,7 @@
 #include <linux/gfp.h>
 #include <linux/overflow.h>
 #include <asm/device.h>
+#include <linux/kabi.h>
 
 struct device;
 struct device_private;
@@ -594,6 +595,8 @@ struct class {
 	const struct dev_pm_ops *pm;
 
 	struct subsys_private *p;
+
+	KABI_RESERVE(1);
 };
 
 struct class_dev_iter {

@@ -5,6 +5,7 @@
 #include <linux/genetlink.h>
 #include <net/netlink.h>
 #include <net/net_namespace.h>
+#include <linux/kabi.h>
 
 #define GENLMSG_DEFAULT_SIZE (NLMSG_DEFAULT_SIZE - GENL_HDRLEN)
 
@@ -65,6 +66,9 @@ struct genl_family {
 	unsigned int		n_mcgrps;
 	unsigned int		mcgrp_offset;	/* private */
 	struct module		*module;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 };
 
 struct nlattr **genl_family_attrbuf(const struct genl_family *family);
@@ -140,6 +144,10 @@ struct genl_ops {
 	u8			internal_flags;
 	u8			flags;
 	u8			validate;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
 };
 
 int genl_register_family(struct genl_family *family);

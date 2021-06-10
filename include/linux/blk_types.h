@@ -9,6 +9,7 @@
 #include <linux/types.h>
 #include <linux/bvec.h>
 #include <linux/ktime.h>
+#include <linux/kabi.h>
 
 struct bio_set;
 struct bio;
@@ -192,6 +193,9 @@ struct bio {
 	struct bio_vec		*bi_io_vec;	/* the actual vec list */
 
 	struct bio_set		*bi_pool;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 
 	/*
 	 * We can inline a number of vecs at the end of the bio, to avoid

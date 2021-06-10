@@ -25,6 +25,7 @@
 #include <linux/etherdevice.h>
 #include <linux/reciprocal_div.h>
 #include <linux/if_link.h>
+#include <linux/kabi.h>
 
 #include <net/bond_3ad.h>
 #include <net/bond_alb.h>
@@ -147,6 +148,9 @@ struct bond_params {
 
 	/* 2 bytes of padding : see ether_addr_equal_64bits() */
 	u8 ad_actor_system[ETH_ALEN + 2];
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 };
 
 struct bond_parm_tbl {

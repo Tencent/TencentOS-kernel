@@ -11,6 +11,7 @@
 #include <linux/scatterlist.h>
 #include <scsi/scsi_device.h>
 #include <scsi/scsi_request.h>
+#include <linux/kabi.h>
 
 struct Scsi_Host;
 struct scsi_driver;
@@ -141,6 +142,11 @@ struct scsi_cmnd {
 	unsigned long state;	/* Command completion state */
 
 	unsigned char tag;	/* SCSI-II queued command tag */
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
+	KABI_RESERVE(4);
 };
 
 /*

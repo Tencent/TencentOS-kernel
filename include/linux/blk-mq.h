@@ -5,6 +5,7 @@
 #include <linux/blkdev.h>
 #include <linux/sbitmap.h>
 #include <linux/srcu.h>
+#include <linux/kabi.h>
 
 struct blk_mq_tags;
 struct blk_flush_queue;
@@ -72,6 +73,11 @@ struct blk_mq_hw_ctx {
 
 	struct list_head	hctx_list;
 
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
+	KABI_RESERVE(4);
+
 	/* Must be the last member - see also blk_mq_hw_ctx_size(). */
 	struct srcu_struct	srcu[0];
 };
@@ -113,11 +119,18 @@ struct blk_mq_tag_set {
 
 	struct mutex		tag_list_lock;
 	struct list_head	tag_list;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
+	KABI_RESERVE(4);
 };
 
 struct blk_mq_queue_data {
 	struct request *rq;
 	bool last;
+
+	KABI_RESERVE(1);
 };
 
 typedef blk_status_t (queue_rq_fn)(struct blk_mq_hw_ctx *,
@@ -221,6 +234,10 @@ struct blk_mq_ops {
 	 */
 	void (*show_rq)(struct seq_file *m, struct request *rq);
 #endif
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
+	KABI_RESERVE(4);
 };
 
 enum {

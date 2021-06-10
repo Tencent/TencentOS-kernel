@@ -11,6 +11,7 @@
 
 #include <linux/blkdev.h>
 #include <scsi/scsi_request.h>
+#include <linux/kabi.h>
 
 struct request;
 struct device;
@@ -60,6 +61,9 @@ struct bsg_job {
 	struct bio *bidi_bio;
 
 	void *dd_data;		/* Used for driver-specific storage */
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 };
 
 void bsg_job_done(struct bsg_job *job, int result,

@@ -19,6 +19,7 @@
 #include <linux/atomic.h>
 #include <linux/user_namespace.h>
 #include <linux/refcount.h>
+#include <linux/kabi.h>
 
 /*
  * IN_* from inotfy.h lines up EXACTLY with FS_*, this is so we can easily
@@ -210,6 +211,11 @@ struct fsnotify_group {
 		} fanotify_data;
 #endif /* CONFIG_FANOTIFY */
 	};
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
+	KABI_RESERVE(4);
 };
 
 /* when calling fsnotify tell it if the data is a path or inode */

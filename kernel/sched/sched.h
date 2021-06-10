@@ -401,6 +401,8 @@ struct task_group {
 	struct uclamp_se	uclamp[UCLAMP_CNT];
 #endif
 
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 };
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
@@ -575,6 +577,8 @@ struct cfs_rq {
 	struct list_head	throttled_list;
 #endif /* CONFIG_CFS_BANDWIDTH */
 #endif /* CONFIG_FAIR_GROUP_SCHED */
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 };
 
 static inline int rt_bandwidth_enabled(void)
@@ -782,6 +786,11 @@ struct root_domain {
 	 * CPUs of the rd. Protected by RCU.
 	 */
 	struct perf_domain __rcu *pd;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
+	KABI_RESERVE(4);
 };
 
 extern void init_defrootdomain(void);
@@ -1002,6 +1011,9 @@ struct rq {
 	/* Must be inspected within a rcu lock section */
 	struct cpuidle_state	*idle_state;
 #endif
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 };
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
@@ -1412,6 +1424,9 @@ struct sched_group {
 	struct sched_group_capacity *sgc;
 	int			asym_prefer_cpu;	/* CPU of highest priority in group */
 
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+
 	/*
 	 * The CPUs this group covers.
 	 *
@@ -1779,6 +1794,10 @@ struct sched_class {
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	void (*task_change_group)(struct task_struct *p, int type);
 #endif
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
+	KABI_RESERVE(3);
+	KABI_RESERVE(4);
 };
 
 static inline void put_prev_task(struct rq *rq, struct task_struct *prev)
