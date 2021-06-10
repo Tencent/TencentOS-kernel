@@ -39,6 +39,8 @@ usage()
 	echo "        disable module digital signature."
 	echo "     -p"
 	echo "        build perf rpm only."
+	echo "     -c"
+	echo "        enable kabi check."
 
 	echo -e "\n"
 	echo "     Note:By default, we only generate latest tag kernel for standard kernels" 
@@ -117,6 +119,13 @@ prepare_tlinux_spec()
 	spec_contents+="%define tagged_name ${tagged_name} \n"
 	spec_contents+="%define extra_version ${extra_version} \n"
 	
+	if [ "${check_kabi}" = "yes" ]; then
+		check_kabi=1
+	else
+		check_kabi=0
+	fi
+	spec_contents+="%define with_kabichk ${check_kabi} \n"
+
 	if [ -z "${kernel_type}" ];then
 		spec_contents+="%define kernel_all_types ${kernel_default_types[@]} \n"
 	else
@@ -145,7 +154,7 @@ prepare_tlinux_spec()
 #main function
 
 #Parse Parameters
-while getopts ":t:k:j:hdpx:" option "$@"
+while getopts ":t:k:j:hdcpx:" option "$@"
 do
 	case $option in 
 	"t" )
@@ -160,6 +169,10 @@ do
 		;;
 	"p" )
 		build_perf="yes"
+		;;
+	"c" )
+		echo "-c kabi check enabled!"
+		check_kabi="yes"
 		;;
 	"?" )  
 		usage
