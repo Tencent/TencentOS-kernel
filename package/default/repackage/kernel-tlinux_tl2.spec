@@ -31,7 +31,7 @@ Version: %{version}
 Release: %{release_os}%{?rdist}
 License: GPLv2
 Vendor: Tencent
-Packager: tlinux team <g_APD_SRDC_OS@tencent.com>
+Packager: tlinux team <g_CAPD_SRDC_OS@tencent.com>
 Provides: kernel = %{version}-%{release}
 Group: System Environment/Kernel
 Source0: %{name}-%{version}_bin.tar.gz
@@ -51,7 +51,7 @@ BuildRequires: net-tools
 %endif
 
 %description
-This package contains tlinux kernel for physical machine
+This package contains tlinux kernel, the core of operating system.
 
 %package debuginfo-common
 Summary: tlinux kernel vmlinux for crash debug

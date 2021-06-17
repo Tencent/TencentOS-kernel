@@ -18,7 +18,7 @@ Version: %{version}
 Release: %{release_os}%{?dist}
 License: GPLv2
 Vendor: Tencent
-Packager: tlinux team <g_APD_SRDC_OS@tencent.com>
+Packager: tlinux team <g_CAPD_SRDC_OS@tencent.com>
 Provides: perf = %{version}-%{release}
 Source0: %{name}-%{version}.tar.gz
 URL: http://www.tencent.com
