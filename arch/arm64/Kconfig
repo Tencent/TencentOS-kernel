@@ -325,6 +325,27 @@ menu "ARM errata workarounds via the alternatives framework"
 config ARM64_WORKAROUND_CLEAN_CACHE
 	bool
 
+config ALTRA_ERRATUM_82288
+	bool "Ampere Altra: 82288: PCIE_65: PCIe Root Port outbound write combining issue"
+	default y
+	help
+	  This option adds an alternative code sequence to work around
+	  Ampere Altra erratum 82288.
+
+	  PCIe device drivers may map MMIO space as Normal, non-cacheable
+	  memory attribute (e.g. Linux kernel drivers mapping MMIO
+	  using ioremap_wc). This may be for the purpose of enabling write
+	  combining or unaligned accesses. This can result in data corruption
+	  on the PCIe interface’s outbound MMIO writes due to issues with the
+	  write-combining operation.
+
+	  The workaround modifies software that maps PCIe MMIO space as Normal,
+	  non-cacheable memory (e.g. ioremap_wc) to instead Device,
+	  non-gatheringmemory (e.g. ioremap). And all memory operations on PCIe
+	  MMIO space must be strictly aligned.
+
+	  If unsure, say Y.
+
 config ARM64_ERRATUM_826319
 	bool "Cortex-A53: 826319: System might deadlock if a write cannot complete until read data is accepted"
 	default y
