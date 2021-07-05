@@ -79,6 +79,7 @@
 #include <asm/tlb.h>
 #include <asm/tlbflush.h>
 #include <asm/pgtable.h>
+#include <linux/sli.h>
 
 #include "internal.h"
 
@@ -3958,8 +3959,15 @@ static vm_fault_t handle_pte_fault(struct vm_fault *vmf)
 			return do_fault(vmf);
 	}
 
-	if (!pte_present(vmf->orig_pte))
-		return do_swap_page(vmf);
+	if (!pte_present(vmf->orig_pte)) {
+		vm_fault_t retval;
+		u64 start;
+
+		sli_memlat_stat_start(&start);
+		retval = do_swap_page(vmf);
+		sli_memlat_stat_end(MEM_LAT_DIRECT_SWAPIN, start);
+		return retval;
+	}
 
 	if (pte_protnone(vmf->orig_pte) && vma_is_accessible(vmf->vma))
 		return do_numa_page(vmf);
