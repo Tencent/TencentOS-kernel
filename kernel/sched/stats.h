@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 */
+#include <linux/sli.h>
 
 #ifdef CONFIG_SCHEDSTATS
 
@@ -182,8 +183,9 @@ static void sched_info_arrive(struct rq *rq, struct task_struct *t)
 	t->sched_info.run_delay += delta;
 	t->sched_info.last_arrival = now;
 	t->sched_info.pcount++;
-
 	rq_sched_info_arrive(rq, delta);
+	sli_schedlat_stat(t,SCHEDLAT_RUNDELAY,delta);
+	sli_schedlat_syscall_schedin(t);
 }
 
 /*
@@ -215,6 +217,8 @@ static inline void sched_info_depart(struct rq *rq, struct task_struct *t)
 
 	if (t->state == TASK_RUNNING)
 		sched_info_queued(rq, t);
+
+	sli_schedlat_syscall_schedout(t);
 }
 
 /*

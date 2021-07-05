@@ -23,6 +23,7 @@
 #include "sched.h"
 
 #include <trace/events/sched.h>
+#include <linux/sli.h>
 
 /*
  * Targeted preemption latency for CPU-bound tasks:
@@ -911,6 +912,7 @@ update_stats_wait_end(struct cfs_rq *cfs_rq, struct sched_entity *se)
 			return;
 		}
 		trace_sched_stat_wait(p, delta);
+		sli_schedlat_stat(p,SCHEDLAT_WAIT,delta);
 	}
 
 	__schedstat_set(se->statistics.wait_max,
@@ -948,6 +950,7 @@ update_stats_enqueue_sleeper(struct cfs_rq *cfs_rq, struct sched_entity *se)
 		__schedstat_add(se->statistics.sum_sleep_runtime, delta);
 
 		if (tsk) {
+			sli_schedlat_stat(tsk,SCHEDLAT_SLEEP,delta);
 			account_scheduler_latency(tsk, delta >> 10, 1);
 			trace_sched_stat_sleep(tsk, delta);
 		}
@@ -966,9 +969,12 @@ update_stats_enqueue_sleeper(struct cfs_rq *cfs_rq, struct sched_entity *se)
 
 		if (tsk) {
 			if (tsk->in_iowait) {
+				sli_schedlat_stat(tsk,SCHEDLAT_IOBLOCK,delta);
 				__schedstat_add(se->statistics.iowait_sum, delta);
 				__schedstat_inc(se->statistics.iowait_count);
 				trace_sched_stat_iowait(tsk, delta);
+			} else {
+				sli_schedlat_stat(tsk,SCHEDLAT_BLOCK,delta);
 			}
 
 			trace_sched_stat_blocked(tsk, delta);
