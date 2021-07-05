@@ -57,6 +57,7 @@
 
 #include <linux/swapops.h>
 #include <linux/balloon_compaction.h>
+#include <linux/sli.h>
 
 #include "internal.h"
 
@@ -839,6 +840,7 @@ typedef enum {
 static pageout_t pageout(struct page *page, struct address_space *mapping,
 			 struct scan_control *sc)
 {
+	u64 start;
 	/*
 	 * If the page is dirty, only perform writeback if that write
 	 * will be non-blocking.  To prevent this allocation from being
@@ -887,7 +889,14 @@ static pageout_t pageout(struct page *page, struct address_space *mapping,
 		};
 
 		SetPageReclaim(page);
+		if (!current_is_kswapd())
+			sli_memlat_stat_start(&start);
 		res = mapping->a_ops->writepage(page, &wbc);
+		if (!current_is_kswapd())
+			sli_memlat_stat_end(global_reclaim(sc) ?
+					      MEM_LAT_GLOBAL_DIRECT_SWAPOUT :
+					      MEM_LAT_MEMCG_DIRECT_SWAPOUT,
+					      start);
 		if (res < 0)
 			handle_write_error(mapping, page, res);
 		if (res == AOP_WRITEPAGE_ACTIVATE) {
