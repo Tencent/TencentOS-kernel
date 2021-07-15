@@ -328,9 +328,9 @@ int sli_memlat_stat_show(struct seq_file *m, struct cgroup *cgrp)
 void sli_memlat_stat_start(u64 *start)
 {
 	if (static_branch_likely(&sli_no_enabled))
-		return;
-
-	*start = local_clock();
+		*start = 0;
+	else
+		*start = local_clock();
 }
 
 void sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start)
