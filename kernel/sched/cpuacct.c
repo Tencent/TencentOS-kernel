@@ -361,6 +361,14 @@ static struct cftype files[] = {
 		.name = "uptime",
 		.seq_show = cpuacct_uptime_show,
 	},
+	{
+		.name = "mbuf",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cgroup_mbuf_show,
+		.seq_start = cgroup_mbuf_start,
+		.seq_next = cgroup_mbuf_next,
+		.seq_stop = cgroup_mbuf_stop,
+	},
 	{ }	/* terminate */
 };
 
