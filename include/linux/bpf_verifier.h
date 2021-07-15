@@ -386,6 +386,7 @@ struct bpf_subprog_info {
 	u32 linfo_idx; /* The idx to the main_prog->aux->linfo */
 	u16 stack_depth; /* max. stack depth used by this function */
 	bool has_tail_call;
+	bool is_async_cb;
 };
 
 /* single container for all structs
