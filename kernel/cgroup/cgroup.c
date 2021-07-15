@@ -5508,27 +5508,36 @@ fail:
 	return ret;
 }
 
-/* mbuf only support cpu/memory/io/net cgroup */
+/*
+ * mbuf only support cpu/memory/io/net cgroup in V2, and only support
+ * cpuacct cgroup in V1.
+ */
 static inline bool cgroup_need_mbuf(struct cgroup *cgrp)
 {
+	if (cgroup_on_dfl(cgrp)){
 #if IS_ENABLED(CONFIG_CGROUP_SCHED)
-	if (cgroup_css(cgrp, cgroup_subsys[cpu_cgrp_id]))
-		return true;
+		if (cgroup_css(cgrp, cgroup_subsys[cpu_cgrp_id]))
+			return true;
 #endif
 
 #if IS_ENABLED(CONFIG_BLK_CGROUP)
-	if (cgroup_css(cgrp, cgroup_subsys[io_cgrp_id]))
-		return true;
+		if (cgroup_css(cgrp, cgroup_subsys[io_cgrp_id]))
+			return true;
 #endif
 
 #if IS_ENABLED(CONFIG_MEMCG)
-	if (cgroup_css(cgrp, cgroup_subsys[memory_cgrp_id]))
-		return true;
+		if (cgroup_css(cgrp, cgroup_subsys[memory_cgrp_id]))
+			return true;
 #endif
 
 #if IS_ENABLED(CONFIG_CGROUP_NET_CLASSID)
-	if (cgroup_css(cgrp, cgroup_subsys[net_cls_cgrp_id]))
-		return true;
+		if (cgroup_css(cgrp, cgroup_subsys[net_cls_cgrp_id]))
+			return true;
+#endif
+	} else
+#if IS_ENABLED(CONFIG_CGROUP_NET_CLASSID)
+		if (cgroup_css(cgrp, cgroup_subsys[cpuacct_cgrp_id]))
+			return true;
 #endif
 
 	return false;
@@ -5585,7 +5594,7 @@ int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
 	if (ret)
 		goto out_destroy;
 
-	if(sysctl_qos_mbuf_enable && cgroup_on_dfl(cgrp) && cgroup_need_mbuf(cgrp))
+	if(sysctl_qos_mbuf_enable && cgroup_need_mbuf(cgrp))
 		cgrp->mbuf = mbuf_slot_alloc(cgrp);
 
 	TRACE_CGROUP_PATH(mkdir, cgrp);
