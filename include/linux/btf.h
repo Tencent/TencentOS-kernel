@@ -16,6 +16,7 @@ union bpf_attr;
 
 extern const struct file_operations btf_fops;
 
+void btf_get(struct btf *btf);
 void btf_put(struct btf *btf);
 int btf_new_fd(const union bpf_attr *attr);
 struct btf *btf_get_by_fd(int fd);
