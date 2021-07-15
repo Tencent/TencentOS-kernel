@@ -50,7 +50,14 @@ struct bpf_reg_state {
 		/* valid when type == CONST_PTR_TO_MAP | PTR_TO_MAP_VALUE |
 		 *   PTR_TO_MAP_VALUE_OR_NULL
 		 */
-		struct bpf_map *map_ptr;
+		struct {
+			struct bpf_map *map_ptr;
+			/* To distinguish map lookups from outer map
+			 * the map_uid is non-zero for registers
+			 * pointing to inner maps.
+			 */
+			u32 map_uid;
+		};
 
 		u32 btf_id; /* for PTR_TO_BTF_ID */
 		u32 mem_size; /* for PTR_TO_MEM | PTR_TO_MEM_OR_NULL */
