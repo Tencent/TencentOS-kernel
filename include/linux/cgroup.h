@@ -960,4 +960,5 @@ static inline void cgroup_bpf_put(struct cgroup *cgrp) {}
 #endif /* CONFIG_CGROUP_BPF */
 
 ssize_t mbuf_print(struct cgroup *cgrp, const char *fmt, ...);
+struct cgroup *get_cgroup_from_task(struct task_struct *task);
 #endif /* _LINUX_CGROUP_H */

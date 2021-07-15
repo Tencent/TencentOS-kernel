@@ -3763,6 +3763,33 @@ static int mbuf_show(struct seq_file *s, void *v)
 	return 0;
 }
 
+/*
+ * Get cgroup struct from task_struct for mbuf and sli.
+ *
+ * In cgroup V1, return cpuacct cgroup, and if cpuacct cgroup is root, df1_cgrp
+ * is returned, but is harmless.
+ *
+ * In cgroup V2, just return task_struct.cgroups.dfl_cgrp.
+ */
+struct cgroup *get_cgroup_from_task(struct task_struct *task)
+{
+       struct cgroup *cgrp;
+
+       /* First, try to get cpuacct cgroup for V1*/
+       cgrp = task_cgroup(task, cpuacct_cgrp_id);
+       if (cgrp && cgrp->level)
+               return cgrp;
+
+       /*
+        * If can not find cpuacct cgroup or cpuacct cgroup is root, just return
+        * dfl_cgrp.
+        */
+       cgrp = task_dfl_cgroup(task);
+
+       return cgrp;
+}
+
+
 ssize_t mbuf_print(struct cgroup *cgrp, const char *fmt, ...)
 {
 	struct mbuf_slot *mb;
