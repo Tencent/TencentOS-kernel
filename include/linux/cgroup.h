@@ -961,4 +961,10 @@ static inline void cgroup_bpf_put(struct cgroup *cgrp) {}
 
 ssize_t mbuf_print(struct cgroup *cgrp, const char *fmt, ...);
 struct cgroup *get_cgroup_from_task(struct task_struct *task);
+ssize_t mbuf_print_task(struct task_struct *task, const char *fmt, ...);
+void *cgroup_mbuf_start(struct seq_file *s, loff_t *pos);
+void *cgroup_mbuf_next(struct seq_file *s, void *v, loff_t *pos);
+void cgroup_mbuf_stop(struct seq_file *s, void *v);
+int cgroup_mbuf_show(struct seq_file *s, void *v);
+
 #endif /* _LINUX_CGROUP_H */

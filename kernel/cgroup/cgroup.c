@@ -3686,7 +3686,7 @@ static void cgroup_pressure_release(struct kernfs_open_file *of)
 }
 #endif /* CONFIG_PSI */
 
-static void *mbuf_start(struct seq_file *s, loff_t *pos)
+void *cgroup_mbuf_start(struct seq_file *s, loff_t *pos)
 {
 	struct cgroup *cgrp = seq_css(s)->cgroup;
 	struct mbuf_slot *mb = cgrp->mbuf;
@@ -3718,7 +3718,7 @@ out:
 	return mb->udesc;
 }
 
-static void *mbuf_next(struct seq_file *s, void *v, loff_t *pos)
+void *cgroup_mbuf_next(struct seq_file *s, void *v, loff_t *pos)
 {
 	struct mbuf_user_desc *udesc = (struct mbuf_user_desc *)v;
 	struct cgroup *cgrp = seq_css(s)->cgroup;
@@ -3733,7 +3733,7 @@ static void *mbuf_next(struct seq_file *s, void *v, loff_t *pos)
 	return udesc;
 }
 
-static void mbuf_stop(struct seq_file *s, void *v)
+void cgroup_mbuf_stop(struct seq_file *s, void *v)
 {
 	struct cgroup *cgrp = seq_css(s)->cgroup;
 	struct mbuf_user_desc *desc;
@@ -3747,7 +3747,7 @@ static void mbuf_stop(struct seq_file *s, void *v)
 	}
 }
 
-static int mbuf_show(struct seq_file *s, void *v)
+int cgroup_mbuf_show(struct seq_file *s, void *v)
 {
 	ssize_t ret;
 	struct mbuf_user_desc *udesc = (struct mbuf_user_desc *)v;
@@ -3789,6 +3789,32 @@ struct cgroup *get_cgroup_from_task(struct task_struct *task)
        return cgrp;
 }
 
+/* Store info to mbuf according task_struct */
+ssize_t mbuf_print_task(struct task_struct *task, const char *fmt, ...)
+{
+	struct cgroup *cgrp;
+	struct mbuf_slot *mb;
+	va_list args;
+
+	cgrp = get_cgroup_from_task(task);
+	mb = cgrp->mbuf;
+	if(!sysctl_qos_mbuf_enable || !mb)
+		goto out;
+
+	if(!__ratelimit(&mb->ratelimit)) {
+		goto out;
+	}
+
+	if (mb->ops) {
+		va_start(args, fmt);
+		mb->ops->write(cgrp, fmt, args);
+		va_end(args);
+	}
+
+out:
+	return 0;
+}
+EXPORT_SYMBOL(mbuf_print_task);
 
 ssize_t mbuf_print(struct cgroup *cgrp, const char *fmt, ...)
 {
@@ -5075,10 +5101,10 @@ static struct cftype cgroup_base_files[] = {
 	{
 		.name = "mbuf",
 		.flags = CFTYPE_NOT_ON_ROOT,
-		.seq_show = mbuf_show,
-		.seq_start = mbuf_start,
-		.seq_next = mbuf_next,
-		.seq_stop = mbuf_stop,
+		.seq_show = cgroup_mbuf_show,
+		.seq_start = cgroup_mbuf_start,
+		.seq_next = cgroup_mbuf_next,
+		.seq_stop = cgroup_mbuf_stop,
 	},
 	{ }	/* terminate */
 };
@@ -5535,7 +5561,7 @@ static inline bool cgroup_need_mbuf(struct cgroup *cgrp)
 			return true;
 #endif
 	} else
-#if IS_ENABLED(CONFIG_CGROUP_NET_CLASSID)
+#if IS_ENABLED(CONFIG_CGROUP_CPUACCT)
 		if (cgroup_css(cgrp, cgroup_subsys[cpuacct_cgrp_id]))
 			return true;
 #endif

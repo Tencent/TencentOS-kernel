@@ -32,7 +32,6 @@
 #include <linux/posix-timers.h>
 #include <linux/rseq.h>
 #include <linux/kabi.h>
-
 /* task_struct member predeclarations (sorted alphabetically): */
 struct audit_context;
 struct backing_dev_info;
