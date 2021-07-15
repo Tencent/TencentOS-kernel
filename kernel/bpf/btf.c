@@ -924,6 +924,11 @@ static void btf_free_rcu(struct rcu_head *rcu)
 	btf_free(btf);
 }
 
+void btf_get(struct btf *btf)
+{
+	refcount_inc(&btf->refcnt);
+}
+
 void btf_put(struct btf *btf)
 {
 	if (btf && refcount_dec_and_test(&btf->refcnt)) {
