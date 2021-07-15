@@ -3460,6 +3460,32 @@ union bpf_attr {
 	FN(reserve_hdr_opt),		\
 	FN(inode_storage_get),		\
 	FN(inode_storage_delete),	\
+	FN(d_path),			\
+	FN(copy_from_user),		\
+	FN(snprintf_btf),		\
+	FN(seq_printf_btf),		\
+	FN(skb_cgroup_classid),		\
+	FN(redirect_neigh),		\
+	FN(per_cpu_ptr),		\
+	FN(this_cpu_ptr),		\
+	FN(redirect_peer),		\
+	FN(task_storage_get),		\
+	FN(task_storage_delete),	\
+	FN(get_current_task_btf),	\
+	FN(bprm_opts_set),		\
+	FN(ktime_get_coarse_ns),	\
+	FN(ima_inode_hash),		\
+	FN(sock_from_file),		\
+	FN(check_mtu),			\
+	FN(for_each_map_elem),		\
+	FN(snprintf),			\
+	FN(sys_bpf),			\
+	FN(btf_find_by_name_kind),	\
+	FN(sys_close),			\
+	FN(timer_init),			\
+	FN(timer_set_callback),		\
+	FN(timer_start),		\
+	FN(timer_cancel),		\
 
 /* integer value in 'imm' field of BPF_CALL instruction selects which helper
  * function eBPF program intends to call
@@ -4290,6 +4316,11 @@ struct bpf_line_info {
 struct bpf_spin_lock {
 	__u32	val;
 };
+
+struct bpf_timer {
+	__u64 :64;
+	__u64 :64;
+} __attribute__((aligned(8)));
 
 struct bpf_sysctl {
 	__u32	write;		/* Sysctl is being read (= 0) or written (= 1).
