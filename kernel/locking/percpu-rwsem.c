@@ -102,7 +102,7 @@ void __percpu_up_read(struct percpu_rw_semaphore *sem)
 	 * zero, as that is the only time it matters) they will also see our
 	 * critical section.
 	 */
-	__this_cpu_dec(*sem->read_count);
+	this_cpu_dec(*sem->read_count);
 
 	/* Prod writer to recheck readers_active */
 	rcuwait_wake_up(&sem->writer);
