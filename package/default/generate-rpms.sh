@@ -208,12 +208,12 @@ fi
 
 
 if [ ! -e "${build_srcdir}" ]; then
-	mkdir $build_srcdir
+	mkdir -p $build_srcdir
 	[ $? == 1 ] &&  exit 1
 fi
 
 if [ ! -e "${build_specdir}" ]; then
-	mkdir $build_specdir
+	mkdir -p $build_specdir
 	[ $? == 1 ] &&  exit 1
 fi
 
