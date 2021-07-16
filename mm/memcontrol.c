@@ -85,7 +85,7 @@ struct mem_cgroup *root_mem_cgroup __read_mostly;
 static bool cgroup_memory_nosocket;
 
 /* Kernel memory accounting disabled? */
-static bool cgroup_memory_nokmem;
+static bool cgroup_memory_nokmem = true;
 
 /* Whether the swap controller is active */
 #ifdef CONFIG_MEMCG_SWAP
@@ -6230,8 +6230,8 @@ static int __init cgroup_memory(char *s)
 			continue;
 		if (!strcmp(token, "nosocket"))
 			cgroup_memory_nosocket = true;
-		if (!strcmp(token, "nokmem"))
-			cgroup_memory_nokmem = true;
+		if (!strcmp(token, "kmem"))
+			cgroup_memory_nokmem = false;
 	}
 	return 0;
 }
