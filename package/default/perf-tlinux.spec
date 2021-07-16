@@ -25,6 +25,7 @@ URL: http://www.tencent.com
 ExclusiveArch:  x86_64
 Distribution: Tencent Linux
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-build
+BuildRequires: dwarves >= 1.13
 BuildRequires: wget bc module-init-tools curl
 BuildRequires: elfutils-devel zlib-devel binutils-devel newt-devel python-devel perl(ExtUtils::Embed) bison flex
 BuildRequires: xmlto asciidoc
