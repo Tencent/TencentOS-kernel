@@ -6,6 +6,7 @@
  * (balbir@in.ibm.com).
  */
 #include "sched.h"
+#include <linux/sli.h>
 
 /* Time spent by the tasks of the CPU accounting group executing in ... */
 enum cpuacct_stat_index {
@@ -323,6 +324,13 @@ static int cpuacct_uptime_show(struct seq_file *sf, void *v)
 	return 0;
 }
 
+static int cpuacct_sli_show(struct seq_file *sf, void *v)
+{
+	struct cgroup *cgrp = seq_css(sf)->cgroup;
+
+	return sli_schedlat_stat_show(sf, cgrp);
+}
+
 static struct cftype files[] = {
 	{
 		.name = "usage",
@@ -368,6 +376,11 @@ static struct cftype files[] = {
 		.seq_start = cgroup_mbuf_start,
 		.seq_next = cgroup_mbuf_next,
 		.seq_stop = cgroup_mbuf_stop,
+	},
+	{
+		.name = "sli",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cpuacct_sli_show,
 	},
 	{ }	/* terminate */
 };

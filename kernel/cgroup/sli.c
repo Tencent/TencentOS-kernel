@@ -34,7 +34,7 @@ struct schedlat_thr {
 	u64 schedlat_ioblock_thr;
 	u64 schedlat_sleep_thr;
 	u64 schedlat_rundelay_thr;
-	u64 schedlat_longsys_thr;
+	u64 schedlat_longsyscall_thr;
 };
 
 static DEFINE_STATIC_KEY_TRUE(sli_no_enabled);
@@ -58,7 +58,7 @@ static const struct member_offset schedlat_member_offset[] = {
 	{ "schedlat_ioblock_thr=",offsetof(struct schedlat_thr,schedlat_ioblock_thr) },
 	{ "schedlat_sleep_thr=",offsetof(struct schedlat_thr,schedlat_sleep_thr) },
 	{ "schedlat_rundelay_thr=",offsetof(struct schedlat_thr,schedlat_rundelay_thr) },
-	{ "schedlat_longsys_thr=",offsetof(struct schedlat_thr,schedlat_longsys_thr) },
+	{ "schedlat_longsyscall_thr=",offsetof(struct schedlat_thr,schedlat_longsyscall_thr) },
 	{ },
 };
 
@@ -197,8 +197,8 @@ static u64 get_schedlat_threshold(enum sli_memlat_stat_item sidx)
 	case SCHEDLAT_RUNDELAY:
 		threshold = schedlat_threshold.schedlat_rundelay_thr;
 		break;
-	case SCHEDLAT_LONGSYS:
-		threshold = schedlat_threshold.schedlat_longsys_thr;
+	case SCHEDLAT_LONGSYSCALL:
+		threshold = schedlat_threshold.schedlat_longsyscall_thr;
 		break;
 	default:
 		break;
@@ -230,8 +230,8 @@ static char * get_schedlat_name(enum sli_memlat_stat_item sidx)
 	case SCHEDLAT_RUNDELAY:
 		name = "schedlat_rundelay";
 		break;
-	case SCHEDLAT_LONGSYS:
-		name = "schedlat_longsys";
+	case SCHEDLAT_LONGSYSCALL:
+		name = "schedlat_longsyscall";
 		break;
 	default:
 		break;
@@ -337,7 +337,6 @@ void sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start)
 {
 	enum sli_memlat_count cidx;
 	u64 duration,threshold;
-	struct mem_cgroup *memcg;
 	struct cgroup *cgrp;
 
 	if (static_branch_likely(&sli_no_enabled) || start == 0)
@@ -348,13 +347,7 @@ void sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start)
 	cidx = get_memlat_count_idx(duration);
 
 	rcu_read_lock();
-	memcg = mem_cgroup_from_task(current);
-	if (!memcg || memcg == root_mem_cgroup ) {
-		rcu_read_unlock();
-		return;
-	}
-
-	cgrp = memcg->css.cgroup;
+	cgrp = get_cgroup_from_task(current);
 	if (cgrp && cgrp->sli_memlat_stat_percpu) {
 		this_cpu_inc(cgrp->sli_memlat_stat_percpu->item[sidx][cidx]);
 		if (duration >= threshold)
@@ -446,10 +439,9 @@ static const struct file_operations sli_memlat_thr_fops = {
 void sli_schedlat_stat(struct task_struct *task,enum sli_schedlat_stat_item sidx, u64 delta)
 {
 	enum sli_schedlat_count cidx;
-	struct mem_cgroup *memcg;
-	struct cgroup *cgrp;
+	struct cgroup *cgrp = NULL;
 	u64 threshold;
-
+	
 	if (static_branch_likely(&sli_no_enabled) || !task)
 		return;
 
@@ -457,18 +449,15 @@ void sli_schedlat_stat(struct task_struct *task,enum sli_schedlat_stat_item sidx
 	cidx = get_schedlat_count_idx(delta);
 
 	rcu_read_lock();
-	memcg = mem_cgroup_from_task(task);
-	if (!memcg || memcg == root_mem_cgroup ) {
-		rcu_read_unlock();
-		return;
-	}
-	cgrp = memcg->css.cgroup;
-
+	
+	cgrp = get_cgroup_from_task(task);
+	
 	if (cgrp && cgrp->sli_schedlat_stat_percpu) {
 		this_cpu_inc(cgrp->sli_schedlat_stat_percpu->item[sidx][cidx]);
 		if (delta >= threshold)
 			store_task_stack(cgrp,task,delta);
 	}
+
 	rcu_read_unlock();
 }
 
@@ -489,7 +478,6 @@ static void sli_schedlat_syscall_stat(struct task_struct *task,
 				u64 delta)
 {
 	enum sli_schedlat_count cidx;
-	struct mem_cgroup *memcg;
 	struct cgroup *cgrp;
 	u64 threshold;
 
@@ -500,13 +488,7 @@ static void sli_schedlat_syscall_stat(struct task_struct *task,
 	cidx = get_schedlat_count_idx(delta);
 
 	rcu_read_lock();
-	memcg = mem_cgroup_from_task(task);
-	if (!memcg || memcg == root_mem_cgroup ) {
-		rcu_read_unlock();
-		return;
-	}
-	cgrp = memcg->css.cgroup;
-
+	cgrp = get_cgroup_from_task(task);
 	if (cgrp && cgrp->sli_schedlat_stat_percpu) {
 		this_cpu_inc(cgrp->sli_schedlat_stat_percpu->item[sidx][cidx]);
 		if (delta >= threshold)
@@ -525,7 +507,7 @@ void sli_schedlat_syscall_exit(struct task_struct *task,unsigned long nr)
 	delta = local_clock() - task->sched_info.syscall_start;
 	task->sched_info.syscall_exec_time += delta;
 	task->sched_info.in_syscall = 0;
-	sli_schedlat_syscall_stat(task,SCHEDLAT_LONGSYS,nr,task->sched_info.syscall_exec_time);
+	sli_schedlat_syscall_stat(task,SCHEDLAT_LONGSYSCALL,nr,task->sched_info.syscall_exec_time);
 
 }
 
@@ -562,7 +544,7 @@ static void sli_schedlat_thr_set(u64 value)
 	schedlat_threshold.schedlat_ioblock_thr = value;
 	schedlat_threshold.schedlat_sleep_thr = value;
 	schedlat_threshold.schedlat_rundelay_thr = value;
-	schedlat_threshold.schedlat_longsys_thr = value;
+	schedlat_threshold.schedlat_longsyscall_thr = value;
 }
 
 static u64 sli_schedlat_stat_gather(struct cgroup *cgrp,
@@ -642,7 +624,7 @@ static int sli_schedlat_thr_show(struct seq_file *m, void *v)
 			   schedlat_threshold.schedlat_ioblock_thr,
 			   schedlat_threshold.schedlat_sleep_thr,
 			   schedlat_threshold.schedlat_rundelay_thr,
-			   schedlat_threshold.schedlat_longsys_thr
+			   schedlat_threshold.schedlat_longsyscall_thr
 			   );
 
 	return 0;
