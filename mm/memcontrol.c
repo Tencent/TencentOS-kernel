@@ -65,6 +65,7 @@
 #include "slab.h"
 #include <linux/sli.h>
 #include <linux/uaccess.h>
+#include <linux/sli.h>
 
 #include <trace/events/vmscan.h>
 
@@ -5345,6 +5346,15 @@ static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
 	return 0;
 }
 
+static int mem_cgroup_sli_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+	struct cgroup *cgrp;
+	cgrp = memcg->css.cgroup;
+
+	return sli_memlat_stat_show(m, cgrp);
+}
+
 static struct cftype mem_cgroup_legacy_files[] = {
 	{
 		.name = "pagecache.reclaim_ratio",
@@ -5502,6 +5512,11 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.private = MEMFILE_PRIVATE(_TCP, RES_MAX_USAGE),
 		.write = mem_cgroup_reset,
 		.read_u64 = mem_cgroup_read_u64,
+	},
+	{
+		.name = "sli",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = mem_cgroup_sli_show,
 	},
 	{ },	/* terminate */
 };
