@@ -336,7 +336,7 @@ static void mbuf_slot_init(struct mbuf_slot *mb, struct cgroup *cg, u32 index)
 	mb->idx = index;
 	mb->ops = &mbuf_ops;
 	spin_lock_init(&mb->slot_lock);
-	ratelimit_default_init(&mb->ratelimit);
+	ratelimit_state_init(&mb->ratelimit, 5 * HZ,50);
 
 	mb->mring = (struct mbuf_ring *)((char *)mb + sizeof(struct mbuf_slot));
 	mb->mring->base_idx = index *
