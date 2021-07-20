@@ -19,6 +19,7 @@
 #include "../smpboot.h"
 
 #include "pelt.h"
+#include <linux/sli.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
@@ -3693,6 +3694,7 @@ void scheduler_tick(void)
 
 	update_rq_clock(rq);
 	curr->sched_class->task_tick(rq, curr, 0);
+	sli_check_longsys(curr);
 	calc_global_load_tick(rq);
 	psi_task_tick(rq);
 

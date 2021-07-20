@@ -497,6 +497,8 @@ struct cgroup {
 	/* sched latency stat */
 	struct sli_schedlat_stat __percpu *sli_schedlat_stat_percpu;
 
+	spinlock_t cgrp_mbuf_lock;
+
 	/* ids of the ancestors at each level including self */
 	int ancestor_ids[];
 

@@ -173,7 +173,7 @@ static inline void sched_info_dequeued(struct rq *rq, struct task_struct *t)
  * long it was waiting to run.  We also note when it began so that we
  * can keep stats on how long its timeslice is.
  */
-static void sched_info_arrive(struct rq *rq, struct task_struct *t)
+static void sched_info_arrive(struct rq *rq, struct task_struct *t, struct task_struct *prev)
 {
 	unsigned long long now = rq_clock(rq), delta = 0;
 
@@ -184,8 +184,7 @@ static void sched_info_arrive(struct rq *rq, struct task_struct *t)
 	t->sched_info.last_arrival = now;
 	t->sched_info.pcount++;
 	rq_sched_info_arrive(rq, delta);
-	sli_schedlat_stat(t,SCHEDLAT_RUNDELAY,delta);
-	sli_schedlat_syscall_schedin(t);
+	sli_schedlat_rundelay(t, prev, delta);
 }
 
 /*
@@ -217,8 +216,6 @@ static inline void sched_info_depart(struct rq *rq, struct task_struct *t)
 
 	if (t->state == TASK_RUNNING)
 		sched_info_queued(rq, t);
-
-	sli_schedlat_syscall_schedout(t);
 }
 
 /*
@@ -238,7 +235,7 @@ __sched_info_switch(struct rq *rq, struct task_struct *prev, struct task_struct 
 		sched_info_depart(rq, prev);
 
 	if (next != rq->idle)
-		sched_info_arrive(rq, next);
+		sched_info_arrive(rq, next, prev);
 }
 
 static inline void
@@ -253,6 +250,6 @@ sched_info_switch(struct rq *rq, struct task_struct *prev, struct task_struct *n
 # define sched_info_reset_dequeued(t)	do { } while (0)
 # define sched_info_dequeued(rq, t)	do { } while (0)
 # define sched_info_depart(rq, t)	do { } while (0)
-# define sched_info_arrive(rq, next)	do { } while (0)
+# define sched_info_arrive(rq, t, prev)	do { } while (0)
 # define sched_info_switch(rq, t, next)	do { } while (0)
 #endif /* CONFIG_SCHED_INFO */

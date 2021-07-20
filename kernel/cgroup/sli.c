@@ -6,6 +6,7 @@
 #include <linux/memcontrol.h>
 #include <linux/sched.h>
 #include <linux/sched/task_stack.h>
+#include <linux/sched/sysctl.h>
 #include <linux/stacktrace.h>
 #include <asm/irq_regs.h>
 #include "../sched/sched.h"
@@ -20,10 +21,10 @@ struct member_offset {
 };
 
 struct memlat_thr {
-	u64 globa_direct_reclaim_thr;
+	u64 global_direct_reclaim_thr;
 	u64 memcg_direct_reclaim_thr;
 	u64 direct_compact_thr;
-	u64 globa_direct_swapout_thr;
+	u64 global_direct_swapout_thr;
 	u64 memcg_direct_swapout_thr;
 	u64 direct_swapin_thr;
 };
@@ -34,19 +35,18 @@ struct schedlat_thr {
 	u64 schedlat_ioblock_thr;
 	u64 schedlat_sleep_thr;
 	u64 schedlat_rundelay_thr;
-	u64 schedlat_longsyscall_thr;
+	u64 schedlat_longsys_thr;
 };
 
 static DEFINE_STATIC_KEY_TRUE(sli_no_enabled);
-static DEFINE_RAW_SPINLOCK(lat_print_lock);
 static struct memlat_thr memlat_threshold;
 static struct schedlat_thr schedlat_threshold;
 
 static const struct member_offset memlat_member_offset[] = {
-	{ "globa_direct_reclaim_threshold=", offsetof(struct memlat_thr, globa_direct_reclaim_thr)},
+	{ "global_direct_reclaim_threshold=", offsetof(struct memlat_thr, global_direct_reclaim_thr)},
 	{ "memcg_direct_reclaim_threshold=", offsetof(struct memlat_thr, memcg_direct_reclaim_thr)},
 	{ "direct_compact_threshold=", offsetof(struct memlat_thr, direct_compact_thr)},
-	{ "globa_direct_swapout_threshold=", offsetof(struct memlat_thr, globa_direct_swapout_thr)},
+	{ "global_direct_swapout_threshold=", offsetof(struct memlat_thr, global_direct_swapout_thr)},
 	{ "memcg_direct_swapout_threshold=", offsetof(struct memlat_thr, memcg_direct_swapout_thr)},
 	{ "direct_swapin_threshold=", offsetof(struct memlat_thr, direct_swapin_thr)},
 	{ },
@@ -58,34 +58,36 @@ static const struct member_offset schedlat_member_offset[] = {
 	{ "schedlat_ioblock_thr=",offsetof(struct schedlat_thr,schedlat_ioblock_thr) },
 	{ "schedlat_sleep_thr=",offsetof(struct schedlat_thr,schedlat_sleep_thr) },
 	{ "schedlat_rundelay_thr=",offsetof(struct schedlat_thr,schedlat_rundelay_thr) },
-	{ "schedlat_longsyscall_thr=",offsetof(struct schedlat_thr,schedlat_longsyscall_thr) },
+	{ "schedlat_longsys_thr=",offsetof(struct schedlat_thr,schedlat_longsys_thr) },
 	{ },
 };
 
-static void store_task_stack(struct cgroup *cgrp,struct task_struct *task,u64 duration)
+static void store_task_stack(struct task_struct *task, char *reason,
+			     u64 duration, unsigned int skipnr)
 {
 	unsigned long *entries;
 	unsigned nr_entries = 0;
 	unsigned long flags;
 	int i;
+	struct cgroup *cgrp;
 
 	entries = kmalloc_array(MAX_STACK_TRACE_DEPTH, sizeof(*entries),
 				GFP_ATOMIC);
 	if (!entries)
 		return;
 
-	nr_entries = stack_trace_save_tsk(task, entries,
-						  MAX_STACK_TRACE_DEPTH, 0);
+	nr_entries = stack_trace_save_tsk(task, entries, MAX_STACK_TRACE_DEPTH, skipnr);
 
-	raw_spin_lock_irqsave(&lat_print_lock, flags);
+	cgrp = get_cgroup_from_task(task);
+	spin_lock_irqsave(&cgrp->cgrp_mbuf_lock, flags);
 
-	mbuf_print(cgrp,"comm:%s,pid:%d,duration=%lld\n",
-			   task->comm,task->pid,duration);
+	mbuf_print(cgrp, "record reason:%s comm:%s pid:%d duration=%lld\n",
+		   reason, task->comm, task->pid, duration);
 
 	for (i = 0; i < nr_entries; i++)
-		mbuf_print(cgrp,"[<0>] %pB\n", (void *)entries[i]);
+		mbuf_print(cgrp, "[<0>] %pB\n", (void *)entries[i]);
 
-	raw_spin_unlock_irqrestore(&lat_print_lock, flags);
+	spin_unlock_irqrestore(&cgrp->cgrp_mbuf_lock, flags);
 
 	kfree(entries);
 	return;
@@ -97,7 +99,7 @@ static u64 get_memlat_threshold(enum sli_memlat_stat_item sidx)
 
 	switch (sidx) {
 	case MEM_LAT_GLOBAL_DIRECT_RECLAIM:
-		threshold = memlat_threshold.globa_direct_reclaim_thr;
+		threshold = memlat_threshold.global_direct_reclaim_thr;
 		break;
 	case MEM_LAT_MEMCG_DIRECT_RECLAIM:
 		threshold = memlat_threshold.memcg_direct_reclaim_thr;
@@ -106,7 +108,7 @@ static u64 get_memlat_threshold(enum sli_memlat_stat_item sidx)
 		threshold = memlat_threshold.direct_compact_thr;
 		break;
 	case MEM_LAT_GLOBAL_DIRECT_SWAPOUT:
-		threshold = memlat_threshold.globa_direct_swapout_thr;
+		threshold = memlat_threshold.global_direct_swapout_thr;
 		break;
 	case MEM_LAT_MEMCG_DIRECT_SWAPOUT:
 		threshold = memlat_threshold.memcg_direct_swapout_thr;
@@ -130,7 +132,7 @@ static char * get_memlat_name(enum sli_memlat_stat_item sidx)
 
 	switch (sidx) {
 	case MEM_LAT_GLOBAL_DIRECT_RECLAIM:
-		name = "globa_direct_reclaim";
+		name = "global_direct_reclaim";
 		break;
 	case MEM_LAT_MEMCG_DIRECT_RECLAIM:
 		name =  "memcg_direct_reclaim";
@@ -139,7 +141,7 @@ static char * get_memlat_name(enum sli_memlat_stat_item sidx)
 		name = "direct_compact";
 		break;
 	case MEM_LAT_GLOBAL_DIRECT_SWAPOUT:
-		name = "globa_direct_swapout";
+		name = "global_direct_swapout";
 		break;
 	case MEM_LAT_MEMCG_DIRECT_SWAPOUT:
 		name = "memcg_direct_swapout";
@@ -154,25 +156,27 @@ static char * get_memlat_name(enum sli_memlat_stat_item sidx)
 	return name;
 }
 
-static enum sli_memlat_count get_memlat_count_idx(u64 duration)
+static enum sli_lat_count get_lat_count_idx(u64 duration)
 {
-	enum sli_memlat_count idx;
+	enum sli_lat_count idx;
 
 	duration = duration >> 20;
 	if (duration < 1)
-		idx = MEM_LAT_0_1;
-	else if (duration < 5)
-		idx = MEM_LAT_1_5;
-	else if (duration < 10)
-		idx = MEM_LAT_5_10;
-	else if (duration < 100)
-		idx = MEM_LAT_10_100;
-	else if (duration < 500)
-		idx = MEM_LAT_100_500;
-	else if (duration < 1000)
-		idx = MEM_LAT_500_1000;
+		idx = LAT_0_1;
+	else if (duration < 4)
+		idx = LAT_1_4;
+	else if (duration < 8)
+		idx = LAT_4_8;
+	else if (duration < 16)
+		idx = LAT_8_16;
+	else if (duration < 32)
+		idx = LAT_16_32;
+	else if (duration < 64)
+		idx = LAT_32_64;
+	else if (duration < 128)
+		idx = LAT_64_128;
 	else
-		idx = MEM_LAT_1000_INF;
+		idx = LAT_128_INF;
 
 	return idx;
 }
@@ -197,15 +201,15 @@ static u64 get_schedlat_threshold(enum sli_memlat_stat_item sidx)
 	case SCHEDLAT_RUNDELAY:
 		threshold = schedlat_threshold.schedlat_rundelay_thr;
 		break;
-	case SCHEDLAT_LONGSYSCALL:
-		threshold = schedlat_threshold.schedlat_longsyscall_thr;
+	case SCHEDLAT_LONGSYS:
+		threshold = schedlat_threshold.schedlat_longsys_thr;
 		break;
 	default:
 		break;
 	}
 
 	if (threshold != -1)
-		threshold = threshold << 20;//ns to ms,2^20=1048576(about 1000000)
+		threshold = threshold << 20;//ms to ns,2^20=1048576(about 1000000)
 
 	return threshold;
 }
@@ -230,8 +234,8 @@ static char * get_schedlat_name(enum sli_memlat_stat_item sidx)
 	case SCHEDLAT_RUNDELAY:
 		name = "schedlat_rundelay";
 		break;
-	case SCHEDLAT_LONGSYSCALL:
-		name = "schedlat_longsyscall";
+	case SCHEDLAT_LONGSYS:
+		name = "schedlat_longsys";
 		break;
 	default:
 		break;
@@ -240,48 +244,9 @@ static char * get_schedlat_name(enum sli_memlat_stat_item sidx)
 	return name;
 }
 
-static enum sli_memlat_count get_schedlat_count_idx(u64 duration)
-{
-	enum sli_memlat_count idx;
-
-	duration = duration >> 20;
-	if (duration < 1)
-		idx = SCHEDLAT_0_1;
-	else if (duration < 5)
-		idx = SCHEDLAT_1_5;
-	else if (duration < 10)
-		idx = SCHEDLAT_5_10;
-	else if (duration < 20)
-		idx = SCHEDLAT_10_20;
-	else if (duration < 30)
-		idx = SCHEDLAT_20_30;
-	else if (duration < 40)
-		idx = SCHEDLAT_30_40;
-	else if (duration < 50)
-		idx = SCHEDLAT_40_50;
-	else if (duration < 60)
-		idx = SCHEDLAT_50_60;
-	else if (duration < 70)
-		idx = SCHEDLAT_60_70;
-	else if (duration < 80)
-		idx = SCHEDLAT_70_80;
-	else if (duration < 90)
-		idx = SCHEDLAT_80_90;
-	else if (duration < 100)
-		idx = SCHEDLAT_90_100;
-	else if (duration < 500)
-		idx = MEM_LAT_100_500;
-	else if (duration < 1000)
-		idx = MEM_LAT_500_1000;
-	else
-		idx = MEM_LAT_1000_INF;
-
-	return idx;
-}
-
 static u64 sli_memlat_stat_gather(struct cgroup *cgrp,
 				 enum sli_memlat_stat_item sidx,
-				 enum sli_memlat_count cidx)
+				 enum sli_lat_count cidx)
 {
 	u64 sum = 0;
 	int cpu;
@@ -307,19 +272,21 @@ int sli_memlat_stat_show(struct seq_file *m, struct cgroup *cgrp)
 	for (sidx = MEM_LAT_GLOBAL_DIRECT_RECLAIM;sidx < MEM_LAT_STAT_NR;sidx++) {
 		seq_printf(m,"%s:\n",get_memlat_name(sidx));
 		seq_printf(m, "\t0-1ms: \t\t%llu\n",
-				   sli_memlat_stat_gather(cgrp, sidx, MEM_LAT_0_1));
-		seq_printf(m, "\t1-5ms: \t\t%llu\n",
-				   sli_memlat_stat_gather(cgrp, sidx, MEM_LAT_1_5));
-		seq_printf(m, "\t5-10ms: \t%llu\n",
-				   sli_memlat_stat_gather(cgrp, sidx, MEM_LAT_5_10));
-		seq_printf(m, "\t10-100ms: \t%llu\n",
-				   sli_memlat_stat_gather(cgrp, sidx, MEM_LAT_10_100));
-		seq_printf(m, "\t100-500ms: \t%llu\n",
-				   sli_memlat_stat_gather(cgrp, sidx, MEM_LAT_100_500));
-		seq_printf(m, "\t500-1000ms: \t%llu\n",
-				   sli_memlat_stat_gather(cgrp, sidx, MEM_LAT_500_1000));
-		seq_printf(m, "\t>=1000ms: \t%llu\n",
-				   sli_memlat_stat_gather(cgrp, sidx, MEM_LAT_1000_INF));
+				   sli_memlat_stat_gather(cgrp, sidx, LAT_0_1));
+		seq_printf(m, "\t1-4ms: \t\t%llu\n",
+				   sli_memlat_stat_gather(cgrp, sidx, LAT_1_4));
+		seq_printf(m, "\t4-8ms: \t\t%llu\n",
+				   sli_memlat_stat_gather(cgrp, sidx, LAT_4_8));
+		seq_printf(m, "\t8-16ms: \t%llu\n",
+				   sli_memlat_stat_gather(cgrp, sidx, LAT_8_16));
+		seq_printf(m, "\t16-32ms: \t%llu\n",
+				   sli_memlat_stat_gather(cgrp, sidx, LAT_16_32));
+		seq_printf(m, "\t32-64ms: \t%llu\n",
+				   sli_memlat_stat_gather(cgrp, sidx, LAT_32_64));
+		seq_printf(m, "\t64-128ms: \t%llu\n",
+				   sli_memlat_stat_gather(cgrp, sidx, LAT_64_128));
+		seq_printf(m, "\t>=128ms: \t%llu\n",
+				   sli_memlat_stat_gather(cgrp, sidx, LAT_128_INF));
 	}
 
 	return 0;
@@ -335,8 +302,9 @@ void sli_memlat_stat_start(u64 *start)
 
 void sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start)
 {
-	enum sli_memlat_count cidx;
+	enum sli_lat_count cidx;
 	u64 duration,threshold;
+	struct mem_cgroup *memcg;
 	struct cgroup *cgrp;
 
 	if (static_branch_likely(&sli_no_enabled) || start == 0)
@@ -344,40 +312,50 @@ void sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start)
 
 	duration = local_clock() - start;
 	threshold = get_memlat_threshold(sidx);
-	cidx = get_memlat_count_idx(duration);
+	cidx = get_lat_count_idx(duration);
 
 	rcu_read_lock();
-	cgrp = get_cgroup_from_task(current);
+	memcg = mem_cgroup_from_task(current);
+	if (!memcg || memcg == root_mem_cgroup ) {
+		rcu_read_unlock();
+		return;
+	}
+
+	cgrp = memcg->css.cgroup;
 	if (cgrp && cgrp->sli_memlat_stat_percpu) {
 		this_cpu_inc(cgrp->sli_memlat_stat_percpu->item[sidx][cidx]);
-		if (duration >= threshold)
-			store_task_stack(cgrp,current,duration);
+		if (duration >= threshold) {
+			char *lat_name;
+
+			lat_name = get_memlat_name(sidx);
+			store_task_stack(current, lat_name, duration, 0);
+		}
 	}
 	rcu_read_unlock();
 }
 
 static void sli_memlat_thr_set(u64 value)
 {
-	memlat_threshold.globa_direct_reclaim_thr = value;
+	memlat_threshold.global_direct_reclaim_thr = value;
 	memlat_threshold.memcg_direct_reclaim_thr = value;
 	memlat_threshold.direct_compact_thr       = value;
-	memlat_threshold.globa_direct_swapout_thr = value;
+	memlat_threshold.global_direct_swapout_thr = value;
 	memlat_threshold.memcg_direct_swapout_thr = value;
 	memlat_threshold.direct_swapin_thr        = value;
 }
 
 static int sli_memlat_thr_show(struct seq_file *m, void *v)
 {
-	seq_printf(m,"globa_direct_reclaim_threshold = %llu ms\n"
+	seq_printf(m,"global_direct_reclaim_threshold = %llu ms\n"
 			   "memcg_direct_reclaim_threshold = %llu ms\n"
 			   "direct_compact_threshold       = %llu ms\n"
-			   "globa_direct_swapout_threshold = %llu ms\n"
+			   "global_direct_swapout_threshold = %llu ms\n"
 			   "memcg_direct_swapout_threshold = %llu ms\n"
 			   "direct_swapin_threshold        = %llu ms\n",
-			   memlat_threshold.globa_direct_reclaim_thr,
+			   memlat_threshold.global_direct_reclaim_thr,
 			   memlat_threshold.memcg_direct_reclaim_thr,
 			   memlat_threshold.direct_compact_thr,
-			   memlat_threshold.globa_direct_swapout_thr,
+			   memlat_threshold.global_direct_swapout_thr,
 			   memlat_threshold.memcg_direct_swapout_thr,
 			   memlat_threshold.direct_swapin_thr
 			   );
@@ -436,107 +414,114 @@ static const struct file_operations sli_memlat_thr_fops = {
 	.release	= single_release,
 };
 
-void sli_schedlat_stat(struct task_struct *task,enum sli_schedlat_stat_item sidx, u64 delta)
+void sli_schedlat_stat(struct task_struct *task, enum sli_schedlat_stat_item sidx, u64 delta)
 {
-	enum sli_schedlat_count cidx;
+	enum sli_lat_count cidx;
 	struct cgroup *cgrp = NULL;
 	u64 threshold;
-	
+
 	if (static_branch_likely(&sli_no_enabled) || !task)
 		return;
 
 	threshold = get_schedlat_threshold(sidx);
-	cidx = get_schedlat_count_idx(delta);
+	cidx = get_lat_count_idx(delta);
 
 	rcu_read_lock();
-	
 	cgrp = get_cgroup_from_task(task);
-	
 	if (cgrp && cgrp->sli_schedlat_stat_percpu) {
 		this_cpu_inc(cgrp->sli_schedlat_stat_percpu->item[sidx][cidx]);
-		if (delta >= threshold)
-			store_task_stack(cgrp,task,delta);
+		if (delta >= threshold) {
+			char *lat_name;
+
+			lat_name = get_schedlat_name(sidx);
+			store_task_stack(task, lat_name, delta, 0);
+		}
+	}
+	rcu_read_unlock();
+}
+
+void sli_schedlat_rundelay(struct task_struct *task, struct task_struct *prev, u64 delta)
+{
+	enum sli_lat_count cidx;
+	enum sli_schedlat_stat_item sidx = SCHEDLAT_RUNDELAY;
+	struct cgroup *cgrp = NULL;
+	u64 threshold;
+
+	if (static_branch_likely(&sli_no_enabled) || !task || !prev)
+		return;
+
+	threshold = get_schedlat_threshold(sidx);
+	cidx = get_lat_count_idx(delta);
+
+	rcu_read_lock();
+	cgrp = get_cgroup_from_task(task);
+	if (cgrp && cgrp->sli_schedlat_stat_percpu) {
+		this_cpu_inc(cgrp->sli_schedlat_stat_percpu->item[sidx][cidx]);
+		if (delta >= threshold) {
+			int i;
+			unsigned long *entries;
+			unsigned nr_entries = 0;
+			unsigned long flags;
+
+			entries = kmalloc_array(MAX_STACK_TRACE_DEPTH, sizeof(*entries),
+						GFP_ATOMIC);
+			if (!entries)
+				goto out;
+
+			nr_entries = stack_trace_save_tsk(prev, entries,
+							  MAX_STACK_TRACE_DEPTH, 0);
+
+			spin_lock_irqsave(&cgrp->cgrp_mbuf_lock, flags);
+
+			mbuf_print(cgrp, "record reason:schedlat_rundelay next_comm:%s "
+				   "next_pid:%d prev_comm:%s prev_pid:%d duration=%lld\n",
+				   task->comm, task->pid, prev->comm, prev->pid, delta);
+
+			for (i = 0; i < nr_entries; i++)
+		                mbuf_print(cgrp, "[<0>] %pB\n", (void *)entries[i]);
+
+			spin_unlock_irqrestore(&cgrp->cgrp_mbuf_lock, flags);
+			kfree(entries);
+		}
 	}
 
+out:
 	rcu_read_unlock();
 }
 
 #ifdef CONFIG_SCHED_INFO
-void sli_schedlat_syscall_enter(struct task_struct *task)
+void sli_check_longsys(struct task_struct *tsk)
 {
-	if (static_branch_likely(&sli_no_enabled))
-		return;
-
-	task->sched_info.in_syscall = 1;
-	task->sched_info.syscall_exec_time = 0;
-	task->sched_info.syscall_start = local_clock();
-}
-
-static void sli_schedlat_syscall_stat(struct task_struct *task,
-				enum sli_schedlat_stat_item sidx, 
-				unsigned long nr,
-				u64 delta)
-{
-	enum sli_schedlat_count cidx;
-	struct cgroup *cgrp;
-	u64 threshold;
-
-	if (static_branch_likely(&sli_no_enabled) || !task)
-		return;
-
-	threshold = get_schedlat_threshold(sidx);
-	cidx = get_schedlat_count_idx(delta);
-
-	rcu_read_lock();
-	cgrp = get_cgroup_from_task(task);
-	if (cgrp && cgrp->sli_schedlat_stat_percpu) {
-		this_cpu_inc(cgrp->sli_schedlat_stat_percpu->item[sidx][cidx]);
-		if (delta >= threshold)
-			mbuf_print(cgrp,"comm:%s,pid:%d,syscall:%d,duration=%lld\n",task->comm,task->pid,nr,delta);
-	}
-	rcu_read_unlock();
-}
-
-void sli_schedlat_syscall_exit(struct task_struct *task,unsigned long nr)
-{
-	unsigned long long delta;
+	long delta;
 
 	if (static_branch_likely(&sli_no_enabled))
 		return;
 
-	delta = local_clock() - task->sched_info.syscall_start;
-	task->sched_info.syscall_exec_time += delta;
-	task->sched_info.in_syscall = 0;
-	sli_schedlat_syscall_stat(task,SCHEDLAT_LONGSYSCALL,nr,task->sched_info.syscall_exec_time);
+	if (!tsk || tsk->sched_class != &fair_sched_class)
+		return ;
 
-}
-
-void sli_schedlat_syscall_schedout(struct task_struct *task)
-{
-	unsigned long long syscall_exec;
-
-	if (static_branch_likely(&sli_no_enabled))
+	/* Longsys is performed only when TIF_RESCHED is set */
+	if (!test_tsk_need_resched(tsk))
 		return;
 
-	if (task->sched_info.in_syscall) {
-		syscall_exec = local_clock() - task->sched_info.syscall_start;
-		task->sched_info.syscall_exec_time += syscall_exec;
+	/* Kthread is not belong to any cgroup */
+	if (tsk->flags & PF_KTHREAD)
+		return;
+
+	if (!tsk->sched_info.kernel_exec_start ||
+	    tsk->sched_info.task_switch != (tsk->nvcsw + tsk->nivcsw) ||
+	    tsk->utime != tsk->sched_info.utime) {
+		tsk->sched_info.utime = tsk->utime;
+		tsk->sched_info.kernel_exec_start = rq_clock(this_rq());
+		tsk->sched_info.task_switch = tsk->nvcsw + tsk->nivcsw;
+		return;
 	}
 
+	delta = rq_clock(this_rq()) - tsk->sched_info.kernel_exec_start;
+	sli_schedlat_stat(tsk, SCHEDLAT_LONGSYS, delta);
 }
 
-void sli_schedlat_syscall_schedin(struct task_struct *task)
-{
-	if (static_branch_likely(&sli_no_enabled))
-		return;
-
-	if (task->sched_info.in_syscall) {
-		task->sched_info.syscall_start = local_clock();
-	}
-
-}
 #endif
-
 static void sli_schedlat_thr_set(u64 value)
 {
 	schedlat_threshold.schedlat_wait_thr = value;
@@ -544,12 +529,12 @@ static void sli_schedlat_thr_set(u64 value)
 	schedlat_threshold.schedlat_ioblock_thr = value;
 	schedlat_threshold.schedlat_sleep_thr = value;
 	schedlat_threshold.schedlat_rundelay_thr = value;
-	schedlat_threshold.schedlat_longsyscall_thr = value;
+	schedlat_threshold.schedlat_longsys_thr = value;
 }
 
 static u64 sli_schedlat_stat_gather(struct cgroup *cgrp,
 				 enum sli_schedlat_stat_item sidx,
-				 enum sli_schedlat_count cidx)
+				 enum sli_lat_count cidx)
 {
 	u64 sum = 0;
 	int cpu;
@@ -577,35 +562,21 @@ int sli_schedlat_stat_show(struct seq_file *m, struct cgroup *cgrp)
 	for (sidx = SCHEDLAT_WAIT;sidx < SCHEDLAT_STAT_NR;sidx++) {
 		seq_printf(m,"%s:\n",get_schedlat_name(sidx));
 		seq_printf(m, "\t0-1ms: \t\t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, SCHEDLAT_0_1));
-		seq_printf(m, "\t1-5ms: \t\t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, SCHEDLAT_1_5));
-		seq_printf(m, "\t5-10ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, SCHEDLAT_5_10));
-		seq_printf(m, "\t10-20ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, SCHEDLAT_10_20));
-		seq_printf(m, "\t20-30ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, SCHEDLAT_20_30));
-		seq_printf(m, "\t30-40ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, SCHEDLAT_30_40));
-		seq_printf(m, "\t40-50ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, SCHEDLAT_40_50));
-		seq_printf(m, "\t50-60ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, SCHEDLAT_50_60));
-		seq_printf(m, "\t60-70ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, SCHEDLAT_60_70));
-		seq_printf(m, "\t70-80ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, SCHEDLAT_70_80));
-		seq_printf(m, "\t80-90ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, SCHEDLAT_80_90));
-		seq_printf(m, "\t90-100ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, SCHEDLAT_90_100));
-		seq_printf(m, "\t100-500ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, SCHEDLAT_100_500));
-		seq_printf(m, "\t500-1000ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, SCHEDLAT_500_1000));
-		seq_printf(m, "\t>=1000ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, SCHEDLAT_1000_INF));
+				   sli_schedlat_stat_gather(cgrp, sidx, LAT_0_1));
+		seq_printf(m, "\t1-4ms: \t\t%llu\n",
+				   sli_schedlat_stat_gather(cgrp, sidx, LAT_1_4));
+		seq_printf(m, "\t4-8ms: \t\t%llu\n",
+				   sli_schedlat_stat_gather(cgrp, sidx, LAT_4_8));
+		seq_printf(m, "\t8-16ms: \t%llu\n",
+				   sli_schedlat_stat_gather(cgrp, sidx, LAT_8_16));
+		seq_printf(m, "\t16-32ms: \t%llu\n",
+				   sli_schedlat_stat_gather(cgrp, sidx, LAT_16_32));
+		seq_printf(m, "\t32-64ms: \t%llu\n",
+				   sli_schedlat_stat_gather(cgrp, sidx, LAT_32_64));
+		seq_printf(m, "\t64-128ms: \t%llu\n",
+				   sli_schedlat_stat_gather(cgrp, sidx, LAT_64_128));
+		seq_printf(m, "\t>=128ms: \t%llu\n",
+				   sli_schedlat_stat_gather(cgrp, sidx, LAT_128_INF));
 	}
 
 	return 0;
@@ -624,7 +595,7 @@ static int sli_schedlat_thr_show(struct seq_file *m, void *v)
 			   schedlat_threshold.schedlat_ioblock_thr,
 			   schedlat_threshold.schedlat_sleep_thr,
 			   schedlat_threshold.schedlat_rundelay_thr,
-			   schedlat_threshold.schedlat_longsyscall_thr
+			   schedlat_threshold.schedlat_longsys_thr
 			   );
 
 	return 0;
@@ -736,6 +707,7 @@ int sli_cgroup_alloc(struct cgroup *cgroup)
 	if (!cgroup)
 		return 0;
 
+	spin_lock_init(&cgroup->cgrp_mbuf_lock);
 	cgroup->sli_memlat_stat_percpu = alloc_percpu(struct sli_memlat_stat);
 	if (!cgroup->sli_memlat_stat_percpu)
 		return -ENOMEM;
@@ -762,9 +734,9 @@ void sli_cgroup_free(struct cgroup *cgroup)
 
 static int __init sli_proc_init(void)
 {
-	/*default threshhold value is 10s*/
-	sli_memlat_thr_set(10000);
-	sli_schedlat_thr_set(10000);
+	/* default threshhold is the max value of u64 */
+	sli_memlat_thr_set(-1);
+	sli_schedlat_thr_set(-1);
 	proc_mkdir("sli", NULL);
 	proc_create("sli/sli_enabled", 0, NULL, &sli_enabled_fops);
 	proc_create("sli/memory_latency_threshold", 0, NULL, &sli_memlat_thr_fops);
