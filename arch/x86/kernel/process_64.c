@@ -242,21 +242,18 @@ static __always_inline void save_fsgs(struct task_struct *task)
 	save_base_legacy(task, task->thread.gsindex, GS);
 }
 
+#if IS_ENABLED(CONFIG_KVM)
 /*
  * While a process is running,current->thread.fsbase and current->thread.gsbase
- * may not match the corresponding CPU registers (see save_base_legacy()).
+ * may not match the corresponding CPU registers (see save_base_legacy()). KVM
+ * wants an efficient way to save and restore FSBASE and GSBASE.
+ * When FSGSBASE extensions are enabled, this will have to use RD{FS,GS}BASE.
  */
-void current_save_fsgs(void)
+void save_fsgs_for_kvm(void)
 {
-	unsigned long flags;
-
-	/* Interrupts need to be off for FSGSBASE */
-	local_irq_save(flags);
 	save_fsgs(current);
-	local_irq_restore(flags);
 }
-#if IS_ENABLED(CONFIG_KVM)
-EXPORT_SYMBOL_GPL(current_save_fsgs);
+EXPORT_SYMBOL_GPL(save_fsgs_for_kvm);
 #endif
 
 static __always_inline void loadseg(enum which_selector which,
