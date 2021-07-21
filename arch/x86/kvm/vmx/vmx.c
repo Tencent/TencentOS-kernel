@@ -1151,7 +1151,7 @@ void vmx_prepare_switch_to_guest(struct kvm_vcpu *vcpu)
 
 	gs_base = cpu_kernelmode_gs_base(cpu);
 	if (likely(is_64bit_mm(current->mm))) {
-		current_save_fsgs();
+		save_fsgs_for_kvm();
 		fs_sel = current->thread.fsindex;
 		gs_sel = current->thread.gsindex;
 		fs_base = current->thread.fsbase;
