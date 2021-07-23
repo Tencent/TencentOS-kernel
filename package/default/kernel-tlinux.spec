@@ -52,6 +52,9 @@ BuildRequires: numactl-devel
 %endif
 %endif
 Requires(pre): linux-firmware >= 20150904-44
+Requires(pre): grubby
+Requires(post): %{_sbindir}/new-kernel-pkg
+Requires(preun): %{_sbindir}/new-kernel-pkg
 
 # for the 'hostname' command
 %if 0%{?rhel} >= 7
