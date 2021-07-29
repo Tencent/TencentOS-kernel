@@ -234,13 +234,16 @@
 #define ioremap_nocache ioremap
 #endif
 
-#define KFEATURE_HAS_SCSI_SANITIZE_INQUIRY_STRING	0
 
 #if !defined(from_timer)
 #define KFEATURE_HAS_OLD_TIMER				1
 #endif
 
 /* default values */
+#define KFEATURE_HAS_KTIME_SECONDS			1
+#define KFEATURE_HAS_BSG_JOB_SMP_HANDLER		1
+#define KFEATURE_HAS_SCSI_SANITIZE_INQUIRY_STRING	1
+
 #if !defined(KFEATURE_HAS_WAIT_FOR_COMPLETION_IO)
 #define KFEATURE_HAS_WAIT_FOR_COMPLETION_IO		1
 #endif
