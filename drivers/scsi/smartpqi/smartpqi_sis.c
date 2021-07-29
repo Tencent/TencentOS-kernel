@@ -1,6 +1,7 @@
 /*
- *    driver for Microsemi PQI-based storage controllers
- *    Copyright (c) 2016-2017 Microsemi Corporation
+ *    driver for Microchip PQI-based storage controllers
+ *    Copyright (c) 2019-2021 Microchip Technology Inc. and its subsidiaries
+ *    Copyright (c) 2016-2018 Microsemi Corporation
  *    Copyright (c) 2016 PMC-Sierra, Inc.
  *
  *    This program is free software; you can redistribute it and/or modify
@@ -12,7 +13,7 @@
  *    MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, GOOD TITLE or
  *    NON INFRINGEMENT.  See the GNU General Public License for more details.
  *
- *    Questions/Comments/Bugfixes to esc.storagedev@microsemi.com
+ *    Questions/Comments/Bugfixes to storagedev@microchip.com
  *
  */
 
@@ -60,7 +61,11 @@
 
 #define SIS_CTRL_KERNEL_UP			0x80
 #define SIS_CTRL_KERNEL_PANIC			0x100
+#if TORTUGA
+#define SIS_CTRL_READY_TIMEOUT_SECS		150
+#else
 #define SIS_CTRL_READY_TIMEOUT_SECS		180
+#endif
 #define SIS_CTRL_READY_RESUME_TIMEOUT_SECS	90
 #define SIS_CTRL_READY_POLL_INTERVAL_MSECS	10
 
@@ -78,7 +83,7 @@ struct sis_base_struct {
 						/* error response data */
 	__le32	error_buffer_element_length;	/* length of each PQI error */
 						/* response buffer element */
-						/*   in bytes */
+						/* in bytes */
 	__le32	error_buffer_num_elements;	/* total number of PQI error */
 						/* response buffers available */
 };
@@ -153,7 +158,12 @@ bool sis_is_firmware_running(struct pqi_ctrl_info *ctrl_info)
 bool sis_is_kernel_up(struct pqi_ctrl_info *ctrl_info)
 {
 	return readl(&ctrl_info->registers->sis_firmware_status) &
-				SIS_CTRL_KERNEL_UP;
+		SIS_CTRL_KERNEL_UP;
+}
+
+u32 sis_get_product_id(struct pqi_ctrl_info *ctrl_info)
+{
+	return readl(&ctrl_info->registers->sis_product_identifier);
 }
 
 /* used for passing command parameters/results when issuing SIS commands */
@@ -368,7 +378,7 @@ static int sis_wait_for_doorbell_bit_to_clear(
 			rc = -ETIMEDOUT;
 			break;
 		}
-		usleep_range(1000, 2000);
+		msleep(1);
 	}
 
 	return rc;
@@ -443,3 +453,4 @@ static void __attribute__((unused)) verify_structures(void)
 		error_buffer_num_elements) != 0x14);
 	BUILD_BUG_ON(sizeof(struct sis_base_struct) != 0x18);
 }
+
