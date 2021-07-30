@@ -234,13 +234,20 @@
 #define ioremap_nocache ioremap
 #endif
 
-#define KFEATURE_HAS_SCSI_SANITIZE_INQUIRY_STRING	0
 
 #if !defined(from_timer)
 #define KFEATURE_HAS_OLD_TIMER				1
 #endif
 
 /* default values */
+#define KFEATURE_HAS_KTIME_SECONDS			1
+#define KFEATURE_HAS_BSG_JOB_SMP_HANDLER		1
+#define KFEATURE_HAS_SCSI_SANITIZE_INQUIRY_STRING	1
+#define KFEATURE_HAS_KTIME64				1
+#define KFEATURE_HAS_DMA_ZALLOC_COHERENT		0
+#define KFEATURE_HAS_USE_CLUSTERING			0
+#define shost_use_blk_mq(x)	1
+
 #if !defined(KFEATURE_HAS_WAIT_FOR_COMPLETION_IO)
 #define KFEATURE_HAS_WAIT_FOR_COMPLETION_IO		1
 #endif
@@ -283,6 +290,12 @@
 #if !defined(KFEATURE_HAS_USE_CLUSTERING)
 #define KFEATURE_HAS_USE_CLUSTERING			1
 #define IOCTL_INT int
+#else
+/* for tk4 */
+#ifdef IOCTL_INT
+#undef IOCTL_INT
+#define IOCTL_INT unsigned int
+#endif
 #endif
 #if !defined(KFEATURE_HAS_OLD_TIMER)
 #define KFEATURE_HAS_OLD_TIMER				0
