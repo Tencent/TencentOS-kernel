@@ -233,6 +233,8 @@ echo "Prepare $kernel_full_name source."
 prepare_tlinux_spec
 
 cp package/default/tlinux_cciss_link.modules $build_srcdir
+cp package/default/cpupower.service $build_srcdir
+cp package/default/cpupower.config $build_srcdir
 
 if test -e ${build_srcdir}/${kernel_full_name}; then
 	rm -fr ${build_srcdir}/${kernel_full_name}
