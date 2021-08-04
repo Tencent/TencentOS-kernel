@@ -132,12 +132,13 @@ struct hd_struct {
 	struct disk_stats dkstats;
 #endif
 	struct percpu_ref ref;
-	struct rcu_work rcu_work;
 
 	KABI_RESERVE(1);
 	KABI_RESERVE(2);
 	KABI_RESERVE(3);
 	KABI_RESERVE(4);
+
+	struct rcu_work rcu_work;
 };
 
 #define GENHD_FL_REMOVABLE			1
