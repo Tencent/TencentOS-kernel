@@ -24,7 +24,7 @@ raw_tagged_name=""
 kasan=0
 # to control wheter to build rpm for xen domU
 isXenU=""
-build_perf=""
+build_perf_tools=""
 kernel_default_types=(default)
 
 #funcitons
@@ -38,7 +38,7 @@ usage()
 	echo "     -d"
 	echo "        disable module digital signature."
 	echo "     -p"
-	echo "        build perf rpm only."
+	echo "        build perf and other kernel tools rpm only."
 	echo "     -c"
 	echo "        enable kabi check."
 
@@ -93,7 +93,7 @@ get_tlinux_name()
 		kasan=1
 	fi
 
-	if [ "$build_perf" = "yes" ]; then
+	if [ "$build_perf_tools" = "yes" ]; then
 		rpm_name="perf"
 	else
 		rpm_name="kernel"
@@ -144,8 +144,8 @@ prepare_tlinux_spec()
 
 	echo -e "${spec_contents}" > $spec_file_name
 
-	if [ "$build_perf" = "yes" ]; then
-		cat $curdir/perf-tlinux.spec >> $spec_file_name
+	if [ "$build_perf_tools" = "yes" ]; then
+		cat $curdir/perf-tools-tlinux.spec >> $spec_file_name
 	else
 		cat $curdir/kernel-tlinux.spec >> $spec_file_name
 	fi
@@ -168,7 +168,7 @@ do
 		exit 0
 		;;
 	"p" )
-		build_perf="yes"
+		build_perf_tools="yes"
 		;;
 	"c" )
 		echo "-c kabi check enabled!"
@@ -233,6 +233,8 @@ echo "Prepare $kernel_full_name source."
 prepare_tlinux_spec
 
 cp package/default/tlinux_cciss_link.modules $build_srcdir
+cp package/default/cpupower.service $build_srcdir
+cp package/default/cpupower.config $build_srcdir
 
 if test -e ${build_srcdir}/${kernel_full_name}; then
 	rm -fr ${build_srcdir}/${kernel_full_name}
