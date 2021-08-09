@@ -3048,6 +3048,10 @@ static struct cftype dfl_files[] = {
 		.private = FILE_SUBPARTS_CPULIST,
 		.flags = CFTYPE_DEBUG,
 	},
+	{
+		.name = "loadavg",
+		.seq_show = cpuset_cgroup_loadavg_show,
+	},
 
 	{ }	/* terminate */
 };
