@@ -331,6 +331,13 @@ static int cpuacct_sli_show(struct seq_file *sf, void *v)
 	return sli_schedlat_stat_show(sf, cgrp);
 }
 
+static int cpuacct_sli_max_show(struct seq_file *sf, void *v)
+{
+	struct cgroup *cgrp = seq_css(sf)->cgroup;
+
+	return sli_schedlat_max_show(sf, cgrp);
+}
+
 static struct cftype files[] = {
 	{
 		.name = "usage",
@@ -381,6 +388,11 @@ static struct cftype files[] = {
 		.name = "sli",
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = cpuacct_sli_show,
+	},
+	{
+		.name = "sli_max",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cpuacct_sli_max_show,
 	},
 	{ }	/* terminate */
 };

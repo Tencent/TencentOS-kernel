@@ -3701,6 +3701,15 @@ static int cgroup_sli_cpu_show(struct seq_file *seq, void *v)
 	return sli_schedlat_stat_show(seq,cgroup);
 }
 
+static int cgroup_sli_max_show(struct seq_file *seq, void *v)
+{
+
+	struct cgroup *cgroup = seq_css(seq)->cgroup;
+
+	sli_schedlat_max_show(seq, cgroup);
+	return sli_memlat_max_show(seq, cgroup);
+}
+
 void *cgroup_mbuf_start(struct seq_file *s, loff_t *pos)
 {
 	struct cgroup *cgrp = seq_css(s)->cgroup;
@@ -5130,6 +5139,11 @@ static struct cftype cgroup_base_files[] = {
 		.name = "sli.cpu",
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = cgroup_sli_cpu_show,
+	},
+	{
+		.name = "sli.max",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cgroup_sli_max_show,
 	},
 	{ }	/* terminate */
 };
