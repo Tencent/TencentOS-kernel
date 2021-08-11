@@ -27,6 +27,7 @@ struct memlat_thr {
 	u64 global_direct_swapout_thr;
 	u64 memcg_direct_swapout_thr;
 	u64 direct_swapin_thr;
+	u64 page_alloc_thr;
 };
 
 struct schedlat_thr {
@@ -49,6 +50,7 @@ static const struct member_offset memlat_member_offset[] = {
 	{ "global_direct_swapout_threshold=", offsetof(struct memlat_thr, global_direct_swapout_thr)},
 	{ "memcg_direct_swapout_threshold=", offsetof(struct memlat_thr, memcg_direct_swapout_thr)},
 	{ "direct_swapin_threshold=", offsetof(struct memlat_thr, direct_swapin_thr)},
+	{ "page_alloc_threshold=", offsetof(struct memlat_thr, page_alloc_thr)},
 	{ },
 };
 
@@ -116,6 +118,9 @@ static u64 get_memlat_threshold(enum sli_memlat_stat_item sidx)
 	case MEM_LAT_DIRECT_SWAPIN:
 		threshold = memlat_threshold.direct_swapin_thr;
 		break;
+	case MEM_LAT_PAGE_ALLOC:
+		threshold = memlat_threshold.page_alloc_thr;
+		break;
 	default:
 		break;
 	}
@@ -148,6 +153,9 @@ static char * get_memlat_name(enum sli_memlat_stat_item sidx)
 		break;
 	case MEM_LAT_DIRECT_SWAPIN:
 		name = "direct_swapin";
+		break;
+	case MEM_LAT_PAGE_ALLOC:
+		name = "page_alloc";
 		break;
 	default:
 		break;
@@ -292,6 +300,38 @@ int sli_memlat_stat_show(struct seq_file *m, struct cgroup *cgrp)
 	return 0;
 }
 
+int sli_memlat_max_show(struct seq_file *m, struct cgroup *cgrp)
+{
+	enum sli_memlat_stat_item sidx;
+
+	if (static_branch_likely(&sli_no_enabled)) {
+		seq_printf(m,"sli is not enabled,please echo 1 > /proc/sli/sli_enabled && "
+				   "echo 1 > /proc/sys/kernel/sched_schedstats\n"
+				  );
+		return 0;
+	}
+
+	if (!cgrp->sli_memlat_stat_percpu)
+		return 0;
+
+	for (sidx = MEM_LAT_GLOBAL_DIRECT_RECLAIM; sidx < MEM_LAT_STAT_NR; sidx++) {
+		int cpu;
+		unsigned long latency_max = 0, latency;
+
+		for_each_possible_cpu(cpu) {
+			latency = per_cpu_ptr(cgrp->sli_memlat_stat_percpu, cpu)->latency_max[sidx];
+			per_cpu_ptr(cgrp->sli_memlat_stat_percpu, cpu)->latency_max[sidx] = 0;
+
+			if (latency > latency_max)
+				latency_max = latency;
+		}
+
+		seq_printf(m,"%s: %lu\n", get_memlat_name(sidx), latency_max);
+	}
+
+	return 0;
+}
+
 void sli_memlat_stat_start(u64 *start)
 {
 	if (static_branch_likely(&sli_no_enabled))
@@ -330,6 +370,9 @@ void sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start)
 			lat_name = get_memlat_name(sidx);
 			store_task_stack(current, lat_name, duration, 0);
 		}
+
+		if (duration > this_cpu_read(cgrp->sli_memlat_stat_percpu->latency_max[sidx]))
+			this_cpu_write(cgrp->sli_memlat_stat_percpu->latency_max[sidx], duration);
 	}
 	rcu_read_unlock();
 }
@@ -341,7 +384,8 @@ static void sli_memlat_thr_set(u64 value)
 	memlat_threshold.direct_compact_thr       = value;
 	memlat_threshold.global_direct_swapout_thr = value;
 	memlat_threshold.memcg_direct_swapout_thr = value;
-	memlat_threshold.direct_swapin_thr        = value;
+	memlat_threshold.direct_swapin_thr	  = value;
+	memlat_threshold.page_alloc_thr		  = value;
 }
 
 static int sli_memlat_thr_show(struct seq_file *m, void *v)
@@ -351,13 +395,15 @@ static int sli_memlat_thr_show(struct seq_file *m, void *v)
 			   "direct_compact_threshold       = %llu ms\n"
 			   "global_direct_swapout_threshold = %llu ms\n"
 			   "memcg_direct_swapout_threshold = %llu ms\n"
-			   "direct_swapin_threshold        = %llu ms\n",
+			   "direct_swapin_threshold        = %llu ms\n"
+			   "page_alloc_threshold	   = %llu ms\n",
 			   memlat_threshold.global_direct_reclaim_thr,
 			   memlat_threshold.memcg_direct_reclaim_thr,
 			   memlat_threshold.direct_compact_thr,
 			   memlat_threshold.global_direct_swapout_thr,
 			   memlat_threshold.memcg_direct_swapout_thr,
-			   memlat_threshold.direct_swapin_thr
+			   memlat_threshold.direct_swapin_thr,
+			   memlat_threshold.page_alloc_thr
 			   );
 
 	return 0;
@@ -436,6 +482,9 @@ void sli_schedlat_stat(struct task_struct *task, enum sli_schedlat_stat_item sid
 			lat_name = get_schedlat_name(sidx);
 			store_task_stack(task, lat_name, delta, 0);
 		}
+
+		if (delta > this_cpu_read(cgrp->sli_schedlat_stat_percpu->latency_max[sidx]))
+			this_cpu_write(cgrp->sli_schedlat_stat_percpu->latency_max[sidx], delta);
 	}
 	rcu_read_unlock();
 }
@@ -483,6 +532,9 @@ void sli_schedlat_rundelay(struct task_struct *task, struct task_struct *prev, u
 			spin_unlock_irqrestore(&cgrp->cgrp_mbuf_lock, flags);
 			kfree(entries);
 		}
+
+		if (delta > this_cpu_read(cgrp->sli_schedlat_stat_percpu->latency_max[sidx]))
+			this_cpu_write(cgrp->sli_schedlat_stat_percpu->latency_max[sidx], delta);
 	}
 
 out:
@@ -543,6 +595,38 @@ static u64 sli_schedlat_stat_gather(struct cgroup *cgrp,
 		sum += per_cpu_ptr(cgrp->sli_schedlat_stat_percpu, cpu)->item[sidx][cidx];
 
 	return sum;
+}
+
+int sli_schedlat_max_show(struct seq_file *m, struct cgroup *cgrp)
+{
+	enum sli_schedlat_stat_item sidx;
+
+	if (static_branch_likely(&sli_no_enabled)) {
+		seq_printf(m,"sli is not enabled,please echo 1 > /proc/sli/sli_enabled && "
+				   "echo 1 > /proc/sys/kernel/sched_schedstats\n"
+				  );
+		return 0;
+	}
+
+	if (!cgrp->sli_schedlat_stat_percpu)
+		return 0;
+
+	for (sidx = SCHEDLAT_WAIT; sidx < SCHEDLAT_STAT_NR; sidx++) {
+		int cpu;
+		unsigned long latency_max = 0, latency;
+
+		for_each_possible_cpu(cpu) {
+			latency = per_cpu_ptr(cgrp->sli_schedlat_stat_percpu, cpu)->latency_max[sidx];
+			per_cpu_ptr(cgrp->sli_schedlat_stat_percpu, cpu)->latency_max[sidx] = 0;
+
+			if (latency > latency_max)
+				latency_max = latency;
+		}
+
+		seq_printf(m,"%s: %lu\n", get_schedlat_name(sidx), latency_max);
+	}
+
+	return 0;
 }
 
 int sli_schedlat_stat_show(struct seq_file *m, struct cgroup *cgrp)

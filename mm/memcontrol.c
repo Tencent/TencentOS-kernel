@@ -5346,6 +5346,15 @@ static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
 	return 0;
 }
 
+static int mem_cgroup_sli_max_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+	struct cgroup *cgrp;
+	cgrp = memcg->css.cgroup;
+
+	return sli_memlat_max_show(m, cgrp);
+}
+
 static int mem_cgroup_sli_show(struct seq_file *m, void *v)
 {
 	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
@@ -5517,6 +5526,11 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.name = "sli",
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = mem_cgroup_sli_show,
+	},
+	{
+		.name = "sli_max",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = mem_cgroup_sli_max_show,
 	},
 	{ },	/* terminate */
 };
