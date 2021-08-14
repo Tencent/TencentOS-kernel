@@ -1293,9 +1293,7 @@ static int gic_cpumask_select(struct irq_data *d, const struct cpumask *mask_val
     }
 
     cpu = cpumask_any_and(mask_val, cpu_online_mask);
-    if ((cpu > cpus) && (cpu < (cpus + skt_cpu_cnt[irq_skt]))) {
-        cpus = cpu;
-    }
+    cpus = cpus + cpu % skt_cpu_cnt[irq_skt];
 
     return cpus;
 }
