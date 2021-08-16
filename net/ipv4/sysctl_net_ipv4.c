@@ -683,6 +683,36 @@ static struct ctl_table ipv4_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},
+	{
+		.procname       = "tcp_loss_init_cwnd",
+		.data           = &sysctl_tcp_loss_init_cwnd,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec,
+	},
+	{
+		.procname       = "tcp_inherit_buffsize",
+		.data           = &sysctl_tcp_inherit_buffsize,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec,
+	},
+	{
+		.procname       = "tcp_init_rto",
+		.data           = &sysctl_tcp_init_rto,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = &four
+	},
+	{
+		.procname       = "tcp_synack_rto_interval",
+		.data           = &sysctl_tcp_synack_rto_interval,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1         = &four
+	},
 	{ }
 };
 
@@ -1311,13 +1341,6 @@ static struct ctl_table ipv4_net_table[] = {
 		.extra2		= &gso_max_segs,
 	},
 	{
-		.procname	= "tcp_loss_init_cwnd",
-		.data		= &sysctl_tcp_loss_init_cwnd,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec,
-	},
-	{
 		.procname	= "tcp_min_rtt_wlen",
 		.data		= &init_net.ipv4.sysctl_tcp_min_rtt_wlen,
 		.maxlen		= sizeof(int),
@@ -1407,29 +1430,6 @@ static struct ctl_table ipv4_net_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= SYSCTL_ONE
-	},
-	{
-		.procname       = "tcp_inherit_buffsize",
-		.data           = &sysctl_tcp_inherit_buffsize,
-		.maxlen         = sizeof(int),
-		.mode           = 0644,
-		.proc_handler   = proc_dointvec,
-	},
-	{
-		.procname	= "tcp_init_rto",
-		.data		= &sysctl_tcp_init_rto,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1 	= &four
-	},
-	{
-		.procname	= "tcp_synack_rto_interval",
-		.data		= &sysctl_tcp_synack_rto_interval,
-		.maxlen		= sizeof(int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1 	= &four
 	},
 	{
 		.procname	= "tcp_tw_timeout",
