@@ -196,9 +196,8 @@ static struct dentry *ovl_lookup_positive_unlocked(const char *name,
 						   bool drop_negative)
 {
 	struct dentry *ret = lookup_one_len_unlocked(name, base, len);
-	unsigned int flags = smp_load_acquire(&ret->d_flags);
 
-	if (!IS_ERR(ret) && ((flags & DCACHE_ENTRY_TYPE) == DCACHE_MISS_TYPE)) {
+	if (!IS_ERR(ret) && d_flags_negative(smp_load_acquire(&ret->d_flags))) {
 		if (drop_negative && ret->d_lockref.count == 1) {
 			spin_lock(&ret->d_lock);
 			/* Recheck condition under lock */
