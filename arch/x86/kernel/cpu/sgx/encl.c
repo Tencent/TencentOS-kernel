@@ -409,6 +409,7 @@ void sgx_encl_release(struct kref *ref)
 			entry->epc_page = NULL;
 		}
 
+		cond_resched();
 		kfree(entry);
 	}
 
