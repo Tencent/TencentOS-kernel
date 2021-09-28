@@ -2158,8 +2158,10 @@ static void nvme_dev_disable(struct nvme_dev *dev, bool shutdown)
 		if (dev->ctrl.queue_count)
 			nvme_suspend_queue(&dev->queues[0]);
 	} else {
-		nvme_disable_io_queues(dev, queues);
-		nvme_disable_admin_queue(dev, shutdown);
+		if (dev->ctrl.queue_count) {
+			nvme_disable_io_queues(dev, queues);
+			nvme_disable_admin_queue(dev, shutdown);
+		}
 	}
 	nvme_pci_disable(dev);
 
