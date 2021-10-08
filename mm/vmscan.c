@@ -174,6 +174,7 @@ unsigned int vm_pagecache_limit_async __read_mostly = 0;
 unsigned int vm_pagecache_ignore_slab __read_mostly = 1;
 static struct task_struct *kpclimitd = NULL;
 static bool kpclimitd_context = false;
+unsigned int vm_pagecache_limit_global __read_mostly = 1;
 /*
  * The total number of pages which are beyond the high watermark within all
  * zones.
@@ -3583,7 +3584,7 @@ static bool kswapd_shrink_node(pg_data_t *pgdat,
 	return sc->nr_scanned >= sc->nr_to_reclaim;
 }
 
-static void __shrink_page_cache(gfp_t mask);
+static unsigned long __shrink_page_cache(gfp_t mask, struct mem_cgroup *memcg, unsigned long nr_pages);
 
 /*
  * For kswapd, balance_pgdat() will reclaim pages across a node from zones
@@ -3613,6 +3614,7 @@ static int balance_pgdat(pg_data_t *pgdat, int order, int classzone_idx)
 		.order = order,
 		.may_unmap = 1,
 	};
+	unsigned long nr_pages;
 
 	set_task_reclaim_state(current, &sc.reclaim_state);
 	psi_memstall_enter(&pflags);
@@ -3621,8 +3623,11 @@ static int balance_pgdat(pg_data_t *pgdat, int order, int classzone_idx)
 	count_vm_event(PAGEOUTRUN);
 
 	/* this reclaims from all zones so don't count to sc.nr_reclaimed */
-	if (unlikely(vm_pagecache_limit_pages) && pagecache_over_limit() > 0)
-		__shrink_page_cache(GFP_KERNEL);
+	if (unlikely(vm_pagecache_limit_pages)) {
+		nr_pages = pagecache_over_limit();
+		if (nr_pages)
+			__shrink_page_cache(GFP_KERNEL, NULL, nr_pages);
+	}
 
 	/*
 	 * Account for the reclaim boost. Note that the zone boost is left in
@@ -4276,7 +4281,7 @@ out:
  * This function is similar to shrink_all_memory, except that it may never
  * swap out mapped pages and only does four passes.
  */
-static void __shrink_page_cache(gfp_t mask)
+static unsigned long __shrink_page_cache(gfp_t mask, struct mem_cgroup *memcg, unsigned long nr_pages)
 {
 	unsigned long ret = 0;
 	int pass = 0;
@@ -4287,11 +4292,10 @@ static void __shrink_page_cache(gfp_t mask)
 		.priority = DEF_PRIORITY,
 		.may_unmap = 0,
 		.may_writepage = 0,
-		.target_mem_cgroup = NULL,
+		.target_mem_cgroup = memcg,
 		.reclaim_idx = MAX_NR_ZONES,
 	};
 	struct reclaim_state *old_rs = current->reclaim_state;
-	long nr_pages;
 
 	/* We might sleep during direct reclaim so make atomic context
 	 * is certainly a bug.
@@ -4300,7 +4304,7 @@ static void __shrink_page_cache(gfp_t mask)
 
 retry:
 	/* How many pages are we over the limit?*/
-	nr_pages = pagecache_over_limit();
+//	nr_pages = pagecache_get_reclaim_pages(memcg);
 
 	/*
 	 * Return early if there's no work to do.
@@ -4309,7 +4313,7 @@ retry:
 	 * This makes sure that no sleeping reclaimer will stay behind.
 	 * Allow breaching the limit if the task is on the way out.
 	 */
-	if (nr_pages <= 0 || fatal_signal_pending(current)) {
+	if (nr_pages == 0 || fatal_signal_pending(current)) {
 		wake_up_interruptible(&pagecache_reclaim_wq);
 		goto out;
 	}
@@ -4347,11 +4351,11 @@ retry:
 
 			reclaim_state.reclaimed_slab = 0;
 			for_each_online_node(nid) {
-			  struct mem_cgroup *memcg = mem_cgroup_iter(NULL, NULL, NULL);
+				struct mem_cgroup *iter;
 
-			  do {
-			    shrink_slab(mask, nid, memcg, sc.priority);
-			  } while ((memcg = mem_cgroup_iter(NULL, memcg, NULL)) != NULL);
+				for_each_mem_cgroup_tree(iter, memcg) {
+					shrink_slab(mask, nid, iter, sc.priority);
+				}
 			}
 			ret += reclaim_state.reclaimed_slab;
 
@@ -4370,6 +4374,8 @@ retry:
 
 out:
 	current->reclaim_state = old_rs;
+
+	return sc.nr_reclaimed;
 }
 
 static int kpagecache_limitd(void *data)
@@ -4384,7 +4390,7 @@ static int kpagecache_limitd(void *data)
 		wake_up_interruptible(&pagecache_reclaim_wq);
 
 	for ( ; ; ) {
-		__shrink_page_cache(GFP_KERNEL);
+		__shrink_page_cache(GFP_KERNEL, NULL, pagecache_over_limit());
 		prepare_to_wait(&kpagecache_limitd_wq, &wait, TASK_INTERRUPTIBLE);
 
 		if (!kthread_should_stop())
@@ -4408,10 +4414,20 @@ static void wakeup_kpclimitd(gfp_t mask)
 
 void shrink_page_cache(gfp_t mask, struct page *page)
 {
-	if (0 == vm_pagecache_limit_async)
-		__shrink_page_cache(mask);
-	else
-		wakeup_kpclimitd(mask);
+	if (vm_pagecache_limit_global) {
+		if (0 == vm_pagecache_limit_async)
+			__shrink_page_cache(mask, NULL, pagecache_over_limit());
+		else
+			wakeup_kpclimitd(mask);
+	}
+}
+
+unsigned long shrink_page_cache_memcg(gfp_t mask, struct mem_cgroup *memcg, unsigned long nr_pages)
+{
+	if (!vm_pagecache_limit_global)
+		return  __shrink_page_cache(mask, memcg, nr_pages);
+
+	return 0;
 }
 
 /* It's optimal to keep kswapds on the same CPUs as their memory, but
