@@ -198,7 +198,6 @@ static void unaccount_page_cache_page(struct address_space *mapping,
 		return;
 
 	nr = hpage_nr_pages(page);
-
 	__mod_node_page_state(page_pgdat(page), NR_FILE_PAGES, -nr);
 	if (PageSwapBacked(page)) {
 		__mod_node_page_state(page_pgdat(page), NR_SHMEM, -nr);
@@ -867,6 +866,7 @@ noinline int __add_to_page_cache_locked(struct page *page,
 					      gfp_mask, &memcg, false);
 		if (error)
 			return error;
+		mem_cgroup_shrink_pagecache(memcg, gfp_mask);
 	}
 
 	get_page(page);

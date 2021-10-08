@@ -370,6 +370,7 @@ extern int vm_swappiness;
 #define ADDITIONAL_RECLAIM_RATIO 2
 extern unsigned long pagecache_over_limit(void);
 extern void shrink_page_cache(gfp_t mask, struct page *page);
+extern unsigned long shrink_page_cache_memcg(gfp_t mask, struct mem_cgroup *memcg, unsigned long nr_pages);
 extern unsigned long vm_pagecache_limit_pages;
 extern unsigned long vm_pagecache_limit_reclaim_pages;
 extern int vm_pagecache_limit_ratio;
@@ -379,6 +380,7 @@ extern unsigned int vm_pagecache_limit_async;
 extern unsigned int vm_pagecache_ignore_slab;
 extern int kpagecache_limitd_run(void);
 extern void kpagecache_limitd_stop(void);
+extern unsigned int vm_pagecache_limit_global;
 extern int remove_mapping(struct address_space *mapping, struct page *page);
 extern unsigned long vm_total_pages;
 

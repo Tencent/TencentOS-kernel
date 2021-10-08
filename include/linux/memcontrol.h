@@ -47,6 +47,8 @@ enum memcg_memory_event {
 	MEMCG_OOM_KILL,
 	MEMCG_SWAP_MAX,
 	MEMCG_SWAP_FAIL,
+	MEMCG_PAGECACHE_MAX,
+	MEMCG_PAGECACHE_OOM,
 	MEMCG_NR_MEMORY_EVENTS,
 };
 
@@ -214,6 +216,9 @@ struct mem_cgroup {
 	/* Accounted resources */
 	struct page_counter memory;
 	struct page_counter swap;
+	struct page_counter pagecache;
+	u64 pagecache_reclaim_ratio;
+	u32 pagecache_max_ratio;
 
 	/* Legacy consumer-oriented counters */
 	struct page_counter memsw;
@@ -344,6 +349,21 @@ struct mem_cgroup {
  * TODO: maybe necessary to use big numbers in big irons.
  */
 #define MEMCG_CHARGE_BATCH 32U
+
+/*
+ * Iteration constructs for visiting all cgroups (under a tree).  If
+ * loops are exited prematurely (break), mem_cgroup_iter_break() must
+ * be used for reference counting.
+ */
+#define for_each_mem_cgroup_tree(iter, root)		\
+	for (iter = mem_cgroup_iter(root, NULL, NULL);	\
+	     iter != NULL;				\
+	     iter = mem_cgroup_iter(root, iter, NULL))
+
+#define for_each_mem_cgroup(iter)			\
+	for (iter = mem_cgroup_iter(NULL, NULL, NULL);	\
+	     iter != NULL;				\
+	     iter = mem_cgroup_iter(NULL, iter, NULL))
 
 extern struct mem_cgroup *root_mem_cgroup;
 
@@ -1337,6 +1357,10 @@ struct sock;
 bool mem_cgroup_charge_skmem(struct mem_cgroup *memcg, unsigned int nr_pages);
 void mem_cgroup_uncharge_skmem(struct mem_cgroup *memcg, unsigned int nr_pages);
 #ifdef CONFIG_MEMCG
+
+extern unsigned int vm_pagecache_limit_retry_times __read_mostly;
+extern void mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask);
+
 extern struct static_key_false memcg_sockets_enabled_key;
 #define mem_cgroup_sockets_enabled static_branch_unlikely(&memcg_sockets_enabled_key)
 void mem_cgroup_sk_alloc(struct sock *sk);

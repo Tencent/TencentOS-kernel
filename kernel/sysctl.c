@@ -1620,6 +1620,24 @@ static struct ctl_table vm_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &proc_dointvec,
 	},
+	{
+		.procname	= "pagecache_limit_global",
+		.data		= &vm_pagecache_limit_global,
+		.maxlen		= sizeof(vm_pagecache_limit_global),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+	{
+		.procname	= "pagecache_limit_retry_times",
+		.data		= &vm_pagecache_limit_retry_times,
+		.maxlen		= sizeof(vm_pagecache_limit_retry_times),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= &one_hundred,
+	},
 #ifdef CONFIG_HUGETLB_PAGE
 	{
 		.procname	= "nr_hugepages",

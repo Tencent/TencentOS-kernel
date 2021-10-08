@@ -74,6 +74,7 @@ EXPORT_SYMBOL(memory_cgrp_subsys);
 struct mem_cgroup *root_mem_cgroup __read_mostly;
 
 #define MEM_CGROUP_RECLAIM_RETRIES	5
+#define DEFAULT_PAGE_RECLAIM_RATIO	5
 
 /* Socket memory accounting disabled? */
 static bool cgroup_memory_nosocket;
@@ -230,21 +231,6 @@ enum res_type {
 #define MEMFILE_ATTR(val)	((val) & 0xffff)
 /* Used for OOM nofiier */
 #define OOM_CONTROL		(0)
-
-/*
- * Iteration constructs for visiting all cgroups (under a tree).  If
- * loops are exited prematurely (break), mem_cgroup_iter_break() must
- * be used for reference counting.
- */
-#define for_each_mem_cgroup_tree(iter, root)		\
-	for (iter = mem_cgroup_iter(root, NULL, NULL);	\
-	     iter != NULL;				\
-	     iter = mem_cgroup_iter(root, iter, NULL))
-
-#define for_each_mem_cgroup(iter)			\
-	for (iter = mem_cgroup_iter(NULL, NULL, NULL);	\
-	     iter != NULL;				\
-	     iter = mem_cgroup_iter(NULL, iter, NULL))
 
 static inline bool should_force_charge(void)
 {
@@ -709,6 +695,13 @@ void __mod_memcg_state(struct mem_cgroup *memcg, int idx, int val)
 		x = 0;
 	}
 	__this_cpu_write(memcg->vmstats_percpu->stat[idx], x);
+
+	if (idx == MEMCG_CACHE) {
+		if (val > 0)
+			page_counter_charge(&memcg->pagecache, val);
+		else
+			page_counter_uncharge(&memcg->pagecache, -val);
+	}
 }
 
 static struct mem_cgroup_per_node *
@@ -3172,6 +3165,8 @@ static inline int mem_cgroup_move_swap_account(swp_entry_t entry,
 }
 #endif
 
+static void pagecache_set_limit(struct mem_cgroup *memcg);
+
 static DEFINE_MUTEX(memcg_max_mutex);
 
 static int mem_cgroup_resize_max(struct mem_cgroup *memcg,
@@ -3222,8 +3217,11 @@ static int mem_cgroup_resize_max(struct mem_cgroup *memcg,
 		}
 	} while (true);
 
-	if (!ret && enlarge)
-		memcg_oom_recover(memcg);
+	if (!ret) {
+		if (enlarge)
+			memcg_oom_recover(memcg);
+		pagecache_set_limit(memcg);
+	}
 
 	return ret;
 }
@@ -3406,6 +3404,215 @@ static int mem_cgroup_hierarchy_write(struct cgroup_subsys_state *css,
 		retval = -EINVAL;
 
 	return retval;
+}
+
+#define MIN_PAGECACHE_PAGES 16
+
+unsigned int vm_pagecache_limit_retry_times;
+void mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask)
+{
+	unsigned long pages_used, pages_max, pages_reclaimed, goal_pages_used, pre_used;
+	unsigned int retry_times = 0;
+	unsigned int limit_retry_times;
+
+	if (!memcg || mem_cgroup_is_root(memcg))
+		return;
+
+	pages_max = READ_ONCE(memcg->pagecache.max);
+	if (pages_max == PAGE_COUNTER_MAX || vm_pagecache_limit_global)
+		return;
+
+	if (gfp_mask & __GFP_ATOMIC)
+		return;
+
+	if (unlikely(should_force_charge()))
+		return;
+
+	if (unlikely(current->flags & PF_MEMALLOC))
+		return;
+
+	if (unlikely(task_in_memcg_oom(current)))
+		return;
+
+	if (!gfpflags_allow_blocking(gfp_mask))
+		return;
+
+	pages_used = page_counter_read(&memcg->pagecache);
+	limit_retry_times = READ_ONCE(vm_pagecache_limit_retry_times);
+	goal_pages_used = (100 - READ_ONCE(memcg->pagecache_reclaim_ratio)) * pages_max / 100;
+	goal_pages_used = max_t(unsigned long, MIN_PAGECACHE_PAGES, goal_pages_used);
+
+	if (pages_used > pages_max) {
+		memcg_memory_event(memcg, MEMCG_PAGECACHE_MAX);
+		while (pages_used > goal_pages_used) {
+			if (fatal_signal_pending(current))
+				break;
+
+			pre_used = pages_used;
+			pages_reclaimed = shrink_page_cache_memcg(gfp_mask, memcg, pages_used - goal_pages_used);
+
+			if (limit_retry_times == 0)
+				goto next_shrink;
+
+			if (pages_reclaimed == 0) {
+				congestion_wait(BLK_RW_ASYNC, HZ/10);
+				retry_times++;
+			} else
+				retry_times = 0;
+
+			if (retry_times > limit_retry_times) {
+				memcg_memory_event(memcg, MEMCG_PAGECACHE_OOM);
+				mem_cgroup_out_of_memory(memcg, GFP_KERNEL, 0);
+				break;
+			}
+
+next_shrink:
+			pages_used = page_counter_read(&memcg->pagecache);
+			cond_resched();
+		}
+	}
+}
+
+static u64 pagecache_reclaim_ratio_read(struct cgroup_subsys_state *css,
+					struct cftype *cft)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	return memcg->pagecache_reclaim_ratio;
+}
+
+static ssize_t pagecache_reclaim_ratio_write(struct kernfs_open_file *of,
+				char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	u64 reclaim_ratio;
+	int ret;
+	unsigned long nr_pages;
+
+	buf = strstrip(buf);
+	if (!buf)
+		return -EINVAL;
+
+	ret = kstrtou64(buf, 0, &reclaim_ratio);
+	if (ret)
+		return ret;
+
+	if ((reclaim_ratio > 0) && (reclaim_ratio < 100)) {
+		memcg->pagecache_reclaim_ratio = reclaim_ratio;
+		return nbytes;
+	} else if (reclaim_ratio == 100) {
+		nr_pages = page_counter_read(&memcg->pagecache);
+		shrink_page_cache_memcg(GFP_KERNEL, memcg, nr_pages);
+		return nbytes;
+	}
+
+	return -EINVAL;
+}
+
+static u64 pagecache_current_read(struct cgroup_subsys_state *css,
+				struct cftype *cft)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	return (u64)page_counter_read(&memcg->pagecache) * PAGE_SIZE;
+}
+
+static u64 memory_pagecache_max_read(struct cgroup_subsys_state *css,
+				struct cftype *cft)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+	return memcg->pagecache_max_ratio;
+}
+
+unsigned long mem_cgroup_pagecache_get_reclaim_pages(struct mem_cgroup *memcg)
+{
+	unsigned long goal_pages_used, pages_used, pages_max;
+
+	if ((!memcg) || (mem_cgroup_is_root(memcg)))
+		return 0;
+
+	pages_max = READ_ONCE(memcg->pagecache.max);
+	if (pages_max == PAGE_COUNTER_MAX)
+		return 0;
+
+	goal_pages_used = (100 - READ_ONCE(memcg->pagecache_reclaim_ratio)) * pages_max / 100;
+	goal_pages_used = max_t(unsigned long, MIN_PAGECACHE_PAGES, goal_pages_used);
+	pages_used = page_counter_read(&memcg->pagecache);
+
+	return pages_used > pages_max ? pages_used - goal_pages_used : 0;
+}
+
+#define PAGECACHE_MAX_RATIO_MIN 5
+#define PAGECACHE_MAX_RATIO_MAX 100
+
+static void pagecache_set_limit(struct mem_cgroup *memcg)
+{
+	unsigned long max, pre, pages_max;
+	u32 max_ratio;
+
+	pages_max = READ_ONCE(memcg->memory.max);
+	max_ratio = READ_ONCE(memcg->pagecache_max_ratio);
+	max = ((pages_max * max_ratio) / 100);
+	xchg(&memcg->pagecache.max, max);
+}
+
+static ssize_t memory_pagecache_max_write(struct kernfs_open_file *of,
+				char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	unsigned int nr_reclaims = MEM_CGROUP_RECLAIM_RETRIES;
+	unsigned long max, pages_reclaimed;
+	int err, ret = 0;
+	u64 max_ratio;
+
+	if (!buf)
+		return -EINVAL;
+
+	xchg(&memcg->pagecache.max, max);
+	ret = kstrtou64(buf, 0, &max_ratio);
+	if (ret)
+		return ret;
+
+	if (max_ratio > PAGECACHE_MAX_RATIO_MAX ||
+		max_ratio < PAGECACHE_MAX_RATIO_MIN)
+		return -EINVAL;
+
+	if (READ_ONCE(memcg->memory.max) == PAGE_COUNTER_MAX) {
+		printk(KERN_WARNING "pagecache limit not allowed for cgroup without memory limit set\n");
+		return -EPERM;
+	}
+
+	memcg->pagecache_max_ratio = max_ratio;
+	pagecache_set_limit(memcg);
+	max = memcg->pagecache.max;
+
+	for (;;) {
+		unsigned long pages_used = page_counter_read(&memcg->pagecache);
+
+		if (pages_used <= max)
+			break;
+
+		if (fatal_signal_pending(current)) {
+			ret = -EINTR;
+			break;
+		}
+
+		if (nr_reclaims) {
+			pages_reclaimed = shrink_page_cache_memcg(GFP_KERNEL, memcg, mem_cgroup_pagecache_get_reclaim_pages(memcg));
+			if (pages_reclaimed == 0) {
+				congestion_wait(BLK_RW_ASYNC, HZ/10);
+				nr_reclaims--;
+			}
+			continue;
+		}
+
+		memcg_memory_event(memcg, MEMCG_OOM);
+		if (!mem_cgroup_out_of_memory(memcg, GFP_KERNEL, 0))
+			return -EINVAL;
+	}
+
+	return ret ? : nbytes;
 }
 
 static unsigned long mem_cgroup_usage(struct mem_cgroup *memcg, bool swap)
@@ -5134,6 +5341,23 @@ static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
 
 static struct cftype mem_cgroup_legacy_files[] = {
 	{
+		.name = "pagecache.reclaim_ratio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = pagecache_reclaim_ratio_read,
+		.write = pagecache_reclaim_ratio_write,
+	},
+	{
+		.name = "pagecache.max_ratio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = memory_pagecache_max_read,
+		.write = memory_pagecache_max_write,
+	},
+	{
+		.name = "pagecache.current",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = pagecache_current_read,
+	},
+	{
 		.name = "usage_in_bytes",
 		.private = MEMFILE_PRIVATE(_MEM, RES_USAGE),
 		.read_u64 = mem_cgroup_read_u64,
@@ -5499,6 +5723,8 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 
 	memcg->high = PAGE_COUNTER_MAX;
 	memcg->soft_limit = PAGE_COUNTER_MAX;
+	memcg->pagecache_reclaim_ratio = DEFAULT_PAGE_RECLAIM_RATIO;
+	memcg->pagecache_max_ratio = PAGECACHE_MAX_RATIO_MAX;
 	if (parent) {
 		memcg->swappiness = mem_cgroup_swappiness(parent);
 		memcg->oom_kill_disable = parent->oom_kill_disable;
@@ -5510,12 +5736,14 @@ mem_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 		page_counter_init(&memcg->memsw, &parent->memsw);
 		page_counter_init(&memcg->kmem, &parent->kmem);
 		page_counter_init(&memcg->tcpmem, &parent->tcpmem);
+		page_counter_init(&memcg->pagecache, &parent->pagecache);
 	} else {
 		page_counter_init(&memcg->memory, NULL);
 		page_counter_init(&memcg->swap, NULL);
 		page_counter_init(&memcg->memsw, NULL);
 		page_counter_init(&memcg->kmem, NULL);
 		page_counter_init(&memcg->tcpmem, NULL);
+		page_counter_init(&memcg->pagecache, NULL);
 		/*
 		 * Deeper hierachy with use_hierarchy == false doesn't make
 		 * much sense so let cgroup subsystem know about this
@@ -5648,6 +5876,7 @@ static void mem_cgroup_css_reset(struct cgroup_subsys_state *css)
 	page_counter_set_max(&memcg->memsw, PAGE_COUNTER_MAX);
 	page_counter_set_max(&memcg->kmem, PAGE_COUNTER_MAX);
 	page_counter_set_max(&memcg->tcpmem, PAGE_COUNTER_MAX);
+	page_counter_set_max(&memcg->pagecache, PAGE_COUNTER_MAX);
 	page_counter_set_min(&memcg->memory, 0);
 	page_counter_set_low(&memcg->memory, 0);
 	memcg->high = PAGE_COUNTER_MAX;
@@ -6532,6 +6761,8 @@ static ssize_t memory_max_write(struct kernfs_open_file *of,
 			break;
 	}
 
+	pagecache_set_limit(memcg);
+
 	memcg_wb_domain_size_changed(memcg);
 	return nbytes;
 }
@@ -6544,6 +6775,8 @@ static void __memory_events_show(struct seq_file *m, atomic_long_t *events)
 	seq_printf(m, "oom %lu\n", atomic_long_read(&events[MEMCG_OOM]));
 	seq_printf(m, "oom_kill %lu\n",
 		   atomic_long_read(&events[MEMCG_OOM_KILL]));
+	seq_printf(m, "pagecache_max:%lu\n", atomic_long_read(&events[MEMCG_PAGECACHE_MAX]));
+	seq_printf(m, "pagecache_oom:%lu\n", atomic_long_read(&events[MEMCG_PAGECACHE_OOM]));
 }
 
 static int memory_events_show(struct seq_file *m, void *v)
@@ -6607,6 +6840,23 @@ static ssize_t memory_oom_group_write(struct kernfs_open_file *of,
 }
 
 static struct cftype memory_files[] = {
+	{
+		.name = "pagecache.reclaim_ratio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = pagecache_reclaim_ratio_read,
+		.write = pagecache_reclaim_ratio_write,
+	},
+	{
+		.name = "pagecache.max_ratio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = memory_pagecache_max_read,
+		.write = memory_pagecache_max_write,
+	},
+	{
+		.name = "pagecache.current",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.read_u64 = pagecache_current_read,
+	},
 	{
 		.name = "current",
 		.flags = CFTYPE_NOT_ON_ROOT,
