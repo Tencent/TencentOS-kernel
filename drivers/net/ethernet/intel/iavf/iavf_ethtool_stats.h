@@ -52,6 +52,80 @@ static const struct iavf_stats iavf_gstrings_queue_stats[] = {
 	IAVF_QUEUE_STAT("%s-%u.bytes", stats.bytes),
 };
 
+#define IAVF_VECTOR_STAT(_name, _stat) \
+	IAVF_STAT(struct iavf_q_vector, _name, _stat)
+
+/* Stats associated with a Tx or Rx ring */
+static struct iavf_stats iavf_gstrings_queue_stats_poll[] = {
+	IAVF_QUEUE_STAT("%s-%u.pkt_busy_poll", ch_q_stats.poll.pkt_busy_poll),
+	IAVF_QUEUE_STAT("%s-%u.pkt_not_busy_poll",
+			ch_q_stats.poll.pkt_not_busy_poll),
+};
+
+static struct iavf_stats iavf_gstrings_queue_stats_tx[] = {
+};
+
+static struct iavf_stats iavf_gstrings_queue_stats_rx[] = {
+	IAVF_QUEUE_STAT("%s-%u.tcp_ctrl_pkts", ch_q_stats.rx.tcp_ctrl_pkts),
+	IAVF_QUEUE_STAT("%s-%u.only_ctrl_pkts", ch_q_stats.rx.only_ctrl_pkts),
+	IAVF_QUEUE_STAT("%s-%u.tcp_fin_recv", ch_q_stats.rx.tcp_fin_recv),
+	IAVF_QUEUE_STAT("%s-%u.tcp_rst_recv", ch_q_stats.rx.tcp_rst_recv),
+	IAVF_QUEUE_STAT("%s-%u.tcp_syn_recv", ch_q_stats.rx.tcp_syn_recv),
+	IAVF_QUEUE_STAT("%s-%u.bp_no_data_pkt", ch_q_stats.rx.bp_no_data_pkt),
+};
+
+static struct iavf_stats iavf_gstrings_queue_stats_vector[] = {
+	/* tracking BP, INT, BP->INT, INT->BP */
+	IAVF_VECTOR_STAT("%s-%u.in_bp", ch_stats.in_bp),
+	IAVF_VECTOR_STAT("%s-%u.intr_to_bp", ch_stats.intr_to_bp),
+	IAVF_VECTOR_STAT("%s-%u.bp_to_bp", ch_stats.bp_to_bp),
+	IAVF_VECTOR_STAT("%s-%u.in_intr", ch_stats.in_intr),
+	IAVF_VECTOR_STAT("%s-%u.bp_to_intr", ch_stats.bp_to_intr),
+	IAVF_VECTOR_STAT("%s-%u.intr_to_intr", ch_stats.intr_to_intr),
+
+	/* unlikely comeback to busy_poll */
+	IAVF_VECTOR_STAT("%s-%u.unlikely_cb_to_bp", ch_stats.unlikely_cb_to_bp),
+	/* unlikely comeback to busy_poll and once_in_bp is true */
+	IAVF_VECTOR_STAT("%s-%u.ucb_once_in_bp_true",
+			 ch_stats.ucb_once_in_bp_true),
+	/* once_in_bp is false */
+	IAVF_VECTOR_STAT("%s-%u.intr_once_in_bp_false",
+			 ch_stats.intr_once_bp_false),
+	/* busy_poll stop due to need_resched() */
+	IAVF_VECTOR_STAT("%s-%u.bp_stop_need_resched",
+			 ch_stats.bp_stop_need_resched),
+	/* busy_poll stop due to possible due to timeout */
+	IAVF_VECTOR_STAT("%s-%u.bp_stop_timeout", ch_stats.bp_stop_timeout),
+	/* Transition: BP->INT: previously cleaned data packets */
+	IAVF_VECTOR_STAT("%s-%u.cleaned_any_data_pkt",
+			 ch_stats.cleaned_any_data_pkt),
+	/* need_resched(), but didn't clean any data packets */
+	IAVF_VECTOR_STAT("%s-%u.need_resched_no_data_pkt",
+			 ch_stats.need_resched_no_data_pkt),
+	/* possible timeout(), but didn't clean any data packets */
+	IAVF_VECTOR_STAT("%s-%u.timeout_no_data_pkt",
+			 ch_stats.timeout_no_data_pkt),
+	/* number of SW triggered interrupt from napi_poll due to
+	 * possible timeout detected
+	 */
+	IAVF_VECTOR_STAT("%s-%u.sw_intr_timeout", ch_stats.sw_intr_timeout),
+	/* number of SW triggered interrupt from service_task */
+	IAVF_VECTOR_STAT("%s-%u.sw_intr_service_task",
+			 ch_stats.sw_intr_serv_task),
+	/* number of times, SW triggered interrupt is not triggered from
+	 * napi_poll even when unlikely_cb_to_bp is set, once_in_bp is set
+	 * but ethtool private featute flag is off (for interrupt optimization
+	 * strategy
+	 */
+	IAVF_VECTOR_STAT("%s-%u.no_sw_intr_opt_off",
+			 ch_stats.no_sw_intr_opt_off),
+	/* number of times WB_ON_ITR is set */
+	IAVF_VECTOR_STAT("%s-%u.wb_on_itr_set", ch_stats.wb_on_itr_set),
+
+	/* enable SW triggered interrupt due to not_clean_complete */
+	IAVF_VECTOR_STAT("%s-%u.sw_intr_not_cc",
+			 ch_stats.intr_en_not_clean_complete),
+};
 
 /**
  * iavf_add_one_ethtool_stat - copy the stat into the supplied buffer
@@ -137,6 +211,90 @@ __iavf_add_ethtool_stats(u64 **data, void *pointer,
  **/
 #define iavf_add_ethtool_stats(data, pointer, stats) \
 	__iavf_add_ethtool_stats(data, pointer, stats, ARRAY_SIZE(stats))
+
+enum iavf_chnl_stat_type {
+	IAVF_CHNL_STAT_INVALID,
+	IAVF_CHNL_STAT_POLL,
+	IAVF_CHNL_STAT_TX,
+	IAVF_CHNL_STAT_RX,
+	IAVF_CHNL_STAT_VECTOR,
+	IAVF_CHNL_STAT_LAST, /* This must be last */_
+};
+
+/**
+ * iavf_add_queue_stats_chnl - copy channel specific queue stats
+ * @data: ethtool stats buffer
+ * @ring: the ring to copy
+ * @stat_type: stat_type could be TX/TX/VECTOR
+ *
+ * Queue statistics must be copied while protected by
+ * u64_stats_fetch_begin_irq, so we can't directly use iavf_add_ethtool_stats.
+ * Assumes that queue stats are defined in iavf_gstrings_queue_stats. If the
+ * ring pointer is null, zero out the queue stat values and update the data
+ * pointer. Otherwise safely copy the stats from the ring into the supplied
+ * buffer and update the data pointer when finished.
+ *
+ * This function expects to be called while under rcu_read_lock().
+ **/
+static void
+iavf_add_queue_stats_chnl(u64 **data, struct iavf_ring *ring,
+			  enum iavf_chnl_stat_type stat_type)
+{
+	struct iavf_stats *stats = NULL;
+#ifdef HAVE_NDO_GET_STATS64
+	unsigned int start;
+#endif
+	unsigned int size;
+	unsigned int i;
+
+	switch (stat_type) {
+	case IAVF_CHNL_STAT_POLL:
+		size = ARRAY_SIZE(iavf_gstrings_queue_stats_poll);
+		stats = iavf_gstrings_queue_stats_poll;
+		break;
+	case IAVF_CHNL_STAT_TX:
+		size = ARRAY_SIZE(iavf_gstrings_queue_stats_tx);
+		stats = iavf_gstrings_queue_stats_tx;
+		break;
+	case IAVF_CHNL_STAT_RX:
+		size = ARRAY_SIZE(iavf_gstrings_queue_stats_rx);
+		stats = iavf_gstrings_queue_stats_rx;
+		break;
+	case IAVF_CHNL_STAT_VECTOR:
+		size = ARRAY_SIZE(iavf_gstrings_queue_stats_vector);
+		stats = iavf_gstrings_queue_stats_vector;
+		break;
+	default:
+		break; /* unsupported stat type */
+	}
+
+	if (!stats)
+		return;
+
+	/* To avoid invalid statistics values, ensure that we keep retrying
+	 * the copy until we get a consistent value according to
+	 * u64_stats_fetch_retry_irq. But first, make sure our ring is
+	 * non-null before attempting to access its syncp.
+	 */
+#ifdef HAVE_NDO_GET_STATS64
+	do {
+		start = !ring ? 0 : u64_stats_fetch_begin_irq(&ring->syncp);
+#endif
+		for (i = 0; i < size; i++) {
+			void *ptr = ring;
+
+			if (stat_type == IAVF_CHNL_STAT_VECTOR)
+				ptr = ring ? ring->q_vector : NULL;
+			iavf_add_one_ethtool_stat(&(*data)[i], ptr,
+						  &stats[i]);
+		}
+#ifdef HAVE_NDO_GET_STATS64
+	} while (ring && u64_stats_fetch_retry_irq(&ring->syncp, start));
+#endif
+
+	/* Once we successfully copy the stats in, update the data pointer */
+	*data += size;
+}
 
 /**
  * iavf_add_queue_stats - copy queue statistics into supplied buffer

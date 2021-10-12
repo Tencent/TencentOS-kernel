@@ -33,6 +33,8 @@ static const struct iavf_stats iavf_gstrings_stats[] = {
 	VF_STAT("tx_broadcast", current_stats.tx_broadcast),
 	VF_STAT("tx_discards", current_stats.tx_discards),
 	VF_STAT("tx_errors", current_stats.tx_errors),
+	VF_STAT("tx_hwtstamp_skipped", ptp.tx_hwtstamp_skipped),
+	VF_STAT("tx_hwtstamp_timeouts", ptp.tx_hwtstamp_timeouts),
 #ifdef IAVF_ADD_PROBES
 	VF_STAT("tx_tcp_segments", tcp_segs),
 	VF_STAT("tx_udp_segments", udp_segs),
@@ -41,11 +43,13 @@ static const struct iavf_stats iavf_gstrings_stats[] = {
 	VF_STAT("tx_sctp_cso", tx_sctp_cso),
 	VF_STAT("tx_ip4_cso", tx_ip4_cso),
 	VF_STAT("tx_vlano", tx_vlano),
+	VF_STAT("tx_ad_vlano", tx_ad_vlano),
 	VF_STAT("rx_tcp_cso", rx_tcp_cso),
 	VF_STAT("rx_udp_cso", rx_udp_cso),
 	VF_STAT("rx_sctp_cso", rx_sctp_cso),
 	VF_STAT("rx_ip4_cso", rx_ip4_cso),
 	VF_STAT("rx_vlano", rx_vlano),
+	VF_STAT("rx_ad_vlano", rx_ad_vlano),
 	VF_STAT("rx_tcp_cso_error", rx_tcp_cso_err),
 	VF_STAT("rx_udp_cso_error", rx_udp_cso_err),
 	VF_STAT("rx_sctp_cso_error", rx_sctp_cso_err),
@@ -55,7 +59,11 @@ static const struct iavf_stats iavf_gstrings_stats[] = {
 
 #define IAVF_STATS_LEN	ARRAY_SIZE(iavf_gstrings_stats)
 
-#define IAVF_QUEUE_STATS_LEN	ARRAY_SIZE(iavf_gstrings_queue_stats)
+#define IAVF_QUEUE_STATS_LEN	(ARRAY_SIZE(iavf_gstrings_queue_stats) + \
+				 ARRAY_SIZE(iavf_gstrings_queue_stats_poll))
+#define IAVF_TX_QUEUE_STATS_LEN ARRAY_SIZE(iavf_gstrings_queue_stats_tx)
+#define IAVF_RX_QUEUE_STATS_LEN ARRAY_SIZE(iavf_gstrings_queue_stats_rx)
+#define IAVF_VECTOR_STATS_LEN ARRAY_SIZE(iavf_gstrings_queue_stats_vector)
 
 #ifdef HAVE_SWIOTLB_SKIP_CPU_SYNC
 /* For now we have one and only one private flag and it is only defined
@@ -80,6 +88,13 @@ static const struct iavf_priv_flags iavf_gstrings_priv_flags[] = {
 };
 
 #define IAVF_PRIV_FLAGS_STR_LEN ARRAY_SIZE(iavf_gstrings_priv_flags)
+
+static const struct iavf_priv_flags iavf_gstrings_chnl_priv_flags[] = {
+	IAVF_PRIV_FLAG("channel-pkt-inspect-optimize",
+		       IAVF_FLAG_CHNL_PKT_OPT_ENA, 0),
+};
+#define IAVF_CHNL_PRIV_FLAGS_STR_LEN ARRAY_SIZE(iavf_gstrings_chnl_priv_flags)
+
 #endif /* HAVE_SWIOTLB_SKIP_CPU_SYNC */
 
 /**
@@ -100,15 +115,17 @@ static int iavf_get_link_ksettings(struct net_device *netdev,
 
 	cmd->base.autoneg = AUTONEG_DISABLE;
 	cmd->base.port = PORT_NONE;
-	/* Set speed and duplex */
+	cmd->base.duplex = DUPLEX_FULL;
+
 #ifdef VIRTCHNL_VF_CAP_ADV_LINK_SPEED
 	if (ADV_LINK_SUPPORT(adapter)) {
-		if (SUPPORTED_SPEED(adapter->link_speed_mbps))
+		if (adapter->link_speed_mbps &&
+		    adapter->link_speed_mbps < U32_MAX)
 			cmd->base.speed = adapter->link_speed_mbps;
 		else
 			cmd->base.speed = SPEED_UNKNOWN;
 
-		goto set_duplex;
+		return 0;
 	}
 
 #endif /* VIRTCHNL_VF_CAP_ADV_LINK_SPEED */
@@ -130,6 +147,12 @@ static int iavf_get_link_ksettings(struct net_device *netdev,
 	case VIRTCHNL_LINK_SPEED_10GB:
 		cmd->base.speed = SPEED_10000;
 		break;
+	case VIRTCHNL_LINK_SPEED_5GB:
+		cmd->base.speed = SPEED_5000;
+		break;
+	case VIRTCHNL_LINK_SPEED_2_5GB:
+		cmd->base.speed = SPEED_2500;
+		break;
 	case VIRTCHNL_LINK_SPEED_1GB:
 		cmd->base.speed = SPEED_1000;
 		break;
@@ -140,11 +163,6 @@ static int iavf_get_link_ksettings(struct net_device *netdev,
 		cmd->base.speed = SPEED_UNKNOWN;
 		break;
 	}
-
-#ifdef VIRTCHNL_VF_CAP_ADV_LINK_SPEED
-set_duplex:
-#endif /* VIRTCHNL_VF_CAP_ADV_LINK_SPEED */
-	cmd->base.duplex = DUPLEX_FULL;
 
 	return 0;
 }
@@ -180,12 +198,20 @@ static int iavf_get_settings(struct net_device *netdev,
  **/
 static int iavf_get_sset_count(struct net_device *netdev, int sset)
 {
+	/* Report the maximum number queues, even if not every queue is
+	 * currently configured. Since allocation of queues is in pairs,
+	 * use netdev->real_num_tx_queues * 2. The real_num_tx_queues is set
+	 * at device creation and never changes.
+	 */
 	if (sset == ETH_SS_STATS)
 		return IAVF_STATS_LEN +
-			(IAVF_QUEUE_STATS_LEN * 2 * IAVF_MAX_REQ_QUEUES);
+			(IAVF_QUEUE_STATS_LEN * 2 *
+			 netdev->real_num_tx_queues) +
+			((IAVF_TX_QUEUE_STATS_LEN + IAVF_RX_QUEUE_STATS_LEN +
+			 IAVF_VECTOR_STATS_LEN) * netdev->real_num_tx_queues);
 #ifdef HAVE_SWIOTLB_SKIP_CPU_SYNC
 	else if (sset == ETH_SS_PRIV_FLAGS)
-		return IAVF_PRIV_FLAGS_STR_LEN;
+		return IAVF_PRIV_FLAGS_STR_LEN + IAVF_PRIV_FLAGS_STR_LEN;
 #endif
 	else
 		return -EINVAL;
@@ -205,21 +231,30 @@ static void iavf_get_ethtool_stats(struct net_device *netdev,
 	struct iavf_adapter *adapter = netdev_priv(netdev);
 	unsigned int i;
 
+	/* Explicitly request stats refresh */
+	iavf_schedule_request_stats(adapter);
+
 	iavf_add_ethtool_stats(&data, adapter, iavf_gstrings_stats);
 
 	rcu_read_lock();
-	for (i = 0; i < IAVF_MAX_REQ_QUEUES; i++) {
+	/* As num_active_queues describe both tx and rx queues, we can use
+	 * it to iterate over rings' stats.
+	 */
+	for (i = 0; i < adapter->num_active_queues; i++) {
 		struct iavf_ring *ring;
 
-		/* Avoid accessing un-allocated queues */
-		ring = (i < adapter->num_active_queues ?
-			&adapter->tx_rings[i] : NULL);
+		/* Tx rings stats */
+		ring = &adapter->tx_rings[i];
 		iavf_add_queue_stats(&data, ring);
+		iavf_add_queue_stats_chnl(&data, ring, IAVF_CHNL_STAT_POLL);
+		iavf_add_queue_stats_chnl(&data, ring, IAVF_CHNL_STAT_TX);
 
-		/* Avoid accessing un-allocated queues */
-		ring = (i < adapter->num_active_queues ?
-			&adapter->rx_rings[i] : NULL);
+		/* Rx rings stats */
+		ring = &adapter->rx_rings[i];
 		iavf_add_queue_stats(&data, ring);
+		iavf_add_queue_stats_chnl(&data, ring, IAVF_CHNL_STAT_POLL);
+		iavf_add_queue_stats_chnl(&data, ring, IAVF_CHNL_STAT_RX);
+		iavf_add_queue_stats_chnl(&data, ring, IAVF_CHNL_STAT_VECTOR);
 	}
 	rcu_read_unlock();
 }
@@ -241,6 +276,12 @@ static void iavf_get_priv_flag_strings(struct net_device *netdev, u8 *data)
 			 iavf_gstrings_priv_flags[i].flag_string);
 		data += ETH_GSTRING_LEN;
 	}
+
+	for (i = 0; i < IAVF_CHNL_PRIV_FLAGS_STR_LEN; i++) {
+		snprintf(data, ETH_GSTRING_LEN, "%s",
+			 iavf_gstrings_chnl_priv_flags[i].flag_string);
+		data += ETH_GSTRING_LEN;
+	}
 }
 #endif
 
@@ -257,13 +298,23 @@ static void iavf_get_stat_strings(struct net_device *netdev, u8 *data)
 
 	iavf_add_stat_strings(&data, iavf_gstrings_stats);
 
-	/* Queues are always allocated in pairs, so we just use num_tx_queues
-	 * for both Tx and Rx queues.
+	/* Queues are always allocated in pairs, so we just use
+	 * real_num_tx_queues for both Tx and Rx queues.
 	 */
-	for (i = 0; i < netdev->num_tx_queues; i++) {
+	for (i = 0; i < netdev->real_num_tx_queues; i++) {
 		iavf_add_stat_strings(&data, iavf_gstrings_queue_stats,
 				      "tx", i);
+		iavf_add_stat_strings(&data, iavf_gstrings_queue_stats_poll,
+				      "tx", i);
+		iavf_add_stat_strings(&data, iavf_gstrings_queue_stats_tx,
+				      "tx", i);
 		iavf_add_stat_strings(&data, iavf_gstrings_queue_stats,
+				      "rx", i);
+		iavf_add_stat_strings(&data, iavf_gstrings_queue_stats_poll,
+				      "rx", i);
+		iavf_add_stat_strings(&data, iavf_gstrings_queue_stats_rx,
+				      "rx", i);
+		iavf_add_stat_strings(&data, iavf_gstrings_queue_stats_vector,
 				      "rx", i);
 	}
 }
@@ -306,40 +357,50 @@ static void iavf_get_strings(struct net_device *netdev, u32 sset, u8 *data)
 static u32 iavf_get_priv_flags(struct net_device *netdev)
 {
 	struct iavf_adapter *adapter = netdev_priv(netdev);
+	const struct iavf_priv_flags *priv_flags;
 	u32 i, ret_flags = 0;
 
 	for (i = 0; i < IAVF_PRIV_FLAGS_STR_LEN; i++) {
-		const struct iavf_priv_flags *priv_flags;
-
 		priv_flags = &iavf_gstrings_priv_flags[i];
 
 		if (priv_flags->flag & adapter->flags)
 			ret_flags |= BIT(i);
 	}
 
+	for (i = 0; i < IAVF_CHNL_PRIV_FLAGS_STR_LEN; i++) {
+		priv_flags = &iavf_gstrings_chnl_priv_flags[i];
+
+		if (priv_flags->flag & adapter->chnl_perf_flags)
+			ret_flags |= BIT(i + IAVF_PRIV_FLAGS_STR_LEN);
+	}
+
 	return ret_flags;
 }
 
 /**
- * iavf_set_priv_flags - set private flags
- * @netdev: network interface device structure
+ * iavf_determine_priv_flag_change - detect any change in private flags
+ * @priv_flags: Ptr to private flags array
+ * @num: count of private flags
+ * @bit_offset: "offset" into unified view of bits
  * @flags: bit flags to be set
+ * @orig: Ptr to flags
+ * @changed_flags: bits changed (based on orig and new value)
+ *
+ * Detect any changes in priv flags and return those changed bits
  **/
-static int iavf_set_priv_flags(struct net_device *netdev, u32 flags)
+static int
+iavf_determine_priv_flag_change(const struct iavf_priv_flags *priv_flags,
+				int num, int bit_offset, u32 flags, u32 *orig,
+				u32 *changed_flags)
 {
-	struct iavf_adapter *adapter = netdev_priv(netdev);
-	u32 orig_flags, new_flags, changed_flags;
-	u32 i;
+	u32 orig_flags = READ_ONCE(*orig);
+	u32 new_flags;
+	int i;
 
-	orig_flags = READ_ONCE(adapter->flags);
 	new_flags = orig_flags;
 
-	for (i = 0; i < IAVF_PRIV_FLAGS_STR_LEN; i++) {
-		const struct iavf_priv_flags *priv_flags;
-
-		priv_flags = &iavf_gstrings_priv_flags[i];
-
-		if (flags & BIT(i))
+	for (i = 0; i < num; i++) {
+		if (flags & BIT(i + bit_offset))
 			new_flags |= priv_flags->flag;
 		else
 			new_flags &= ~(priv_flags->flag);
@@ -347,6 +408,7 @@ static int iavf_set_priv_flags(struct net_device *netdev, u32 flags)
 		if (priv_flags->read_only &&
 		    ((orig_flags ^ new_flags) & ~BIT(i)))
 			return -EOPNOTSUPP;
+		priv_flags++;
 	}
 
 	/* Before we finalize any flag changes, any checks which we need to
@@ -360,13 +422,47 @@ static int iavf_set_priv_flags(struct net_device *netdev, u32 flags)
 	 * copied it. We'll just punt with an error and log something in the
 	 * message buffer.
 	 */
-	if (cmpxchg(&adapter->flags, orig_flags, new_flags) != orig_flags) {
-		dev_warn(&adapter->pdev->dev,
-			 "Unable to update adapter->flags as it was modified by another thread...\n");
+	if (cmpxchg(orig, orig_flags, new_flags) != orig_flags)
 		return -EAGAIN;
+
+	*changed_flags = orig_flags ^ new_flags;
+	return 0;
+}
+
+/**
+ * iavf_set_priv_flags - set private flags
+ * @netdev: network interface device structure
+ * @flags: bit flags to be set
+ **/
+static int iavf_set_priv_flags(struct net_device *netdev, u32 flags)
+{
+	struct iavf_adapter *adapter = netdev_priv(netdev);
+	u32 changed_chnl_flags;
+	u32 changed_flags;
+	int ret;
+
+	ret = iavf_determine_priv_flag_change(&iavf_gstrings_priv_flags[0],
+					      IAVF_PRIV_FLAGS_STR_LEN, 0,
+					      flags, &adapter->flags,
+					      &changed_flags);
+	if (ret) {
+		if (ret == -EAGAIN)
+			dev_warn(&adapter->pdev->dev,
+				 "Unable to update adapter->flags as it was modified by another thread...\n");
+		return ret;
 	}
 
-	changed_flags = orig_flags ^ new_flags;
+	ret = iavf_determine_priv_flag_change(&iavf_gstrings_chnl_priv_flags[0],
+					      IAVF_CHNL_PRIV_FLAGS_STR_LEN,
+					      IAVF_PRIV_FLAGS_STR_LEN,
+					      flags, &adapter->chnl_perf_flags,
+					      &changed_chnl_flags);
+	if (ret) {
+		if (ret == -EAGAIN)
+			dev_warn(&adapter->pdev->dev,
+				 "Unable to update adapter->chnl_perf_flags as it was modified by another thread...\n");
+		return ret;
+	}
 
 	/* Process any additional changes needed as a result of flag changes.
 	 * The changed_flags value reflects the list of bits that were changed
@@ -378,6 +474,10 @@ static int iavf_set_priv_flags(struct net_device *netdev, u32 flags)
 		if (netif_running(netdev))
 			iavf_schedule_reset(adapter);
 	}
+	/* Process any additional changes needed as a result of change
+	 * in channel specific flag(s)
+	 */
+	iavf_setup_ch_info(adapter, changed_chnl_flags);
 
 	return 0;
 }
@@ -568,23 +668,44 @@ static int iavf_set_ringparam(struct net_device *netdev,
 	if ((ring->rx_mini_pending) || (ring->rx_jumbo_pending))
 		return -EINVAL;
 
-	new_tx_count = clamp_t(u32, ring->tx_pending,
-			       IAVF_MIN_TXD,
-			       IAVF_MAX_TXD);
-	new_tx_count = ALIGN(new_tx_count, IAVF_REQ_DESCRIPTOR_MULTIPLE);
+	if (ring->tx_pending > IAVF_MAX_TXD ||
+	    ring->tx_pending < IAVF_MIN_TXD ||
+	    ring->rx_pending > IAVF_MAX_RXD ||
+	    ring->rx_pending < IAVF_MIN_RXD) {
+		netdev_err(netdev, "Descriptors requested (Tx: %d / Rx: %d) out of range [%d-%d] (increment %d)\n",
+			   ring->tx_pending, ring->rx_pending, IAVF_MIN_TXD,
+			   IAVF_MAX_RXD, IAVF_REQ_DESCRIPTOR_MULTIPLE);
+		return -EINVAL;
+	}
 
-	new_rx_count = clamp_t(u32, ring->rx_pending,
-			       IAVF_MIN_RXD,
-			       IAVF_MAX_RXD);
-	new_rx_count = ALIGN(new_rx_count, IAVF_REQ_DESCRIPTOR_MULTIPLE);
+	new_tx_count = ALIGN(ring->tx_pending, IAVF_REQ_DESCRIPTOR_MULTIPLE);
+	if (new_tx_count != ring->tx_pending)
+		netdev_info(netdev, "Requested Tx descriptor count rounded up to %d\n",
+			    new_tx_count);
+
+	new_rx_count = ALIGN(ring->rx_pending, IAVF_REQ_DESCRIPTOR_MULTIPLE);
+	if (new_rx_count != ring->rx_pending)
+		netdev_info(netdev, "Requested Rx descriptor count rounded up to %d\n",
+			    new_rx_count);
 
 	/* if nothing to do return success */
 	if ((new_tx_count == adapter->tx_desc_count) &&
-	    (new_rx_count == adapter->rx_desc_count))
+	    (new_rx_count == adapter->rx_desc_count)) {
+		netdev_dbg(netdev, "Nothing to change, descriptor count is same as requested\n");
 		return 0;
+	}
 
-	adapter->tx_desc_count = new_tx_count;
-	adapter->rx_desc_count = new_rx_count;
+	if (new_tx_count != adapter->tx_desc_count) {
+		netdev_info(netdev, "Changing Tx descriptor count from %d to %d\n",
+			    adapter->tx_desc_count, new_tx_count);
+		adapter->tx_desc_count = new_tx_count;
+	}
+
+	if (new_rx_count != adapter->rx_desc_count) {
+		netdev_info(netdev, "Changing Rx descriptor count from %d to %d\n",
+			    adapter->rx_desc_count, new_rx_count);
+		adapter->rx_desc_count = new_rx_count;
+	}
 
 	if (netif_running(netdev))
 		iavf_schedule_reset(adapter);
@@ -882,12 +1003,12 @@ static int iavf_set_channels(struct net_device *netdev,
 {
 	struct iavf_adapter *adapter = netdev_priv(netdev);
 	u32 num_req = ch->combined_count;
+	int i;
 
 #ifdef __TC_MQPRIO_MODE_MAX
-	if ((adapter->vf_res->vf_cap_flags & VIRTCHNL_VF_OFFLOAD_ADQ) &&
-	    adapter->num_tc) {
+	if (iavf_is_adq_enabled(adapter)) {
 		dev_info(&adapter->pdev->dev, "Cannot set channels since ADQ is enabled.\n");
-		return -EINVAL;
+		return -EOPNOTSUPP;
 	}
 #endif /* __TC_MQPRIO_MODE_MAX */
 
@@ -906,6 +1027,20 @@ static int iavf_set_channels(struct net_device *netdev,
 	adapter->num_req_queues = num_req;
 	adapter->flags |= IAVF_FLAG_REINIT_ITR_NEEDED;
 	iavf_schedule_reset(adapter);
+
+	/* wait for the reset is done */
+	for (i = 0; i < IAVF_RESET_WAIT_COMPLETE_COUNT; i++) {
+		msleep(IAVF_RESET_WAIT_MS);
+		if (adapter->flags & IAVF_FLAG_RESET_PENDING)
+			continue;
+		break;
+	}
+	if (i == IAVF_RESET_WAIT_COMPLETE_COUNT) {
+		adapter->flags &= ~IAVF_FLAG_REINIT_ITR_NEEDED;
+		adapter->num_active_queues = num_req;
+		return -EOPNOTSUPP;
+	}
+
 	return 0;
 }
 
@@ -999,6 +1134,14 @@ static int iavf_set_rxfh(struct net_device *netdev, const u32 *indir,
 	struct iavf_adapter *adapter = netdev_priv(netdev);
 	u16 i;
 
+#ifdef __TC_MQPRIO_MODE_MAX
+	if (iavf_is_adq_enabled(adapter)) {
+		dev_info(&adapter->pdev->dev,
+			 "Change in RSS params is not supported when ADQ is configured.\n");
+		return -EOPNOTSUPP;
+	}
+#endif /* __TC_MQPRIO_MODE_MAX */
+
 #ifdef HAVE_RXFH_HASHFUNC
 	if (hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_TOP)
 		return -EOPNOTSUPP;
@@ -1025,7 +1168,58 @@ static int iavf_set_rxfh(struct net_device *netdev, const u32 *indir,
 }
 #endif /* ETHTOOL_GRSSH && ETHTOOL_SRSSH */
 
+#ifdef HAVE_ETHTOOL_GET_TS_INFO
+#if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
+/**
+ * iavf_get_ts_info - Report available timestamping capabilities
+ * @netdev: the netdevice to report for
+ * @info: structure to fill in
+ *
+ * Based on device features enabled, report the Tx and Rx timestamp
+ * capabilities, as well as the PTP hardware clock index to user space.
+ */
+static int iavf_get_ts_info(struct net_device *netdev, struct ethtool_ts_info *info)
+{
+	struct iavf_adapter *adapter = netdev_priv(netdev);
+
+	info->so_timestamping = SOF_TIMESTAMPING_TX_SOFTWARE |
+				SOF_TIMESTAMPING_RX_SOFTWARE |
+				SOF_TIMESTAMPING_SOFTWARE;
+
+	if (iavf_ptp_cap_supported(adapter, VIRTCHNL_1588_PTP_CAP_TX_TSTAMP)) {
+		info->so_timestamping |= SOF_TIMESTAMPING_TX_HARDWARE |
+					 SOF_TIMESTAMPING_RAW_HARDWARE;
+		info->tx_types = BIT(HWTSTAMP_TX_OFF) | BIT(HWTSTAMP_TX_ON);
+	}
+
+	/* Rx timestamps are only supported on the flexible descriptors. Do
+	 * not report support unless we both have the capability and
+	 * configured with the appropriate descriptor format
+	 */
+	if (iavf_ptp_cap_supported(adapter, VIRTCHNL_1588_PTP_CAP_RX_TSTAMP) &&
+	    adapter->rxdid == VIRTCHNL_RXDID_2_FLEX_SQ_NIC) {
+		info->so_timestamping |= SOF_TIMESTAMPING_RX_HARDWARE |
+					 SOF_TIMESTAMPING_RAW_HARDWARE;
+		info->rx_filters = BIT(HWTSTAMP_FILTER_NONE) | BIT(HWTSTAMP_FILTER_ALL);
+	}
+
+	if (adapter->ptp.initialized)
+		info->phc_index = ptp_clock_index(adapter->ptp.clock);
+	else
+		info->phc_index = -1;
+
+	return 0;
+}
+#endif /* CONFIG_PTP_1588_CLOCK */
+#endif /* HAVE_ETHTOOL_GET_TS_INFO */
+
 static const struct ethtool_ops iavf_ethtool_ops = {
+#ifdef ETHTOOL_COALESCE_USECS
+	.supported_coalesce_params = ETHTOOL_COALESCE_USECS |
+				     ETHTOOL_COALESCE_MAX_FRAMES |
+				     ETHTOOL_COALESCE_MAX_FRAMES_IRQ |
+				     ETHTOOL_COALESCE_USE_ADAPTIVE,
+#endif /* ETHTOOL_COALESCE_USECS */
 	.get_drvinfo		= iavf_get_drvinfo,
 	.get_link		= ethtool_op_get_link,
 	.get_ringparam		= iavf_get_ringparam,
@@ -1075,6 +1269,11 @@ static const struct ethtool_ops iavf_ethtool_ops = {
 #else
 	.get_settings		= iavf_get_settings,
 #endif /* ETHTOOL_GLINKSETTINGS */
+#ifdef HAVE_ETHTOOL_GET_TS_INFO
+#if IS_ENABLED(CONFIG_PTP_1588_CLOCK)
+	.get_ts_info		= iavf_get_ts_info,
+#endif
+#endif
 };
 
 #ifdef HAVE_RHEL6_ETHTOOL_OPS_EXT_STRUCT

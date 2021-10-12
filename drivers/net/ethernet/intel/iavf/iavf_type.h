@@ -158,6 +158,7 @@ struct iavf_hw_capabilities {
 	u32 num_tx_qp;
 	u32 base_queue;
 	u32 num_msix_vectors_vf;
+	u32 max_mtu;
 	bool apm_wol_support;
 	enum iavf_acpi_programming_method acpi_prog_method;
 	bool proxy_support;
@@ -328,6 +329,45 @@ union iavf_16byte_rx_desc {
 	} wb;  /* writeback */
 };
 
+/* Rx Flex Descriptor NIC Profile
+ * RxDID Profile ID 2
+ * Flex-field 0: RSS hash lower 16-bits
+ * Flex-field 1: RSS hash upper 16-bits
+ * Flex-field 2: Flow ID lower 16-bits
+ * Flex-field 3: Flow ID higher 16-bits
+ * Flex-field 4: reserved, VLAN ID taken from L2Tag
+ */
+struct iavf_32byte_rx_flex_wb {
+	/* Qword 0 */
+	u8 rxdid;
+	u8 mir_id_umb_cast;
+	__le16 ptype_flexi_flags0;
+	__le16 pkt_len;
+	__le16 hdr_len_sph_flex_flags1;
+
+	/* Qword 1 */
+	__le16 status_error0;
+	__le16 l2tag1;
+	__le32 rss_hash;
+
+	/* Qword 2 */
+	__le16 status_error1;
+	u8 flexi_flags2;
+	u8 ts_low;
+	__le16 l2tag2_1st;
+	__le16 l2tag2_2nd;
+
+	/* Qword 3 */
+	__le32 flow_id;
+	union {
+		struct {
+			__le16 rsvd;
+			__le16 flow_id_ipv6;
+		} flex;
+		__le32 ts_high;
+	} flex_ts;
+};
+
 union iavf_32byte_rx_desc {
 	struct {
 		__le64  pkt_addr; /* Packet buffer address */
@@ -375,6 +415,7 @@ union iavf_32byte_rx_desc {
 			} hi_dword;
 		} qword3;
 	} wb;  /* writeback */
+	struct iavf_32byte_rx_flex_wb flex_wb;
 };
 
 enum iavf_rx_desc_status_bits {
@@ -443,6 +484,47 @@ enum iavf_rx_desc_error_l3l4e_fcoe_masks {
 #define IAVF_RXD_QW1_PTYPE_SHIFT	30
 #define IAVF_RXD_QW1_PTYPE_MASK		(0xFFULL << IAVF_RXD_QW1_PTYPE_SHIFT)
 
+/* for iavf_32byte_rx_flex_wb.ptype_flexi_flags0 member */
+#define IAVF_RX_FLEX_DESC_PTYPE_M	(0x3FF) /* 10-bits */
+
+/* for iavf_32byte_rx_flex_wb.pkt_length member */
+#define IAVF_RX_FLEX_DESC_PKT_LEN_M	(0x3FFF) /* 14-bits */
+
+enum iavf_rx_flex_desc_status_error_0_bits {
+	/* Note: These are predefined bit offsets */
+	IAVF_RX_FLEX_DESC_STATUS0_DD_S = 0,
+	IAVF_RX_FLEX_DESC_STATUS0_EOF_S,
+	IAVF_RX_FLEX_DESC_STATUS0_HBO_S,
+	IAVF_RX_FLEX_DESC_STATUS0_L3L4P_S,
+	IAVF_RX_FLEX_DESC_STATUS0_XSUM_IPE_S,
+	IAVF_RX_FLEX_DESC_STATUS0_XSUM_L4E_S,
+	IAVF_RX_FLEX_DESC_STATUS0_XSUM_EIPE_S,
+	IAVF_RX_FLEX_DESC_STATUS0_XSUM_EUDPE_S,
+	IAVF_RX_FLEX_DESC_STATUS0_LPBK_S,
+	IAVF_RX_FLEX_DESC_STATUS0_IPV6EXADD_S,
+	IAVF_RX_FLEX_DESC_STATUS0_RXE_S,
+	IAVF_RX_FLEX_DESC_STATUS0_CRCP_S,
+	IAVF_RX_FLEX_DESC_STATUS0_RSS_VALID_S,
+	IAVF_RX_FLEX_DESC_STATUS0_L2TAG1P_S,
+	IAVF_RX_FLEX_DESC_STATUS0_XTRMD0_VALID_S,
+	IAVF_RX_FLEX_DESC_STATUS0_XTRMD1_VALID_S,
+	IAVF_RX_FLEX_DESC_STATUS0_LAST /* this entry must be last!!! */
+};
+
+enum iavf_rx_flex_desc_status_error_1_bits {
+	/* Note: These are predefined bit offsets */
+	IAVF_RX_FLEX_DESC_STATUS1_CPM_S = 0, /* 4 bits */
+	IAVF_RX_FLEX_DESC_STATUS1_NAT_S = 4,
+	IAVF_RX_FLEX_DESC_STATUS1_CRYPTO_S = 5,
+	/* [10:6] reserved */
+	IAVF_RX_FLEX_DESC_STATUS1_L2TAG2P_S = 11,
+	IAVF_RX_FLEX_DESC_STATUS1_XTRMD2_VALID_S = 12,
+	IAVF_RX_FLEX_DESC_STATUS1_XTRMD3_VALID_S = 13,
+	IAVF_RX_FLEX_DESC_STATUS1_XTRMD4_VALID_S = 14,
+	IAVF_RX_FLEX_DESC_STATUS1_XTRMD5_VALID_S = 15,
+	IAVF_RX_FLEX_DESC_STATUS1_LAST /* this entry must be last!!! */
+};
+
 /* Packet type non-ip values */
 enum iavf_rx_l2_ptype {
 	IAVF_RX_PTYPE_L2_RESERVED			= 0,
@@ -470,11 +552,12 @@ enum iavf_rx_l2_ptype {
 	IAVF_RX_PTYPE_GRENAT4_MAC_PAY3			= 58,
 	IAVF_RX_PTYPE_GRENAT4_MACVLAN_IPV6_ICMP_PAY4	= 87,
 	IAVF_RX_PTYPE_GRENAT6_MAC_PAY3			= 124,
-	IAVF_RX_PTYPE_GRENAT6_MACVLAN_IPV6_ICMP_PAY4	= 153
+	IAVF_RX_PTYPE_GRENAT6_MACVLAN_IPV6_ICMP_PAY4	= 153,
+	IAVF_RX_PTYPE_PARSER_ABORTED			= 255
 };
 
 struct iavf_rx_ptype_decoded {
-	u32 ptype:8;
+	u32 ptype:10;
 	u32 known:1;
 	u32 outer_ip:1;
 	u32 outer_ip_ver:1;

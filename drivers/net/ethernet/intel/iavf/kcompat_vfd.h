@@ -15,6 +15,11 @@
 #define VFD_EGRESS_MIRROR_OFF	-1
 #define VFD_INGRESS_MIRROR_OFF	-1
 
+#define VFD_QUEUE_TYPE_RSS	0x00
+#define VFD_QUEUE_TYPE_QOS	0x01
+
+#define VFD_NUM_TC		0x8
+
 /**
  * struct vfd_objects - VF-d kobjects information struct
  * @num_vfs:	number of VFs allocated
@@ -24,7 +29,30 @@
 struct vfd_objects {
 	int num_vfs;
 	struct kobject *sriov_kobj;
-	struct kobject *vf_kobj[0];
+	struct vfd_vf_obj *vfs;
+	struct vfd_qos_objects *qos;
+};
+
+/**
+ * struct vfd_vf_obj - VF-d VF kobjects information struct
+ * @vf_kobj:		pointer to VF qos kobject
+ * @vf_qos_kobj:	pointer to VF kobject
+ * @vf_tc_kobj:		pointer to VF TC kobjects
+ */
+struct vfd_vf_obj {
+	struct kobject *vf_qos_kobj;
+	struct kobject *vf_kobj;
+	struct kobject *vf_tc_kobjs[VFD_NUM_TC];
+};
+
+/**
+ * struct vfd_qos_objects - VF-d qos kobjects information struct
+ * @qos_kobj:		pointer to PF qos kobject
+ * @pf_qos_kobj:	pointer to PF TC kobjects
+ */
+struct vfd_qos_objects {
+	struct kobject *qos_kobj;
+	struct kobject *pf_qos_kobjs[VFD_NUM_TC];
 };
 
 struct vfd_macaddr {
@@ -134,6 +162,26 @@ struct vfd_ops {
 	int (*set_num_queues)(struct pci_dev *pdev, int vf_id, const int num_queues);
 	int (*get_trust_state)(struct pci_dev *pdev, int vf_id, bool *data);
 	int (*set_trust_state)(struct pci_dev *pdev, int vf_id, bool data);
+	int (*get_queue_type)(struct pci_dev *pdev, int vf_id, u8 *data);
+	int (*set_queue_type)(struct pci_dev *pdev, int vf_id, const u8 data);
+	int (*get_allow_bcast)(struct pci_dev *pdev, int vf_id, bool *data);
+	int (*set_allow_bcast)(struct pci_dev *pdev, int vf_id, const bool data);
+	int (*get_pf_qos_tc_max_bw)(struct pci_dev *pdev, int tc, u16 *req_bw);
+	int (*set_pf_qos_tc_max_bw)(struct pci_dev *pdev, int tc, u16 req_bw);
+	int (*get_pf_qos_tc_lsp)(struct pci_dev *pdev, int tc, bool *on);
+	int (*set_pf_qos_tc_lsp)(struct pci_dev *pdev, int tc, bool on);
+	int (*get_pf_qos_tc_priority)(struct pci_dev *pdev, int tc,
+				      char *tc_bitmap);
+	int (*set_pf_qos_tc_priority)(struct pci_dev *pdev, int tc,
+				      char tc_bitmap);
+	int (*get_vf_qos_tc_share)(struct pci_dev *pdev, int vf_id, int tc,
+				   u8 *share);
+	int (*set_vf_qos_tc_share)(struct pci_dev *pdev, int vf_id, int tc,
+				   u8 share);
+	int (*get_vf_max_tc_tx_rate)(struct pci_dev *pdev, int vf_id, int tc,
+				     int *rate);
+	int (*set_vf_max_tc_tx_rate)(struct pci_dev *pdev, int vf_id, int tc,
+				     int rate);
 };
 
 extern const struct vfd_ops *vfd_ops;
