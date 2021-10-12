@@ -10,6 +10,7 @@
  * iavf_allocate_dma_mem_d - OS specific memory alloc for shared code
  * @hw:   pointer to the HW structure
  * @mem:  ptr to mem struct to fill out
+ * @mtype: unused parameter for documenting memory type of dma
  * @size: size of memory requested
  * @alignment: what to align the allocation to
  **/

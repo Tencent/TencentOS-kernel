@@ -6,8 +6,7 @@
 #include "iavf_trace.h"
 #include "iavf_prototype.h"
 
-static inline __le64 build_ctob(u32 td_cmd, u32 td_offset, unsigned int size,
-				u32 td_tag)
+static __le64 build_ctob(u32 td_cmd, u32 td_offset, unsigned int size, u32 td_tag)
 {
 	return cpu_to_le64(IAVF_TX_DESC_DTYPE_DATA |
 			   ((u64)td_cmd  << IAVF_TXD_QW1_CMD_SHIFT) |
@@ -124,6 +123,67 @@ u32 iavf_get_tx_pending(struct iavf_ring *ring, bool in_sw)
 }
 
 /**
+ * iavf_chnl_detect_recover - logic to revive ADQ enabled vectors
+ * @vsi: ptr to VSI
+ *
+ * This function implements "jiffy" based logic to revive ADQ enabled
+ * vectors by triggering software interrupt. It is invoked from
+ * "service_task" which typically runs once every second.
+ **/
+void iavf_chnl_detect_recover(struct iavf_vsi *vsi)
+{
+	struct iavf_ring *tx_ring = NULL;
+	struct net_device *netdev;
+	unsigned long end;
+	unsigned int i;
+
+	if (!vsi)
+		return;
+
+	if (test_bit(__IAVF_VSI_DOWN, vsi->state))
+		return;
+
+	netdev = vsi->netdev;
+	if (!netdev)
+		return;
+
+	if (!netif_carrier_ok(netdev))
+		return;
+
+	for (i = 0; i < vsi->back->num_active_queues; i++) {
+		u8 qv_state_flags;
+
+		tx_ring = &vsi->back->tx_rings[i];
+		if (!(tx_ring && tx_ring->desc))
+			continue;
+		if (!tx_ring->q_vector)
+			continue;
+		if (!vector_ch_ena(tx_ring->q_vector) ||
+		    !vector_ch_perf_ena(tx_ring->q_vector))
+			continue;
+
+		end = tx_ring->q_vector->jiffies;
+		if (!end)
+			continue;
+
+		qv_state_flags = tx_ring->q_vector->state_flags;
+
+		/* trigger software interrupt (to revive queue processing) if
+		 * vector is channel enabled and only if current jiffies is at
+		 * least 1 sec (worth of jiffies, hence multiplying by HZ) more
+		 * than old_jiffies
+		 */
+#define IAVF_CH_JIFFY_DELTA_IN_SEC	(1 * HZ)
+		end += IAVF_CH_JIFFY_DELTA_IN_SEC;
+		if (time_is_before_jiffies(end) &&
+		    (qv_state_flags & IAVF_VECTOR_STATE_ONCE_IN_BP)) {
+			iavf_inc_serv_task_sw_intr_counter(tx_ring->q_vector);
+			iavf_force_wb(vsi, tx_ring->q_vector);
+		}
+	}
+}
+
+/**
  * iavf_detect_recover_hung - Function to detect and recover hung_queues
  * @vsi:  pointer to vsi struct with tx queues
  *
@@ -132,7 +192,6 @@ u32 iavf_get_tx_pending(struct iavf_ring *ring, bool in_sw)
  **/
 void iavf_detect_recover_hung(struct iavf_vsi *vsi)
 {
-	struct iavf_ring *tx_ring = NULL;
 	struct net_device *netdev;
 	unsigned int i;
 	int packets;
@@ -151,8 +210,13 @@ void iavf_detect_recover_hung(struct iavf_vsi *vsi)
 		return;
 
 	for (i = 0; i < vsi->back->num_active_queues; i++) {
-		tx_ring = &vsi->back->tx_rings[i];
-		if (tx_ring && tx_ring->desc) {
+		struct iavf_ring *tx_ring = &vsi->back->tx_rings[i];
+
+		if (!tx_ring || !tx_ring->q_vector)
+			continue;
+		if (vector_ch_ena(tx_ring->q_vector))
+			continue;
+		if (tx_ring->desc) {
 			/* If packet counter has not changed the queue is
 			 * likely stalled, so force an interrupt for this
 			 * queue.
@@ -176,6 +240,23 @@ void iavf_detect_recover_hung(struct iavf_vsi *vsi)
 	}
 }
 
+static void iavf_chnl_queue_stats(struct iavf_ring *ring, u64 pkts)
+{
+	u64_stats_update_begin(&ring->syncp);
+	/* separate accounting of packets (either from busy_poll or
+	 * napi_poll depending upon state of vector specific
+	 * flag 'in_bp', 'prev_in_bp'
+	 */
+	if (ring->q_vector->state_flags & IAVF_VECTOR_STATE_IN_BP) {
+		ring->ch_q_stats.poll.pkt_busy_poll += pkts;
+	} else {
+		if (ring->q_vector->state_flags & IAVF_VECTOR_STATE_PREV_IN_BP)
+			ring->ch_q_stats.poll.pkt_busy_poll += pkts;
+		else
+			ring->ch_q_stats.poll.pkt_not_busy_poll += pkts;
+	}
+	u64_stats_update_end(&ring->syncp);
+}
 #define WB_STRIDE 4
 
 /**
@@ -207,7 +288,7 @@ static bool iavf_clean_tx_irq(struct iavf_vsi *vsi,
 			break;
 
 		/* prevent any other reads prior to eop_desc */
-		read_barrier_depends();
+		smp_rmb();
 
 		iavf_trace(clean_tx_irq, tx_ring, tx_desc, tx_buf);
 		/* if the descriptor isn't done, no work yet to do */
@@ -283,6 +364,7 @@ static bool iavf_clean_tx_irq(struct iavf_vsi *vsi,
 	u64_stats_update_end(&tx_ring->syncp);
 	tx_ring->q_vector->tx.total_bytes += total_bytes;
 	tx_ring->q_vector->tx.total_packets += total_packets;
+	iavf_chnl_queue_stats(tx_ring, total_packets);
 
 	if (tx_ring->flags & IAVF_TXR_FLAGS_WB_ON_ITR) {
 		/* check to see if there are < 4 descriptors
@@ -351,54 +433,65 @@ static void iavf_enable_wb_on_itr(struct iavf_vsi *vsi,
 	q_vector->arm_wb_state = true;
 }
 
-/**
- * iavf_force_wb - Issue SW Interrupt so HW does a wb
- * @vsi: the VSI we care about
- * @q_vector: the vector  on which to force writeback
- *
- **/
-void iavf_force_wb(struct iavf_vsi *vsi, struct iavf_q_vector *q_vector)
-{
-	u32 val = IAVF_VFINT_DYN_CTLN1_INTENA_MASK |
-		  IAVF_VFINT_DYN_CTLN1_ITR_INDX_MASK | /* set noitr */
-		  IAVF_VFINT_DYN_CTLN1_SWINT_TRIG_MASK |
-		  IAVF_VFINT_DYN_CTLN1_SW_ITR_INDX_ENA_MASK
-		  /* allow 00 to be written to the index */;
-
-	wr32(&vsi->back->hw,
-	     IAVF_VFINT_DYN_CTLN1(q_vector->reg_idx),
-	     val);
-}
-
-static inline bool iavf_container_is_rx(struct iavf_q_vector *q_vector,
-					struct iavf_ring_container *rc)
+static bool iavf_container_is_rx(struct iavf_q_vector *q_vector, struct iavf_ring_container *rc)
 {
 	return &q_vector->rx == rc;
 }
 
-static inline unsigned int iavf_itr_divisor(struct iavf_q_vector *q_vector)
-{
-	unsigned int divisor;
+#define IAVF_AIM_MULTIPLIER_100G	2560
+#define IAVF_AIM_MULTIPLIER_50G		1280
+#define IAVF_AIM_MULTIPLIER_40G		1024
+#define IAVF_AIM_MULTIPLIER_20G		512
+#define IAVF_AIM_MULTIPLIER_10G		256
+#define IAVF_AIM_MULTIPLIER_1G		32
 
-	switch (q_vector->adapter->link_speed) {
+static unsigned int iavf_mbps_itr_multiplier(u32 speed_mbps)
+{
+	switch (speed_mbps) {
+	case SPEED_100000:
+		return IAVF_AIM_MULTIPLIER_100G;
+	case SPEED_50000:
+		return IAVF_AIM_MULTIPLIER_50G;
+	case SPEED_40000:
+		return IAVF_AIM_MULTIPLIER_40G;
+	case SPEED_25000:
+	case SPEED_20000:
+		return IAVF_AIM_MULTIPLIER_20G;
+	case SPEED_10000:
+	default:
+		return IAVF_AIM_MULTIPLIER_10G;
+	case SPEED_1000:
+	case SPEED_100:
+		return IAVF_AIM_MULTIPLIER_1G;
+	}
+}
+
+static unsigned int
+iavf_virtchnl_itr_multiplier(enum virtchnl_link_speed speed_virtchnl)
+{
+	switch (speed_virtchnl) {
 	case VIRTCHNL_LINK_SPEED_40GB:
-		divisor = IAVF_ITR_ADAPTIVE_MIN_INC * 1024;
-		break;
+		return IAVF_AIM_MULTIPLIER_40G;
 	case VIRTCHNL_LINK_SPEED_25GB:
 	case VIRTCHNL_LINK_SPEED_20GB:
-		divisor = IAVF_ITR_ADAPTIVE_MIN_INC * 512;
-		break;
-	default:
+		return IAVF_AIM_MULTIPLIER_20G;
 	case VIRTCHNL_LINK_SPEED_10GB:
-		divisor = IAVF_ITR_ADAPTIVE_MIN_INC * 256;
-		break;
+	default:
+		return IAVF_AIM_MULTIPLIER_10G;
 	case VIRTCHNL_LINK_SPEED_1GB:
 	case VIRTCHNL_LINK_SPEED_100MB:
-		divisor = IAVF_ITR_ADAPTIVE_MIN_INC * 32;
-		break;
+		return IAVF_AIM_MULTIPLIER_1G;
 	}
+}
 
-	return divisor;
+static unsigned int iavf_itr_divisor(struct iavf_adapter *adapter)
+{
+	if (ADV_LINK_SUPPORT(adapter))
+		return IAVF_ITR_ADAPTIVE_MIN_INC *
+			iavf_mbps_itr_multiplier(adapter->link_speed_mbps);
+	else
+		return IAVF_ITR_ADAPTIVE_MIN_INC *
+			iavf_virtchnl_itr_multiplier(adapter->link_speed);
 }
 
 /**
@@ -588,8 +681,9 @@ adjust_by_size:
 	 * Use addition as we have already recorded the new latency flag
 	 * for the ITR value.
 	 */
-	itr += DIV_ROUND_UP(avg_wire_size, iavf_itr_divisor(q_vector)) *
-	       IAVF_ITR_ADAPTIVE_MIN_INC;
+	itr += DIV_ROUND_UP(avg_wire_size,
+			    iavf_itr_divisor(q_vector->adapter)) *
+		IAVF_ITR_ADAPTIVE_MIN_INC;
 
 	if ((itr & IAVF_ITR_MASK) > IAVF_ITR_ADAPTIVE_MAX_USECS) {
 		itr &= IAVF_ITR_ADAPTIVE_LATENCY;
@@ -803,7 +897,7 @@ err:
  * @rx_ring: ring to bump
  * @val: new head index
  **/
-static inline void iavf_release_rx_desc(struct iavf_ring *rx_ring, u32 val)
+static void iavf_release_rx_desc(struct iavf_ring *rx_ring, u32 val)
 {
 	rx_ring->next_to_use = val;
 
@@ -825,7 +919,7 @@ static inline void iavf_release_rx_desc(struct iavf_ring *rx_ring, u32 val)
  *
  * Returns the offset value for ring into the data buffer.
  */
-static inline unsigned int iavf_rx_offset(struct iavf_ring *rx_ring)
+static unsigned int iavf_rx_offset(struct iavf_ring *rx_ring)
 {
 	return ring_uses_build_skb(rx_ring) ? IAVF_SKB_PAD : 0;
 }
@@ -903,28 +997,25 @@ static void iavf_receive_skb(struct iavf_ring *rx_ring,
 		else
 			vlan_gro_receive(&q_vector->napi, vsi->vlgrp,
 					 vlan_tag, skb);
-	} else {
-		napi_gro_receive(&q_vector->napi, skb);
 	}
 #else /* HAVE_VLAN_RX_REGISTER */
-#ifdef NETIF_F_HW_VLAN_CTAG_RX
-	if ((rx_ring->netdev->features & NETIF_F_HW_VLAN_CTAG_RX) &&
-	    (vlan_tag & VLAN_VID_MASK))
-#else
-	if ((rx_ring->netdev->features & NETIF_F_HW_VLAN_RX) &&
-	    (vlan_tag & VLAN_VID_MASK))
-#endif /* NETIF_F_HW_VLAN_CTAG_RX */
-		__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), vlan_tag);
+	if (vlan_tag & VLAN_VID_MASK) {
+		if (rx_ring->netdev->features & IAVF_NETIF_F_HW_VLAN_CTAG_RX) {
+			__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q),
+					       vlan_tag);
 #ifdef IAVF_ADD_PROBES
-#ifdef NETIF_F_HW_VLAN_CTAG_RX
-	if ((rx_ring->netdev->features & NETIF_F_HW_VLAN_CTAG_RX) &&
-	    (vlan_tag & VLAN_VID_MASK))
-#else
-	if ((rx_ring->netdev->features & NETIF_F_HW_VLAN_RX) &&
-	    (vlan_tag & VLAN_VID_MASK))
-#endif /* NETIF_F_HW_VLAN_CTAG_RX */
-		rx_ring->vsi->back->rx_vlano++;
+			rx_ring->vsi->back->rx_vlano++;
 #endif /* IAVF_ADD_PROBES */
+#ifdef NETIF_F_HW_VLAN_STAG_RX
+		} else if (rx_ring->netdev->features & NETIF_F_HW_VLAN_STAG_RX) {
+			__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021AD),
+					       vlan_tag);
+#ifdef IAVF_ADD_PROBES
+			rx_ring->vsi->back->rx_ad_vlano++;
+#endif /* IAVF_ADD_PROBES */
+#endif /* NETIF_F_HW_VLAN_STAG_RX */
+		}
+	}
 
 	napi_gro_receive(&q_vector->napi, skb);
 #endif /* HAVE_VLAN_RX_REGISTER */
@@ -995,37 +1086,52 @@ no_buffers:
 	return true;
 }
 
+/*
+ * iavf_rx_csum_decoded
+ *
+ * Checksum offload bits decoded from the receive descriptor.
+ */
+struct iavf_rx_csum_decoded {
+	u8 l3l4p : 1;
+	u8 ipe : 1;
+	u8 eipe : 1;
+	u8 eudpe : 1;
+	u8 ipv6exadd : 1;
+	u8 l4e : 1;
+	u8 pprs : 1;
+	u8 nat : 1;
+};
+
 #ifdef IAVF_ADD_PROBES
-static void iavf_rx_extra_counters(struct iavf_vsi *vsi, u32 rx_error,
-				   const struct iavf_rx_ptype_decoded decoded)
+static void iavf_rx_extra_counters(struct iavf_vsi *vsi,
+				   struct iavf_rx_csum_decoded *csum_bits,
+				   struct iavf_rx_ptype_decoded *decoded)
 {
 	bool ipv4;
 
-	ipv4 = (decoded.outer_ip == IAVF_RX_PTYPE_OUTER_IP) &&
-	       (decoded.outer_ip_ver == IAVF_RX_PTYPE_OUTER_IPV4);
+	ipv4 = (decoded->outer_ip == IAVF_RX_PTYPE_OUTER_IP) &&
+	       (decoded->outer_ip_ver == IAVF_RX_PTYPE_OUTER_IPV4);
 
-	if (ipv4 &&
-	    (rx_error & (BIT(IAVF_RX_DESC_ERROR_IPE_SHIFT) |
-			 BIT(IAVF_RX_DESC_ERROR_EIPE_SHIFT))))
+	if (ipv4 && (csum_bits->ipe | csum_bits->eipe))
 		vsi->back->rx_ip4_cso_err++;
 
-	if (rx_error & BIT(IAVF_RX_DESC_ERROR_L4E_SHIFT)) {
-		if (decoded.inner_prot == IAVF_RX_PTYPE_INNER_PROT_TCP)
+	if (csum_bits->l4e) {
+		if (decoded->inner_prot == IAVF_RX_PTYPE_INNER_PROT_TCP)
 			vsi->back->rx_tcp_cso_err++;
-		else if (decoded.inner_prot == IAVF_RX_PTYPE_INNER_PROT_UDP)
+		else if (decoded->inner_prot == IAVF_RX_PTYPE_INNER_PROT_UDP)
 			vsi->back->rx_udp_cso_err++;
-		else if (decoded.inner_prot == IAVF_RX_PTYPE_INNER_PROT_SCTP)
+		else if (decoded->inner_prot == IAVF_RX_PTYPE_INNER_PROT_SCTP)
 			vsi->back->rx_sctp_cso_err++;
 	}
 
-	if (decoded.outer_ip == IAVF_RX_PTYPE_OUTER_IP &&
-	    decoded.outer_ip_ver == IAVF_RX_PTYPE_OUTER_IPV4)
+	if (decoded->outer_ip == IAVF_RX_PTYPE_OUTER_IP &&
+	    decoded->outer_ip_ver == IAVF_RX_PTYPE_OUTER_IPV4)
 		vsi->back->rx_ip4_cso++;
-	if (decoded.inner_prot == IAVF_RX_PTYPE_INNER_PROT_TCP)
+	if (decoded->inner_prot == IAVF_RX_PTYPE_INNER_PROT_TCP)
 		vsi->back->rx_tcp_cso++;
-	else if (decoded.inner_prot == IAVF_RX_PTYPE_INNER_PROT_UDP)
+	else if (decoded->inner_prot == IAVF_RX_PTYPE_INNER_PROT_UDP)
 		vsi->back->rx_udp_cso++;
-	else if (decoded.inner_prot == IAVF_RX_PTYPE_INNER_PROT_SCTP)
+	else if (decoded->inner_prot == IAVF_RX_PTYPE_INNER_PROT_SCTP)
 		vsi->back->rx_sctp_cso++;
 }
 
@@ -1033,32 +1139,22 @@ static void iavf_rx_extra_counters(struct iavf_vsi *vsi, u32 rx_error,
 #if defined(HAVE_VXLAN_RX_OFFLOAD) || defined(HAVE_GENEVE_RX_OFFLOAD) || defined(HAVE_UDP_ENC_RX_OFFLOAD)
 #define IAVF_TUNNEL_SUPPORT
 #endif
+
 /**
- * iavf_rx_checksum - Indicate in skb if hw indicated a good cksum
+ * iavf_rx_csum - Indicate in skb if hw indicated a good cksum
  * @vsi: the VSI we care about
  * @skb: skb currently being received and modified
- * @rx_desc: the receive descriptor
+ * @ptype: decoded ptype information
+ * @csum_bits: decoded Rx descriptor information
  **/
-static inline void iavf_rx_checksum(struct iavf_vsi *vsi,
-				    struct sk_buff *skb,
-				    union iavf_rx_desc *rx_desc)
+static void
+iavf_rx_csum(struct iavf_vsi *vsi, struct sk_buff *skb,
+	     struct iavf_rx_ptype_decoded *ptype,
+	     struct iavf_rx_csum_decoded *csum_bits)
 {
-	struct iavf_rx_ptype_decoded decoded;
-	u32 rx_error, rx_status;
 	bool ipv4, ipv6;
-	u8 ptype;
-	u64 qword;
-
-	qword = le64_to_cpu(rx_desc->wb.qword1.status_error_len);
-	ptype = (qword & IAVF_RXD_QW1_PTYPE_MASK) >> IAVF_RXD_QW1_PTYPE_SHIFT;
-	rx_error = (qword & IAVF_RXD_QW1_ERROR_MASK) >>
-		   IAVF_RXD_QW1_ERROR_SHIFT;
-	rx_status = (qword & IAVF_RXD_QW1_STATUS_MASK) >>
-		    IAVF_RXD_QW1_STATUS_SHIFT;
-	decoded = decode_rx_desc_ptype(ptype);
 
 	skb->ip_summed = CHECKSUM_NONE;
-
 	skb_checksum_none_assert(skb);
 
 	/* Rx csum enabled and ip headers found? */
@@ -1071,49 +1167,59 @@ static inline void iavf_rx_checksum(struct iavf_vsi *vsi,
 #endif
 
 	/* did the hardware decode the packet and checksum? */
-	if (!(rx_status & BIT(IAVF_RX_DESC_STATUS_L3L4P_SHIFT)))
+	if (!csum_bits->l3l4p)
 		return;
 
 	/* both known and outer_ip must be set for the below code to work */
-	if (!(decoded.known && decoded.outer_ip))
+	if (!(ptype->known && ptype->outer_ip))
 		return;
 #ifdef IAVF_ADD_PROBES
 	vsi->back->hw_csum_rx_outer++;
 #endif
 
-	ipv4 = (decoded.outer_ip == IAVF_RX_PTYPE_OUTER_IP) &&
-	       (decoded.outer_ip_ver == IAVF_RX_PTYPE_OUTER_IPV4);
-	ipv6 = (decoded.outer_ip == IAVF_RX_PTYPE_OUTER_IP) &&
-	       (decoded.outer_ip_ver == IAVF_RX_PTYPE_OUTER_IPV6);
+	ipv4 = (ptype->outer_ip == IAVF_RX_PTYPE_OUTER_IP) &&
+	       (ptype->outer_ip_ver == IAVF_RX_PTYPE_OUTER_IPV4);
+	ipv6 = (ptype->outer_ip == IAVF_RX_PTYPE_OUTER_IP) &&
+	       (ptype->outer_ip_ver == IAVF_RX_PTYPE_OUTER_IPV6);
 
 #ifdef IAVF_ADD_PROBES
-	iavf_rx_extra_counters(vsi, rx_error, decoded);
-
+	iavf_rx_extra_counters(vsi, csum_bits, ptype);
 #endif /* IAVF_ADD_PROBES */
-	if (ipv4 &&
-	    (rx_error & (BIT(IAVF_RX_DESC_ERROR_IPE_SHIFT) |
-			 BIT(IAVF_RX_DESC_ERROR_EIPE_SHIFT))))
+	if (ipv4 && (csum_bits->ipe || csum_bits->eipe))
 		goto checksum_fail;
 
 	/* likely incorrect csum if alternate IP extension headers found */
-	if (ipv6 &&
-	    rx_status & BIT(IAVF_RX_DESC_STATUS_IPV6EXADD_SHIFT))
+	if (ipv6 && csum_bits->ipv6exadd)
 		/* don't increment checksum err here, non-fatal err */
 		return;
 
 	/* there was some L4 error, count error and punt packet to the stack */
-	if (rx_error & BIT(IAVF_RX_DESC_ERROR_L4E_SHIFT))
+	if (csum_bits->l4e)
+		goto checksum_fail;
+
+	if (csum_bits->nat && csum_bits->eudpe)
 		goto checksum_fail;
 
 	/* handle packets that were not able to be checksummed due
 	 * to arrival speed, in this case the stack can compute
 	 * the csum.
 	 */
-	if (rx_error & BIT(IAVF_RX_DESC_ERROR_PPRS_SHIFT))
+	if (csum_bits->pprs)
 		return;
 
+	/* If there is an outer header present that might contain a checksum
+	 * we need to bump the checksum level by 1 to reflect the fact that
+	 * we are indicating we validated the inner checksum.
+	 */
+	if (ptype->tunnel_type >= IAVF_RX_PTYPE_TUNNEL_IP_GRENAT)
+#ifdef HAVE_SKBUFF_CSUM_LEVEL
+		skb->csum_level = 1;
+#else
+		skb->encapsulation = 1;
+#endif
+
 	/* Only report checksum unnecessary for TCP, UDP, or SCTP */
-	switch (decoded.inner_prot) {
+	switch (ptype->inner_prot) {
 	case IAVF_RX_PTYPE_INNER_PROT_TCP:
 	case IAVF_RX_PTYPE_INNER_PROT_UDP:
 	case IAVF_RX_PTYPE_INNER_PROT_SCTP:
@@ -1129,12 +1235,84 @@ checksum_fail:
 }
 
 /**
+ * iavf_legacy_rx_csum - Indicate in skb if hw indicated a good cksum
+ * @vsi: the VSI we care about
+ * @skb: skb currently being received and modified
+ * @rx_desc: the receive descriptor
+ *
+ * This function only operates on the VIRTCHNL_RXDID_1_32B_BASE legacy 32byte
+ * descriptor writeback format.
+ **/
+static void
+iavf_legacy_rx_csum(struct iavf_vsi *vsi, struct sk_buff *skb, union iavf_rx_desc *rx_desc)
+{
+	struct iavf_rx_csum_decoded csum_bits;
+	struct iavf_rx_ptype_decoded decoded;
+	u32 rx_error, rx_status;
+	u64 qword;
+	u16 ptype;
+
+	qword = le64_to_cpu(rx_desc->wb.qword1.status_error_len);
+	ptype = (qword & IAVF_RXD_QW1_PTYPE_MASK) >> IAVF_RXD_QW1_PTYPE_SHIFT;
+	rx_error = (qword & IAVF_RXD_QW1_ERROR_MASK) >>
+		   IAVF_RXD_QW1_ERROR_SHIFT;
+	rx_status = (qword & IAVF_RXD_QW1_STATUS_MASK) >>
+		    IAVF_RXD_QW1_STATUS_SHIFT;
+	decoded = decode_rx_desc_ptype(ptype);
+
+	csum_bits.ipe = rx_error & BIT(IAVF_RX_DESC_ERROR_IPE_SHIFT);
+	csum_bits.eipe = rx_error & BIT(IAVF_RX_DESC_ERROR_EIPE_SHIFT);
+	csum_bits.l4e = rx_error & BIT(IAVF_RX_DESC_ERROR_L4E_SHIFT);
+	csum_bits.pprs = rx_error & BIT(IAVF_RX_DESC_ERROR_PPRS_SHIFT);
+	csum_bits.l3l4p = rx_status & BIT(IAVF_RX_DESC_STATUS_L3L4P_SHIFT);
+	csum_bits.ipv6exadd = rx_status & BIT(IAVF_RX_DESC_STATUS_IPV6EXADD_SHIFT);
+	csum_bits.nat = 0;
+	csum_bits.eudpe = 0;
+
+	iavf_rx_csum(vsi, skb, &decoded, &csum_bits);
+}
+
+/**
+ * iavf_flex_rx_csum - Indicate in skb if hw indicated a good cksum
+ * @vsi: the VSI we care about
+ * @skb: skb currently being received and modified
+ * @rx_desc: the receive descriptor
+ *
+ * This function only operates on the VIRTCHNL_RXDID_2_FLEX_SQ_NIC flexible
+ * descriptor writeback format.
+ **/
+static void
+iavf_flex_rx_csum(struct iavf_vsi *vsi, struct sk_buff *skb, union iavf_rx_desc *rx_desc)
+{
+	struct iavf_rx_csum_decoded csum_bits;
+	struct iavf_rx_ptype_decoded decoded;
+	u16 rx_status0, rx_status1, ptype;
+
+	rx_status0 = le16_to_cpu(rx_desc->flex_wb.status_error0);
+	rx_status1 = le16_to_cpu(rx_desc->flex_wb.status_error1);
+	ptype = le16_to_cpu(rx_desc->flex_wb.ptype_flexi_flags0) &
+		IAVF_RX_FLEX_DESC_PTYPE_M;
+	decoded = decode_rx_desc_ptype(ptype);
+
+	csum_bits.ipe = rx_status0 & BIT(IAVF_RX_FLEX_DESC_STATUS0_XSUM_IPE_S);
+	csum_bits.eipe = rx_status0 & BIT(IAVF_RX_FLEX_DESC_STATUS0_XSUM_EIPE_S);
+	csum_bits.l4e = rx_status0 & BIT(IAVF_RX_FLEX_DESC_STATUS0_XSUM_L4E_S);
+	csum_bits.eudpe = rx_status0 & BIT(IAVF_RX_FLEX_DESC_STATUS0_XSUM_EUDPE_S);
+	csum_bits.pprs = 0;
+	csum_bits.l3l4p = rx_status0 & BIT(IAVF_RX_FLEX_DESC_STATUS0_L3L4P_S);
+	csum_bits.ipv6exadd = rx_status0 & BIT(IAVF_RX_FLEX_DESC_STATUS0_IPV6EXADD_S);
+	csum_bits.nat = rx_status1 & BIT(IAVF_RX_FLEX_DESC_STATUS1_NAT_S);
+
+	iavf_rx_csum(vsi, skb, &decoded, &csum_bits);
+}
+
+/**
  * iavf_ptype_to_htype - get a hash type
  * @ptype: the ptype value from the descriptor
  *
  * Returns a hash type to be used by skb_set_hash
  **/
-static inline enum pkt_hash_types iavf_ptype_to_htype(u8 ptype)
+static enum pkt_hash_types iavf_ptype_to_htype(u16 ptype)
 {
 	struct iavf_rx_ptype_decoded decoded = decode_rx_desc_ptype(ptype);
 
@@ -1152,16 +1330,18 @@ static inline enum pkt_hash_types iavf_ptype_to_htype(u8 ptype)
 }
 
 /**
- * iavf_rx_hash - set the hash value in the skb
+ * iavf_legacy_rx_hash - set the hash value in the skb
  * @ring: descriptor ring
  * @rx_desc: specific descriptor
  * @skb: skb currently being received and modified
  * @rx_ptype: Rx packet type
+ *
+ * This function only operates on the VIRTCHNL_RXDID_1_32B_BASE legacy 32byte
+ * descriptor writeback format.
  **/
-static inline void iavf_rx_hash(struct iavf_ring *ring,
-				union iavf_rx_desc *rx_desc,
-				struct sk_buff *skb,
-				u8 rx_ptype)
+static void
+iavf_legacy_rx_hash(struct iavf_ring *ring, union iavf_rx_desc *rx_desc, struct sk_buff *skb,
+		    u16 rx_ptype)
 {
 #ifdef NETIF_F_RXHASH
 	u32 hash;
@@ -1180,6 +1360,75 @@ static inline void iavf_rx_hash(struct iavf_ring *ring,
 }
 
 /**
+ * iavf_flex_rx_hash - set the hash value in the skb
+ * @ring: descriptor ring
+ * @rx_desc: specific descriptor
+ * @skb: skb currently being received and modified
+ * @rx_ptype: Rx packet type
+ *
+ * This function only operates on the VIRTCHNL_RXDID_2_FLEX_SQ_NIC flexible
+ * descriptor writeback format.
+ **/
+static void
+iavf_flex_rx_hash(struct iavf_ring *ring, union iavf_rx_desc *rx_desc, struct sk_buff *skb,
+		  u16 rx_ptype)
+{
+#ifdef NETIF_F_RXHASH
+	__le16 status0;
+
+	if (!(ring->netdev->features & NETIF_F_RXHASH))
+		return;
+
+	status0 = rx_desc->flex_wb.status_error0;
+	if (status0 & cpu_to_le16(BIT(IAVF_RX_FLEX_DESC_STATUS0_RSS_VALID_S))) {
+		u32 hash = le32_to_cpu(rx_desc->flex_wb.rss_hash);
+
+		skb_set_hash(skb, hash, iavf_ptype_to_htype(rx_ptype));
+	}
+#endif /* NETIF_F_RXHASH */
+}
+
+/**
+ * iavf_flex_rx_tstamp - Capture Rx timestamp from the descriptor
+ * @rx_ring: descriptor ring
+ * @rx_desc: specific descriptor
+ * @skb: skb currently being received
+ *
+ * Read the Rx timestamp value from the descriptor and pass it to the stack.
+ *
+ * This function only operates on the VIRTCHNL_RXDID_2_FLEX_SQ_NIC flexible
+ * descriptor writeback format.
+ */
+static void
+iavf_flex_rx_tstamp(struct iavf_ring *rx_ring, union iavf_rx_desc *rx_desc, struct sk_buff *skb)
+{
+	struct skb_shared_hwtstamps *skb_tstamps;
+	struct iavf_adapter *adapter;
+	u32 tstamp;
+	u64 ns;
+
+	/* Skip processing if timestamps aren't enabled */
+	if (!(rx_ring->flags & IAVF_TXRX_FLAGS_HW_TSTAMP))
+		return;
+
+	/* Check if this Rx descriptor has a valid timestamp */
+	if (!(rx_desc->flex_wb.ts_low & IAVF_PTP_40B_TSTAMP_VALID))
+		return;
+
+	adapter = netdev_priv(rx_ring->netdev);
+
+	/* the ts_low field only contains the valid bit and sub-nanosecond
+	 * precision, so we don't need to extract it.
+	 */
+	tstamp = le32_to_cpu(rx_desc->flex_wb.flex_ts.ts_high);
+	ns = iavf_ptp_extend_32b_timestamp(adapter->ptp.cached_phc_time, tstamp);
+
+	skb_tstamps = skb_hwtstamps(skb);
+	memset(skb_tstamps, 0, sizeof(*skb_tstamps));
+	skb_tstamps->hwtstamp = ns_to_ktime(ns);
+}
+
+/**
  * iavf_process_skb_fields - Populate skb header fields from Rx descriptor
  * @rx_ring: rx descriptor ring packet is being transacted on
  * @rx_desc: pointer to the EOP Rx descriptor
@@ -1190,14 +1439,21 @@ static inline void iavf_rx_hash(struct iavf_ring *ring,
  * order to populate the hash, checksum, VLAN, protocol, and
  * other fields within the skb.
  **/
-static inline
-void iavf_process_skb_fields(struct iavf_ring *rx_ring,
-			     union iavf_rx_desc *rx_desc, struct sk_buff *skb,
-			     u8 rx_ptype)
+static void
+iavf_process_skb_fields(struct iavf_ring *rx_ring, union iavf_rx_desc *rx_desc,
+			struct sk_buff *skb, u16 rx_ptype)
 {
-	iavf_rx_hash(rx_ring, rx_desc, skb, rx_ptype);
+	if (rx_ring->rxdid == VIRTCHNL_RXDID_1_32B_BASE) {
+		iavf_legacy_rx_hash(rx_ring, rx_desc, skb, rx_ptype);
 
-	iavf_rx_checksum(rx_ring->vsi, skb, rx_desc);
+		iavf_legacy_rx_csum(rx_ring->vsi, skb, rx_desc);
+	} else {
+		iavf_flex_rx_hash(rx_ring, rx_desc, skb, rx_ptype);
+
+		iavf_flex_rx_csum(rx_ring->vsi, skb, rx_desc);
+
+		iavf_flex_rx_tstamp(rx_ring, rx_desc, skb);
+	}
 
 	skb_record_rx_queue(skb, rx_ring->queue_index);
 
@@ -1251,7 +1507,7 @@ static bool iavf_cleanup_headers(struct iavf_ring *rx_ring, struct sk_buff *skb,
  * A page is not reusable if it was allocated under low memory
  * conditions, or it's not in the same NUMA node as this CPU.
  */
-static inline bool iavf_page_is_reusable(struct page *page)
+static bool iavf_page_is_reusable(struct page *page)
 {
 	return (page_to_nid(page) == numa_mem_id()) &&
 		!page_is_pfmemalloc(page);
@@ -1620,13 +1876,211 @@ static void iavf_rx_buffer_flip(struct iavf_ring *rx_ring,
 #endif
 }
 
-static inline void iavf_xdp_ring_update_tail(struct iavf_ring *xdp_ring)
+static void iavf_xdp_ring_update_tail(struct iavf_ring *xdp_ring)
 {
 	/* Force memory writes to complete before letting h/w
 	 * know there are new descriptors to fetch.
 	 */
 	wmb();
 	writel_relaxed(xdp_ring->next_to_use, xdp_ring->tail);
+}
+
+/**
+ * iavf_is_ctrl_pkt - check if packet is a TCP control packet or data packet
+ * @skb: receive buffer
+ * @rx_ring: ptr to Rx ring
+ *
+ * Returns true for all unsupported protocol/configuration. Supported protocol
+ * is TCP/IPv4[6].  For TCP/IPv6, this function returns true if packet contains
+ * nested header.
+ * Logic to determine control packet:
+ * - packets is control packet if it contains flags like SYN, SYN+ACK, FIN, RST
+ *
+ * Returns true if packet is classified as control packet and for all unhandled
+ * condition otherwise false if packet is classified as data packet
+ */
+static bool iavf_is_ctrl_pkt(struct sk_buff *skb, struct iavf_ring *rx_ring)
+
+{
+	union {
+		unsigned char *network;
+		struct ipv6hdr *ipv6;
+		struct iphdr *ipv4;
+	} hdr;
+	struct tcphdr *th;
+
+	/* at this point, skb->data points to network header since
+	 * ethernet_header was pulled inline due to eth_type_trans
+	 */
+	hdr.network = skb->data;
+
+	/* only support IPv4/IPv6, all other protocol being treated like
+	 * control packets
+	 */
+	if (skb->protocol == htons(ETH_P_IP)) {
+		unsigned int hlen;
+
+		/* access ihl as u8 to avoid unaligned access on ia64 */
+		hlen = (hdr.network[0] & 0x0F) << 2;
+
+		/* for now, assume all non TCP packets are ctrl packets, so that
+		 * they don't get counted to evaluate the likelihood of being
+		 * called back for polling
+		 */
+		if (hdr.ipv4->protocol != IPPROTO_TCP)
+			return true;
+
+		th = (struct tcphdr *)(hdr.network + hlen);
+	} else if (skb->protocol == htons(ETH_P_IPV6)) {
+		/* for now, if next_hdr is not TCP, means it contains nested
+		 * header. IPv6 packets which contains nested header:
+		 * treat them like control packet, so that interrupts gets
+		 * enabled normally, otherwise driver need to duplicate the
+		 * code to parse nested IPv6 header.
+		 */
+		if (hdr.ipv6->nexthdr != IPPROTO_TCP)
+			return true;
+
+		th = (struct tcphdr *)(hdr.network + sizeof(struct ipv6hdr));
+	} else {
+		return true; /* if any other than IPv4[6], ctrl packet */
+	}
+
+	/* definition of control packet is, if packet is TCP/IPv4[6] and
+	 * TCP flags are either SYN | FIN | RST.
+	 * If neither of those flags (SYN|FIN|RST) are set, then it is
+	 * data packet
+	 */
+	if (!th->fin && !th->rst && !th->syn)
+		return false; /* data packet */
+
+	u64_stats_update_begin(&rx_ring->syncp);
+	rx_ring->ch_q_stats.rx.tcp_ctrl_pkts++;
+	if (th->fin)
+		rx_ring->ch_q_stats.rx.tcp_fin_recv++;
+	else if (th->rst)
+		rx_ring->ch_q_stats.rx.tcp_rst_recv++;
+	else if (th->syn)
+		rx_ring->ch_q_stats.rx.tcp_syn_recv++;
+	u64_stats_update_end(&rx_ring->syncp);
+
+	/* at this point based on L4 header (if it is TCP/IPv4[6]:flags,
+	 * packet is detected as control packets
+	 */
+	return true;
+}
+
+static void iavf_chnl_rx_stats(struct iavf_ring *rx_ring, u64 pkts)
+{
+	iavf_chnl_queue_stats(rx_ring, pkts);
+
+	/* if vector is transitioning from BP->INT (due to busy_poll_stop()) and
+	 * we find no packets, in that case: to avoid entering into INTR mode
+	 * (which happens from napi_poll - enabling interrupt if
+	 * unlikely_comeback_to_bp getting set), make "prev_data_pkt_recv" to be
+	 * non-zero, so that interrupts won't be enabled. This is to address the
+	 * issue where num_force_wb on some queues is 2 to 3 times higher than
+	 * other queues and those queues also sees lot of interrupts
+	 */
+	if (vector_ch_ena(rx_ring->q_vector) &&
+	    vector_ch_perf_ena(rx_ring->q_vector) &&
+	    vector_busypoll_intr(rx_ring->q_vector)) {
+		if (!pkts)
+			rx_ring->q_vector->state_flags |=
+					IAVF_VECTOR_STATE_PREV_DATA_PKT_RECV;
+	} else if (vector_ch_ena(rx_ring->q_vector)) {
+		struct iavf_q_vector *q_vector = rx_ring->q_vector;
+		u8 qv_flags = q_vector->state_flags;
+
+		u64_stats_update_begin(&rx_ring->syncp);
+		if (pkts &&
+		    !(qv_flags & IAVF_VECTOR_STATE_PREV_DATA_PKT_RECV))
+			rx_ring->ch_q_stats.rx.only_ctrl_pkts++;
+		if (qv_flags & IAVF_VECTOR_STATE_IN_BP &&
+		    !(qv_flags & IAVF_VECTOR_STATE_PREV_DATA_PKT_RECV))
+			rx_ring->ch_q_stats.rx.bp_no_data_pkt++;
+		u64_stats_update_end(&rx_ring->syncp);
+	}
+}
+
+struct iavf_rx_extracted {
+	unsigned int size;
+	u16 vlan_tag;
+	u16 rx_ptype;
+};
+
+/**
+ * iavf_extract_legacy_rx_fields - Extract fields from the Rx descriptor
+ * @rx_ring: rx descriptor ring
+ * @rx_desc: the descriptor to process
+ * @fields: storage for extracted values
+ *
+ * Decode the Rx descriptor and extract relevant information including the
+ * size, VLAN tag, and Rx packet type.
+ *
+ * This function only operates on the VIRTCHNL_RXDID_1_32B_BASE legacy 32byte
+ * descriptor writeback format.
+ */
+static void
+iavf_extract_legacy_rx_fields(struct iavf_ring *rx_ring, union iavf_rx_desc *rx_desc,
+			      struct iavf_rx_extracted *fields)
+{
+	u64 qword = le64_to_cpu(rx_desc->wb.qword1.status_error_len);
+
+	fields->size = (qword & IAVF_RXD_QW1_LENGTH_PBUF_MASK) >> IAVF_RXD_QW1_LENGTH_PBUF_SHIFT;
+	fields->rx_ptype = (qword & IAVF_RXD_QW1_PTYPE_MASK) >> IAVF_RXD_QW1_PTYPE_SHIFT;
+
+	if (qword & BIT(IAVF_RX_DESC_STATUS_L2TAG1P_SHIFT) &&
+	    rx_ring->flags & IAVF_TXRX_FLAGS_VLAN_TAG_LOC_L2TAG1)
+		fields->vlan_tag = le16_to_cpu(rx_desc->wb.qword0.lo_dword.l2tag1);
+
+	if (rx_desc->wb.qword2.ext_status &
+	    cpu_to_le16(BIT(IAVF_RX_DESC_EXT_STATUS_L2TAG2P_SHIFT)) &&
+	    rx_ring->flags & IAVF_RXR_FLAGS_VLAN_TAG_LOC_L2TAG2_2)
+		fields->vlan_tag = le16_to_cpu(rx_desc->wb.qword2.l2tag2_2);
+}
+
+/**
+ * iavf_extract_flex_rx_fields - Extract fields from the Rx descriptor
+ * @rx_ring: rx descriptor ring
+ * @rx_desc: the descriptor to process
+ * @fields: storage for extracted values
+ *
+ * Decode the Rx descriptor and extract relevant information including the
+ * size, VLAN tag, and Rx packet type.
+ *
+ * This function only operates on the VIRTCHNL_RXDID_2_FLEX_SQ_NIC flexible
+ * descriptor writeback format.
+ */
+static void
+iavf_extract_flex_rx_fields(struct iavf_ring *rx_ring, union iavf_rx_desc *rx_desc,
+			    struct iavf_rx_extracted *fields)
+{
+	__le16 status0, status1;
+
+	fields->size = le16_to_cpu(rx_desc->flex_wb.pkt_len) & IAVF_RX_FLEX_DESC_PKT_LEN_M;
+	fields->rx_ptype = le16_to_cpu(rx_desc->flex_wb.ptype_flexi_flags0) &
+		IAVF_RX_FLEX_DESC_PTYPE_M;
+
+	status0 = rx_desc->flex_wb.status_error0;
+	if (status0 & cpu_to_le16(BIT(IAVF_RX_FLEX_DESC_STATUS0_L2TAG1P_S)) &&
+	    rx_ring->flags & IAVF_TXRX_FLAGS_VLAN_TAG_LOC_L2TAG1)
+		fields->vlan_tag = le16_to_cpu(rx_desc->flex_wb.l2tag1);
+
+	status1 = rx_desc->flex_wb.status_error1;
+	if (status1 & cpu_to_le16(BIT(IAVF_RX_FLEX_DESC_STATUS1_L2TAG2P_S)) &&
+	    rx_ring->flags & IAVF_RXR_FLAGS_VLAN_TAG_LOC_L2TAG2_2)
+		fields->vlan_tag = le16_to_cpu(rx_desc->flex_wb.l2tag2_2nd);
+}
+
+static void
+iavf_extract_rx_fields(struct iavf_ring *rx_ring, union iavf_rx_desc *rx_desc,
+		       struct iavf_rx_extracted *fields)
+{
+	if (rx_ring->rxdid == VIRTCHNL_RXDID_1_32B_BASE)
+		iavf_extract_legacy_rx_fields(rx_ring, rx_desc, fields);
+	else
+		iavf_extract_flex_rx_fields(rx_ring, rx_desc, fields);
 }
 
 /**
@@ -1655,12 +2109,9 @@ static int iavf_clean_rx_irq(struct iavf_ring *rx_ring, int budget)
 #endif
 
 	while (likely(total_rx_packets < (unsigned int)budget)) {
+		struct iavf_rx_extracted fields = {};
 		struct iavf_rx_buffer *rx_buffer;
 		union iavf_rx_desc *rx_desc;
-		unsigned int size;
-		u16 vlan_tag;
-		u8 rx_ptype;
-		u64 qword;
 
 		/* return some buffers to hardware, one at a time is too slow */
 		if (cleaned_count >= IAVF_RX_BUFFER_WRITE) {
@@ -1671,13 +2122,6 @@ static int iavf_clean_rx_irq(struct iavf_ring *rx_ring, int budget)
 
 		rx_desc = IAVF_RX_DESC(rx_ring, rx_ring->next_to_clean);
 
-		/* status_error_len will always be zero for unused descriptors
-		 * because it's cleared in cleanup, and overlaps with hdr_addr
-		 * which is always zero because packet split isn't used, if the
-		 * hardware wrote DD then the length will be non-zero
-		 */
-		qword = le64_to_cpu(rx_desc->wb.qword1.status_error_len);
-
 		/* This memory barrier is needed to keep us from reading
 		 * any other fields out of the rx_desc until we have
 		 * verified the descriptor has been written back.
@@ -1687,11 +2131,10 @@ static int iavf_clean_rx_irq(struct iavf_ring *rx_ring, int budget)
 		if (!iavf_test_staterr(rx_desc, IAVF_RXD_DD))
 			break;
 
-		size = (qword & IAVF_RXD_QW1_LENGTH_PBUF_MASK) >>
-		       IAVF_RXD_QW1_LENGTH_PBUF_SHIFT;
+		iavf_extract_rx_fields(rx_ring, rx_desc, &fields);
 
 		iavf_trace(clean_rx_irq, rx_ring, rx_desc, skb);
-		rx_buffer = iavf_get_rx_buffer(rx_ring, size);
+		rx_buffer = iavf_get_rx_buffer(rx_ring, fields.size);
 
 		/* retrieve a buffer from the ring */
 		if (!skb) {
@@ -1700,7 +2143,7 @@ static int iavf_clean_rx_irq(struct iavf_ring *rx_ring, int budget)
 					   rx_buffer->page_offset;
 				xdp.data_hard_start = (void *)((u8 *)xdp.data -
 						      iavf_rx_offset(rx_ring));
-				xdp.data_end = (void *)((u8 *)xdp.data + size);
+				xdp.data_end = (void *)((u8 *)xdp.data + fields.size);
 				skb = iavf_run_xdp(rx_ring, &xdp);
 			} else {
 				break;
@@ -1712,15 +2155,15 @@ static int iavf_clean_rx_irq(struct iavf_ring *rx_ring, int budget)
 
 			if (xdp_res & (IAVF_XDP_TX | IAVF_XDP_REDIR)) {
 				xdp_xmit |= xdp_res;
-				iavf_rx_buffer_flip(rx_ring, rx_buffer, size);
+				iavf_rx_buffer_flip(rx_ring, rx_buffer, fields.size);
 			} else {
 				if (rx_buffer)
 					rx_buffer->pagecnt_bias++;
 			}
-			total_rx_bytes += size;
+			total_rx_bytes += fields.size;
 			total_rx_packets++;
 		} else if (skb) {
-			iavf_add_rx_frag(rx_ring, rx_buffer, skb, size);
+			iavf_add_rx_frag(rx_ring, rx_buffer, skb, fields.size);
 #ifdef HAVE_SWIOTLB_SKIP_CPU_SYNC
 		} else if (ring_uses_build_skb(rx_ring)) {
 			skb = iavf_build_skb(rx_ring, rx_buffer, &xdp);
@@ -1751,18 +2194,18 @@ static int iavf_clean_rx_irq(struct iavf_ring *rx_ring, int budget)
 		/* probably a little skewed due to removing CRC */
 		total_rx_bytes += skb->len;
 
-		qword = le64_to_cpu(rx_desc->wb.qword1.status_error_len);
-		rx_ptype = (qword & IAVF_RXD_QW1_PTYPE_MASK) >>
-			   IAVF_RXD_QW1_PTYPE_SHIFT;
-
 		/* populate checksum, VLAN, and protocol */
-		iavf_process_skb_fields(rx_ring, rx_desc, skb, rx_ptype);
+		iavf_process_skb_fields(rx_ring, rx_desc, skb, fields.rx_ptype);
 
-		vlan_tag = (qword & BIT(IAVF_RX_DESC_STATUS_L2TAG1P_SHIFT)) ?
-			   le16_to_cpu(rx_desc->wb.qword0.lo_dword.l2tag1) : 0;
+		if (vector_ch_ena(rx_ring->q_vector) &&
+		    vector_ch_perf_ena(rx_ring->q_vector)) {
+			if (!iavf_is_ctrl_pkt(skb, rx_ring))
+				rx_ring->q_vector->state_flags |=
+					IAVF_VECTOR_STATE_PREV_DATA_PKT_RECV;
+		}
 
 		iavf_trace(clean_rx_irq_rx, rx_ring, rx_desc, skb);
-		iavf_receive_skb(rx_ring, skb, vlan_tag);
+		iavf_receive_skb(rx_ring, skb, fields.vlan_tag);
 		skb = NULL;
 
 		/* update budget accounting */
@@ -1784,6 +2227,7 @@ static int iavf_clean_rx_irq(struct iavf_ring *rx_ring, int budget)
 	rx_ring->stats.packets += total_rx_packets;
 	rx_ring->stats.bytes += total_rx_bytes;
 	u64_stats_update_end(&rx_ring->syncp);
+	iavf_chnl_rx_stats(rx_ring, total_rx_packets);
 	rx_ring->q_vector->rx.total_packets += total_rx_packets;
 	rx_ring->q_vector->rx.total_bytes += total_rx_bytes;
 
@@ -1791,7 +2235,7 @@ static int iavf_clean_rx_irq(struct iavf_ring *rx_ring, int budget)
 	return failure ? budget : (int)total_rx_packets;
 }
 
-static inline u32 iavf_buildreg_itr(const int type, u16 itr)
+static u32 iavf_buildreg_itr(const int type, u16 itr)
 {
 	u32 val;
 
@@ -1837,11 +2281,20 @@ static inline u32 iavf_buildreg_itr(const int type, u16 itr)
  * @q_vector: q_vector for which itr is being updated and interrupt enabled
  *
  **/
-static inline void iavf_update_enable_itr(struct iavf_vsi *vsi,
-					  struct iavf_q_vector *q_vector)
+static void iavf_update_enable_itr(struct iavf_vsi *vsi, struct iavf_q_vector *q_vector)
 {
 	struct iavf_hw *hw = &vsi->back->hw;
 	u32 intval;
+
+	/* if vector is channel enabled, it doesn't use ITR countdown
+	 * or pseudo-lazy update for ITR update
+	 */
+	if (vector_ch_ena(q_vector) &&
+	    vector_ch_perf_ena(q_vector)) {
+		/* No ITR update */
+		intval = iavf_buildreg_itr(IAVF_ITR_NONE, 0);
+		goto do_write;
+	}
 
 	/* These will do nothing if dynamic updates are not enabled */
 	iavf_update_itr(q_vector, &q_vector->tx);
@@ -1883,9 +2336,121 @@ static inline void iavf_update_enable_itr(struct iavf_vsi *vsi,
 		if (q_vector->itr_countdown)
 			q_vector->itr_countdown--;
 	}
-
+do_write:
 	if (!test_bit(__IAVF_VSI_DOWN, vsi->state))
 		wr32(hw, INTREG(q_vector->reg_idx), intval);
+}
+
+/**
+ * iavf_refresh_bp_state - refresh state machine
+ * @napi: ptr to NAPI struct
+ *
+ * Update ADQ state machine, and depending on whether this was called from
+ * busy poll, enable interrupts and update ITR
+ */
+static void iavf_refresh_bp_state(struct napi_struct *napi)
+{
+	struct iavf_q_vector *q_vector =
+			container_of(napi, struct iavf_q_vector, napi);
+
+	/* cache previous state of vector */
+	if (q_vector->state_flags & IAVF_VECTOR_STATE_IN_BP)
+		q_vector->state_flags |= IAVF_VECTOR_STATE_PREV_IN_BP;
+	else
+		q_vector->state_flags &= ~IAVF_VECTOR_STATE_PREV_IN_BP;
+
+#ifdef HAVE_NAPI_STATE_IN_BUSY_POLL
+	/* update current state of vector */
+	if (test_bit(NAPI_STATE_IN_BUSY_POLL, &napi->state))
+		q_vector->state_flags |= IAVF_VECTOR_STATE_IN_BP;
+	else
+		q_vector->state_flags &= ~IAVF_VECTOR_STATE_IN_BP;
+#endif /* HAVE_STATE_IN_BUSY_POLL */
+
+	if (q_vector->state_flags & IAVF_VECTOR_STATE_IN_BP) {
+		q_vector->jiffies = jiffies;
+		/* trigger force_wb by setting WB_ON_ITR only when
+		 * - vector is transitioning from INTR->BUSY_POLL
+		 * - once_in_bp is false, this is to prevent from doing it
+		 * every time whenever vector state is changing from
+		 * INTR->BUSY_POLL because that could be due to legit
+		 * busy_poll stop
+		 */
+		if (!(q_vector->state_flags & IAVF_VECTOR_STATE_ONCE_IN_BP) &&
+		    vector_intr_busypoll(q_vector))
+			iavf_set_wb_on_itr(&q_vector->vsi->back->hw, q_vector);
+
+		q_vector->state_flags |= IAVF_VECTOR_STATE_ONCE_IN_BP;
+		q_vector->ch_stats.in_bp++;
+		/* state transition : INTERRUPT --> BUSY_POLL */
+		if (!(q_vector->state_flags & IAVF_VECTOR_STATE_PREV_IN_BP))
+			q_vector->ch_stats.intr_to_bp++;
+		else
+			q_vector->ch_stats.bp_to_bp++;
+	} else {
+		q_vector->ch_stats.in_intr++;
+		/* state transition : BUSY_POLL --> INTERRUPT */
+		if (q_vector->state_flags & IAVF_VECTOR_STATE_PREV_IN_BP)
+			q_vector->ch_stats.bp_to_intr++;
+		else
+			q_vector->ch_stats.intr_to_intr++;
+	}
+}
+
+/*
+ * iavf_handle_chnl_vector - handle channel enabled vector
+ * @vsi: ptr to VSI
+ * @q_vector: ptr to q_vector
+ * @unlikely_cb_bp: will comeback to busy_poll or not
+ *
+ * This function eithers triggers software interrupt (when unlikely_cb_bp is
+ * true) or enable interrupt normally. unlikely_cb_bp gets determined based
+ * on state machine and packet parsing logic.
+ */
+static void
+iavf_handle_chnl_vector(struct iavf_vsi *vsi, struct iavf_q_vector *q_vector,
+			bool unlikely_cb_bp)
+{
+	struct iavf_q_vector_ch_stats *stats = &q_vector->ch_stats;
+
+	/* caller of this function deteremines next occurrence/execution context
+	 * of napi_poll (means next time whether napi_poll will be invoked from
+	 * busy_poll or SOFT IRQ context). Please refer to the caller of this
+	 * function to see logic for "unlikely_cb_bp" (aka, re-occurrence to
+	 * busy_poll or not).
+	 * If logic determines that, next occurrence of napi_poll will not be
+	 * from busy_poll context, trigger software initiated interrupt on
+	 * channel enabled vector to revive queue(s) processing, otherwise if
+	 * in true interrupt state - just enable interrupt.
+	 */
+	if (unlikely_cb_bp) {
+		stats->unlikely_cb_to_bp++;
+		/* if once_in_bp is set and pkt inspection based optimization
+		 * is off, do not trigger SW interrupt (simply bailout).
+		 * No change in logic from service_task based software
+		 * triggred interrupt - to revive the queue based on jiffy logic
+		 */
+		if (q_vector->state_flags & IAVF_VECTOR_STATE_ONCE_IN_BP) {
+			stats->ucb_once_in_bp_true++;
+			if (!vector_pkt_inspect_opt_ena(q_vector)) {
+				stats->no_sw_intr_opt_off++;
+				return;
+			}
+		}
+
+		/* Since this real BP -> INT transition, reset jiffy snapshot */
+		q_vector->jiffies = 0;
+
+		/* Likewise for real BP -> INT, trigger
+		 * SW interrupt, so that vector is put back
+		 * in sane state, trigger sw interrupt to revive the queue
+		 */
+		iavf_inc_napi_sw_intr_counter(q_vector);
+		iavf_force_wb(vsi, q_vector);
+	} else if (!(q_vector->state_flags & IAVF_VECTOR_STATE_ONCE_IN_BP)) {
+		stats->intr_once_bp_false++;
+		iavf_update_enable_itr(vsi, q_vector);
+	}
 }
 
 /**
@@ -1902,9 +2467,13 @@ int iavf_napi_poll(struct napi_struct *napi, int budget)
 	struct iavf_q_vector *q_vector =
 			       container_of(napi, struct iavf_q_vector, napi);
 	struct iavf_vsi *vsi = q_vector->vsi;
-	struct iavf_ring *ring;
+	bool cleaned_any_data_pkt = false;
 	u64 flags = vsi->back->flags;
+	bool unlikely_cb_bp = false;
 	bool clean_complete = true;
+	bool ch_enabled = false;
+	bool wb_on_itr_enabled;
+	struct iavf_ring *ring;
 	bool arm_wb = false;
 	int budget_per_ring;
 	int work_done = 0;
@@ -1912,6 +2481,55 @@ int iavf_napi_poll(struct napi_struct *napi, int budget)
 	if (test_bit(__IAVF_VSI_DOWN, vsi->state)) {
 		napi_complete(napi);
 		return 0;
+	}
+
+	/* determine if WB_ON_ITR is enabled on not, if not - not need to
+	 * apply any  performance optimization
+	 */
+	wb_on_itr_enabled = true;
+	iavf_for_each_ring(ring, q_vector->tx) {
+		if (!(ring->flags & IAVF_TXR_FLAGS_WB_ON_ITR)) {
+			wb_on_itr_enabled &= false;
+			break;
+		}
+	}
+
+	/* determine once if vector needs to be processed differently */
+	ch_enabled = wb_on_itr_enabled && vector_ch_ena(q_vector) &&
+		     vector_ch_perf_ena(q_vector);
+	if (ch_enabled) {
+		u8 qv_flags;
+
+		/* Refresh state machine */
+		iavf_refresh_bp_state(napi);
+
+		/* check during previous run of napi_poll whether at least one
+		 * data packets is processed or not. If processed at least one
+		 * data packet, set the local flag 'cleaned_any_data_pkt'
+		 * which is used later in this function to determine if
+		 * interrupt should be enabled or deferred (this is applicable
+		 * only in case when busy_poll stop is invoked, means previous
+		 * state of vector is in busy_poll and current state is not
+		 * (aka BUSY_POLL -> INTR))
+		 */
+		qv_flags = q_vector->state_flags;
+		if (qv_flags & IAVF_VECTOR_STATE_PREV_DATA_PKT_RECV) {
+			q_vector->state_flags &=
+					~IAVF_VECTOR_STATE_PREV_DATA_PKT_RECV;
+			/* It is important to check and cache correct\
+			 * information (cleaned any data packets or not) in
+			 * local variable before napi_complete_done is finished.
+			 * Once napi_complete_done is returned, napi_poll
+			 * can get invoked again (means re-entrant) which can
+			 * potentially results to incorrect decision making
+			 * w.r.t. whether interrupt should be enabled or
+			 * deferred)
+			 */
+			if (vector_busypoll_intr(q_vector)) {
+				cleaned_any_data_pkt = true;
+				q_vector->ch_stats.cleaned_any_data_pkt++;
+			}
+		}
 	}
 
 	/* Since the actual Tx work is minimal, we can give the Tx a larger
@@ -1929,6 +2547,20 @@ int iavf_napi_poll(struct napi_struct *napi, int budget)
 	/* Handle case where we are called by netpoll with a budget of 0 */
 	if (budget <= 0)
 		goto tx_only;
+
+	/* state transitioning from BUSY_POLL --> INTERRUPT. This can happen
+	 * due to several reason when stack calls busy_poll_stop
+	 *    1. during last execution of napi_poll returned non-zero packets
+	 *    2. busy_loop ended
+	 *    3. need re-sched set
+	 * driver keeps track of packets were cleaned during last run and if
+	 * that is zero, means most likely napi_poll won't be invoked from
+	 * busy_poll context; in that situation bypass processing of Rx queues
+	 * and enable interrupt and let subsequent run of napi_poll from
+	 * interrupt path handle cleanup of Rx queues
+	 */
+	if (ch_enabled && vector_busypoll_intr(q_vector))
+		goto bypass;
 
 	/* We attempt to distribute budget to each Rx queue fairly, but don't
 	 * allow the budget to go below 1 because that would exit polling early.
@@ -1950,6 +2582,10 @@ int iavf_napi_poll(struct napi_struct *napi, int budget)
 		clean_complete = true;
 
 #endif
+	/* if this vector ever was/is in BUSY_POLL, skip processing  */
+	if (ch_enabled && vector_ever_in_busypoll(q_vector))
+		goto bypass;
+
 	/* If work not completed, return budget and polling will return */
 	if (!clean_complete) {
 #ifdef HAVE_IRQ_AFFINITY_NOTIFY
@@ -1965,7 +2601,7 @@ int iavf_napi_poll(struct napi_struct *napi, int budget)
 		if (!cpumask_test_cpu(cpu_id, &q_vector->affinity_mask)) {
 			/* Tell napi that we are done polling */
 			napi_complete_done(napi, work_done);
-
+			q_vector->ch_stats.intr_en_not_clean_complete++;
 			/* Force an interrupt */
 			iavf_force_wb(vsi, q_vector);
 
@@ -1984,10 +2620,85 @@ tx_only:
 	if (flags & IAVF_TXR_FLAGS_WB_ON_ITR)
 		q_vector->arm_wb_state = false;
 
-	/* Work is done so exit the polling mode and re-enable the interrupt */
-	napi_complete_done(napi, work_done);
+bypass:
+	/* Following block is only for stats, hence guarded by "debug_mask" */
+	if (ch_enabled && vector_busypoll_intr(q_vector)) {
+		struct iavf_q_vector_ch_stats *stats;
 
-	iavf_update_enable_itr(vsi, q_vector);
+		stats = &q_vector->ch_stats;
+		if (unlikely(need_resched())) {
+			stats->bp_stop_need_resched++;
+			if (!cleaned_any_data_pkt)
+				stats->need_resched_no_data_pkt++;
+		} else {
+			/* here , means actually because of 2 reason
+			 * - busy_poll timeout expired
+			 * - last time, cleaned data packets, hence
+			 *  stack asked to stop busy_poll so that packet
+			 *  can be processed by consumer
+			 */
+			stats->bp_stop_timeout++;
+			if (!cleaned_any_data_pkt)
+				stats->timeout_no_data_pkt++;
+		}
+	}
+	/* if state transition from busy_poll to interrupt and during
+	 * last run: did not cleanup TCP data packets -
+	 *      then application unlikely to comeback to busy_poll
+	 */
+	if (ch_enabled && vector_busypoll_intr(q_vector) &&
+	    !cleaned_any_data_pkt) {
+		/* for now, if need_resched is true (it can be either
+		 * due to voluntary/in-voluntary context switches),
+		 * do not trigger SW interrupt.
+		 * if need_resched is not set, safely assuming, it is due
+		 * to possible timeout and unlikely that application/context
+		 * will return to busy_poll, hence set 'unlikely_cb_bp' to
+		 * true which will cause software triggered interrupt
+		 * to reviev the queue/vector
+		 */
+		if (unlikely(need_resched()))
+			unlikely_cb_bp = false;
+		else
+			unlikely_cb_bp = true;
+	}
+
+	/* Work is done so exit the polling mode and re-enable the interrupt */
+	if (likely(napi_complete_done(napi, work_done))) {
+		/* napi_ret : false (means vector is still in POLLING mode
+		 *            true (means out of POLLING)
+		 * NOTE: Generally if napi_ret is TRUE, enable device interrupt
+		 * but there are condition/optimization, where it can be
+		 * optimized. Bascially, if napi_complete_done returns true buti
+		 * last time Rx packets were cleaned, then most likely, consumer
+		 * thread will come back to do busy_polling where cleaning of
+		 * Tx/Rx queue will happen normally. Hence no reason to arm the
+		 * interrupt.
+		 *
+		 * If for some reason, consumer thread/context doesn't comeback
+		 * to busy_poll:napi_poll, there is bail-out mechanism to kick
+		 * start the state machine thru' SW triggered interrupt from
+		 * service task.
+		 */
+		if (ch_enabled) {
+			/* current state of NAPI is INTERRUPT */
+			iavf_handle_chnl_vector(vsi, q_vector, unlikely_cb_bp);
+		} else {
+			iavf_update_enable_itr(vsi, q_vector);
+		}
+	} else {
+		/* if code makes it here, means busy_poll is still ON.
+		 * if vector is channel enabled, setting WB_ON_ITR is handled
+		 * from iavf_refresh_bp_state function.
+		 * otherwise set WB_ON_ITR (if supported)
+		 */
+		if (!ch_enabled) {
+			if (wb_on_itr_enabled)
+				iavf_enable_wb_on_itr(vsi, q_vector);
+			else
+				iavf_update_enable_itr(vsi, q_vector);
+		}
+	}
 
 	return min_t(int, work_done, budget - 1);
 }
@@ -2004,51 +2715,35 @@ tx_only:
  * Returns error code indicate the frame should be dropped upon error and the
  * otherwise  returns 0 to indicate the flags has been set properly.
  **/
-static inline int iavf_tx_prepare_vlan_flags(struct sk_buff *skb,
-					     struct iavf_ring *tx_ring,
-					     u32 *flags)
+static void iavf_tx_prepare_vlan_flags(struct sk_buff *skb,
+				       struct iavf_ring *tx_ring,
+				       u32 *flags)
 {
-	__be16 protocol = skb->protocol;
 	u32  tx_flags = 0;
 
-#ifdef NETIF_F_HW_VLAN_CTAG_RX
-	if (protocol == htons(ETH_P_8021Q) &&
-	    !(tx_ring->netdev->features & NETIF_F_HW_VLAN_CTAG_TX)) {
-#else
-	if (protocol == htons(ETH_P_8021Q) &&
-	    !(tx_ring->netdev->features & NETIF_F_HW_VLAN_TX)) {
-#endif
-		/* When HW VLAN acceleration is turned off by the user the
-		 * stack sets the protocol to 8021q so that the driver
-		 * can take any steps required to support the SW only
-		 * VLAN handling.  In our case the driver doesn't need
-		 * to take any further steps so just set the protocol
-		 * to the encapsulated ethertype.
-		 */
-		skb->protocol = vlan_get_protocol(skb);
-		goto out;
-	}
+	/* stack will only request hardware VLAN insertion offload for protocols
+	 * that the driver supports and has enabled
+	 */
+	if (!skb_vlan_tag_present(skb))
+		return;
 
-	/* if we have a HW VLAN tag being added, default to the HW one */
-	if (skb_vlan_tag_present(skb)) {
-		tx_flags |= skb_vlan_tag_get(skb) << IAVF_TX_FLAGS_VLAN_SHIFT;
+	tx_flags |= skb_vlan_tag_get(skb) << IAVF_TX_FLAGS_VLAN_SHIFT;
+	if (tx_ring->flags & IAVF_TXR_FLAGS_VLAN_TAG_LOC_L2TAG2) {
+		tx_flags |= IAVF_TX_FLAGS_HW_OUTER_SINGLE_VLAN;
+	} else if (tx_ring->flags & IAVF_TXRX_FLAGS_VLAN_TAG_LOC_L2TAG1) {
 		tx_flags |= IAVF_TX_FLAGS_HW_VLAN;
-	/* else if it is a SW VLAN, check the next protocol and store the tag */
-	} else if (protocol == htons(ETH_P_8021Q)) {
-		struct vlan_hdr *vhdr, _vhdr;
-
-		vhdr = skb_header_pointer(skb, ETH_HLEN, sizeof(_vhdr), &_vhdr);
-		if (!vhdr)
-			return -EINVAL;
-
-		protocol = vhdr->h_vlan_encapsulated_proto;
-		tx_flags |= ntohs(vhdr->h_vlan_TCI) << IAVF_TX_FLAGS_VLAN_SHIFT;
-		tx_flags |= IAVF_TX_FLAGS_SW_VLAN;
+	} else {
+		dev_dbg(tx_ring->dev, "Unsupported Tx VLAN tag location requested\n");
+		return;
 	}
+#ifdef IAVF_ADD_PROBES
+	if (tx_ring->netdev->features & IAVF_NETIF_F_HW_VLAN_CTAG_TX)
+		tx_ring->vsi->back->tx_vlano++;
+	else
+		tx_ring->vsi->back->tx_ad_vlano++;
+#endif
 
-out:
 	*flags = tx_flags;
-	return 0;
 }
 
 #ifdef IAVF_ADD_PROBES
@@ -2181,17 +2876,22 @@ static int iavf_tso(struct iavf_tx_buffer *first, u8 *hdr_len,
 	/* remove payload length from inner checksum */
 	paylen = skb->len - l4_offset;
 
-	if (skb->csum_offset == offsetof(struct tcphdr, check)) {
-		csum_replace_by_diff(&l4.tcp->check,
-				     (__force __wsum)htonl(paylen));
-		/* compute length of TCP segmentation header */
-		*hdr_len = (l4.tcp->doff * 4) + l4_offset;
-	} else {
+#ifdef NETIF_F_GSO_UDP_L4
+	if (skb_shinfo(skb)->gso_type & SKB_GSO_UDP_L4) {
 		csum_replace_by_diff(&l4.udp->check,
 				     (__force __wsum)htonl(paylen));
 		/* compute length of UDP segmentation header */
-		*hdr_len = sizeof(l4.udp) + l4_offset;
+		*hdr_len = (u8)sizeof(l4.udp) + l4_offset;
+	} else {
+		csum_replace_by_diff(&l4.tcp->check,
+				     (__force __wsum)htonl(paylen));
+		/* compute length of TCP segmentation header */
+		*hdr_len = (u8)((l4.tcp->doff * 4) + l4_offset);
 	}
+#else
+	csum_replace_by_diff(&l4.tcp->check, (__force __wsum)htonl(paylen));
+	*hdr_len = (u8)((l4.tcp->doff * 4) + l4_offset);
+#endif /* NETIF_F_GSO_UDP_L4 */
 
 	/* pull values out of skb_shinfo */
 	gso_size = skb_shinfo(skb)->gso_size;
@@ -2425,7 +3125,57 @@ static int iavf_tx_enable_csum(struct sk_buff *skb, u32 *tx_flags,
 }
 
 /**
- * iavf_create_tx_ctx Build the Tx context descriptor
+ * iavf_tstamp - setup context descriptor for timestamping
+ * @tx_ring: ring to send buffer on
+ * @skb: send buffer
+ * @tx_flags: collected send information
+ * @cd_type_cmd_tso_mss: Quad Word 1
+ *
+ * Setup timestamp request for an outbound packet. The request will only be
+ * made if the user has requested it, and if we're not already waiting for
+ * timestamp completion of a previous packet.
+ *
+ * Return 1 if a Tx timestamp will happen, 0 otherwise.
+ */
+static int
+iavf_tstamp(struct iavf_ring *tx_ring, struct sk_buff *skb, u32 tx_flags, u64 *cd_type_cmd_tso_mss)
+{
+	struct iavf_adapter *adapter;
+	struct iavf_ptp *ptp;
+	u64 ts_idx;
+
+	/* Timestamping is not enabled */
+	if (!(tx_ring->flags & IAVF_TXRX_FLAGS_HW_TSTAMP))
+		return 0;
+
+	if (likely(!(skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP)))
+		return 0;
+
+	/* Hardware cannot sample a timestamp when doing TSO */
+	if (tx_flags & IAVF_TX_FLAGS_TSO)
+		return 0;
+
+	adapter = netdev_priv(tx_ring->netdev);
+	ptp = &adapter->ptp;
+
+	if (test_and_set_bit_lock(__IAVF_TX_TSTAMP_IN_PROGRESS, &adapter->crit_section)) {
+		ptp->tx_hwtstamp_skipped++;
+		return 0;
+	}
+
+	skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
+	ptp->tx_start = jiffies;
+	ptp->tx_skb = skb_get(skb);
+
+	ts_idx = ptp->hw_caps.tx_tstamp_idx;
+	*cd_type_cmd_tso_mss |= (IAVF_TX_CTX_DESC_TSYN << IAVF_TXD_CTX_QW1_CMD_SHIFT) |
+				(ts_idx << IAVF_TXD_CTX_QW1_TSO_LEN_SHIFT);
+
+	return 1;
+}
+
+/**
+ * iavf_create_tx_ctx - Build the Tx context descriptor
  * @tx_ring:  ring to create the descriptor on
  * @cd_type_cmd_tso_mss: Quad Word 1
  * @cd_tunneling: Quad Word 0 - bits 0-31
@@ -2574,9 +3324,9 @@ bool __iavf_chk_linearize(struct sk_buff *skb)
  *
  * Returns 0 on success, negative error code on DMA failure.
  **/
-static inline int iavf_tx_map(struct iavf_ring *tx_ring, struct sk_buff *skb,
-			      struct iavf_tx_buffer *first, u32 tx_flags,
-			      const u8 hdr_len, u32 td_cmd, u32 td_offset)
+static int iavf_tx_map(struct iavf_ring *tx_ring, struct sk_buff *skb,
+		       struct iavf_tx_buffer *first, u32 tx_flags,
+		       const u8 hdr_len, u32 td_cmd, u32 td_offset)
 {
 	unsigned int data_len = skb->data_len;
 	unsigned int size = skb_headlen(skb);
@@ -2591,9 +3341,6 @@ static inline int iavf_tx_map(struct iavf_ring *tx_ring, struct sk_buff *skb,
 		td_cmd |= IAVF_TX_DESC_CMD_IL2TAG1;
 		td_tag = (tx_flags & IAVF_TX_FLAGS_VLAN_MASK) >>
 			 IAVF_TX_FLAGS_VLAN_SHIFT;
-#ifdef IAVF_ADD_PROBES
-		tx_ring->vsi->back->tx_vlano++;
-#endif
 	}
 
 	first->tx_flags = tx_flags;
@@ -2760,12 +3507,12 @@ static netdev_tx_t iavf_xmit_frame_ring(struct sk_buff *skb,
 	u64 cd_type_cmd_tso_mss = IAVF_TX_DESC_DTYPE_CONTEXT;
 	u32 cd_tunneling = 0, cd_l2tag2 = 0;
 	struct iavf_tx_buffer *first;
+	int tso, tstamp, count;
 	u32 td_offset = 0;
 	u32 tx_flags = 0;
 	__be16 protocol;
 	u32 td_cmd = 0;
 	u8 hdr_len = 0;
-	int tso, count;
 
 	/* prefetch the data, we'll need it later */
 	prefetch(skb->data);
@@ -2800,8 +3547,13 @@ static netdev_tx_t iavf_xmit_frame_ring(struct sk_buff *skb,
 	first->gso_segs = 1;
 
 	/* prepare the xmit flags */
-	if (iavf_tx_prepare_vlan_flags(skb, tx_ring, &tx_flags))
-		goto out_drop;
+	iavf_tx_prepare_vlan_flags(skb, tx_ring, &tx_flags);
+	if (tx_flags & IAVF_TX_FLAGS_HW_OUTER_SINGLE_VLAN) {
+		cd_type_cmd_tso_mss |= IAVF_TX_CTX_DESC_IL2TAG2 <<
+			IAVF_TXD_CTX_QW1_CMD_SHIFT;
+		cd_l2tag2 = (tx_flags & IAVF_TX_FLAGS_VLAN_MASK) >>
+			IAVF_TX_FLAGS_VLAN_SHIFT;
+	}
 
 	/* obtain protocol of skb */
 	protocol = vlan_get_protocol(skb);
@@ -2825,14 +3577,19 @@ static netdev_tx_t iavf_xmit_frame_ring(struct sk_buff *skb,
 	if (tso < 0)
 		goto out_drop;
 
+	tstamp = iavf_tstamp(tx_ring, skb, tx_flags, &cd_type_cmd_tso_mss);
+	if (tstamp)
+		tx_flags |= IAVF_TX_FLAGS_TSTAMP;
+
 	/* always enable CRC insertion offload */
 	td_cmd |= IAVF_TX_DESC_CMD_ICRC;
 
 	iavf_create_tx_ctx(tx_ring, cd_type_cmd_tso_mss,
 			   cd_tunneling, cd_l2tag2);
 
-	iavf_tx_map(tx_ring, skb, first, tx_flags, hdr_len,
-		    td_cmd, td_offset);
+	if (iavf_tx_map(tx_ring, skb, first, tx_flags, hdr_len,
+			td_cmd, td_offset))
+		goto cleanup_tx_tstamp;
 
 #ifndef HAVE_TRANS_START_IN_QUEUE
 	tx_ring->netdev->trans_start = jiffies;
@@ -2843,6 +3600,15 @@ out_drop:
 	iavf_trace(xmit_frame_ring_drop, first->skb, tx_ring);
 	dev_kfree_skb_any(first->skb);
 	first->skb = NULL;
+cleanup_tx_tstamp:
+	if (unlikely(tx_flags & IAVF_TX_FLAGS_TSTAMP)) {
+		struct iavf_adapter *adapter = netdev_priv(tx_ring->netdev);
+
+		dev_kfree_skb_any(adapter->ptp.tx_skb);
+		adapter->ptp.tx_skb = NULL;
+		clear_bit_unlock(__IAVF_TX_TSTAMP_IN_PROGRESS, &adapter->crit_section);
+	}
+
 	return NETDEV_TX_OK;
 }
 
