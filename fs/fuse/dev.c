@@ -2255,6 +2255,30 @@ static long fuse_dev_ioctl(struct file *file, unsigned int cmd,
 			}
 		}
 	}
+	if (cmd == FUSE_DEV_IOC_RECOVERY) {
+		struct fuse_dev *fud = fuse_get_dev(file);
+		struct fuse_iqueue *fiq = &fud->fc->iq;
+		struct fuse_pqueue *fpq = &fud->pq;
+		struct fuse_req *req, *next;
+		LIST_HEAD(recovery);
+		unsigned int i;
+
+		spin_lock(&fpq->lock);
+		for (i = 0; i < FUSE_PQ_HASH_SIZE; i++)
+			list_splice_tail_init(&fpq->processing[i],
+					      &recovery);
+		spin_unlock(&fpq->lock);
+
+		list_for_each_entry_safe(req, next, &recovery, list) {
+			clear_bit(FR_SENT, &req->flags);
+			set_bit(FR_PENDING, &req->flags);
+		}
+
+		spin_lock(&fiq->lock);
+		list_splice(&recovery, &fiq->pending);
+		spin_unlock(&fiq->lock);
+		err = 0;
+        }
 	return err;
 }
 
