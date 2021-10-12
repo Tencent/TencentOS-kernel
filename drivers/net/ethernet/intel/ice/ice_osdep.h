@@ -1,14 +1,14 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (c) 2018, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #ifndef _ICE_OSDEP_H_
 #define _ICE_OSDEP_H_
 
 #include <linux/types.h>
 #include <linux/io.h>
-#ifndef CONFIG_64BIT
-#include <linux/io-64-nonatomic-lo-hi.h>
-#endif
+#include <linux/bitops.h>
+#include <linux/if_ether.h>
+#include "kcompat.h"
 
 #define wr32(a, reg, value)	writel((value), ((a)->hw_addr + (reg)))
 #define rd32(a, reg)		readl((a)->hw_addr + (reg))
@@ -16,6 +16,7 @@
 #define rd64(a, reg)		readq((a)->hw_addr + (reg))
 
 #define ice_flush(a)		rd32((a), GLGEN_STAT)
+
 #define ICE_M(m, s)		((m) << (s))
 
 struct ice_dma_mem {
@@ -27,9 +28,17 @@ struct ice_dma_mem {
 #define ice_hw_to_dev(ptr)	\
 	(&(container_of((ptr), struct ice_pf, hw))->pdev->dev)
 
+#define ice_info_fwlog(hw, rowsize, groupsize, buf, len)	\
+	print_hex_dump(KERN_INFO, " FWLOG: ",			\
+		       DUMP_PREFIX_NONE,			\
+		       rowsize, groupsize, buf,			\
+		       len, false)
+
+
 #ifdef CONFIG_DYNAMIC_DEBUG
 #define ice_debug(hw, type, fmt, args...) \
 	dev_dbg(ice_hw_to_dev(hw), fmt, ##args)
+
 
 #define ice_debug_array(hw, type, rowsize, groupsize, buf, len) \
 	print_hex_dump_debug(KBUILD_MODNAME " ",		\
@@ -51,6 +60,7 @@ do {								\
 				     rowsize, groupsize, buf,	\
 				     len, false);		\
 } while (0)
+
 #else
 #define ice_debug_array(hw, type, rowsize, groupsize, buf, len) \
 do {								\
@@ -67,6 +77,7 @@ do {								\
 				  i, ((len_l) - i), ((buf_l) + i));\
 	}							\
 } while (0)
+
 #endif /* DEBUG */
 #endif /* CONFIG_DYNAMIC_DEBUG */
 

@@ -1,14 +1,16 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Copyright (c) 2019, Intel Corporation. */
+/* Copyright (C) 2018-2021, Intel Corporation. */
 
 #ifndef _ICE_DCB_H_
 #define _ICE_DCB_H_
 
 #include "ice_type.h"
+#include "ice_common.h"
 
 #define ICE_DCBX_STATUS_NOT_STARTED	0
 #define ICE_DCBX_STATUS_IN_PROGRESS	1
 #define ICE_DCBX_STATUS_DONE		2
+#define ICE_DCBX_STATUS_MULTIPLE_PEERS	3
 #define ICE_DCBX_STATUS_DIS		7
 
 #define ICE_TLV_TYPE_END		0
@@ -22,9 +24,19 @@
 
 #define ICE_CEE_DCBX_OUI		0x001B21
 #define ICE_CEE_DCBX_TYPE		2
+
+#define ICE_DSCP_OUI			0xFFFFFF
+#define ICE_DSCP_SUBTYPE_DSCP2UP	0x41
+#define ICE_DSCP_SUBTYPE_ENFORCE	0x42
+#define ICE_DSCP_SUBTYPE_TCBW		0x43
+#define ICE_DSCP_SUBTYPE_PFC		0x44
+#define ICE_DSCP_IPV6_OFFSET		80
+
+#define ICE_CEE_SUBTYPE_CTRL		1
 #define ICE_CEE_SUBTYPE_PG_CFG		2
 #define ICE_CEE_SUBTYPE_PFC_CFG		3
 #define ICE_CEE_SUBTYPE_APP_PRI		4
+
 #define ICE_CEE_MAX_FEAT_TYPE		3
 /* Defines for LLDP TLV header */
 #define ICE_LLDP_TLV_LEN_S		0
@@ -72,22 +84,34 @@
 #define ICE_IEEE_APP_PRIO_M		(0x7 << ICE_IEEE_APP_PRIO_S)
 
 /* TLV definitions for preparing MIB */
+#define ICE_TLV_ID_CHASSIS_ID		0
+#define ICE_TLV_ID_PORT_ID		1
+#define ICE_TLV_ID_TIME_TO_LIVE		2
 #define ICE_IEEE_TLV_ID_ETS_CFG		3
 #define ICE_IEEE_TLV_ID_ETS_REC		4
 #define ICE_IEEE_TLV_ID_PFC_CFG		5
 #define ICE_IEEE_TLV_ID_APP_PRI		6
 #define ICE_TLV_ID_END_OF_LLDPPDU	7
 #define ICE_TLV_ID_START		ICE_IEEE_TLV_ID_ETS_CFG
+#define ICE_TLV_ID_DSCP_UP		3
+#define ICE_TLV_ID_DSCP_ENF		4
+#define ICE_TLV_ID_DSCP_TC_BW		5
+#define ICE_TLV_ID_DSCP_TO_PFC		6
 
 #define ICE_IEEE_ETS_TLV_LEN		25
 #define ICE_IEEE_PFC_TLV_LEN		6
 #define ICE_IEEE_APP_TLV_LEN		11
 
+#define ICE_DSCP_UP_TLV_LEN		148
+#define ICE_DSCP_ENF_TLV_LEN		132
+#define ICE_DSCP_TC_BW_TLV_LEN		25
+#define ICE_DSCP_PFC_TLV_LEN		6
+
 /* IEEE 802.1AB LLDP Organization specific TLV */
 struct ice_lldp_org_tlv {
 	__be16 typelen;
 	__be32 ouisubtype;
-	u8 tlvinfo[1];
+	u8 tlvinfo[];
 } __packed;
 
 struct ice_cee_tlv_hdr {
@@ -109,7 +133,7 @@ struct ice_cee_feat_tlv {
 #define ICE_CEE_FEAT_TLV_WILLING_M	0x40
 #define ICE_CEE_FEAT_TLV_ERR_M		0x20
 	u8 subtype;
-	u8 tlvinfo[1];
+	u8 tlvinfo[];
 };
 
 struct ice_cee_app_prio {
@@ -120,6 +144,29 @@ struct ice_cee_app_prio {
 	u8 prio_map;
 } __packed;
 
+
+enum ice_status
+ice_aq_get_lldp_mib(struct ice_hw *hw, u8 bridge_type, u8 mib_type, void *buf,
+		    u16 buf_size, u16 *local_len, u16 *remote_len,
+		    struct ice_sq_cd *cd);
+enum ice_status
+ice_aq_add_delete_lldp_tlv(struct ice_hw *hw, u8 bridge_type, bool add_lldp_tlv,
+			   void *buf, u16 buf_size, u16 tlv_len, u16 *mib_len,
+			   struct ice_sq_cd *cd);
+enum ice_status
+ice_aq_update_lldp_tlv(struct ice_hw *hw, u8 bridge_type, void *buf,
+		       u16 buf_size, u16 old_len, u16 new_len, u16 offset,
+		       u16 *mib_len, struct ice_sq_cd *cd);
+enum ice_status
+ice_aq_dcb_ignore_pfc(struct ice_hw *hw, u8 tcmap, bool request, u8 *tcmap_ret,
+		      struct ice_sq_cd *cd);
+enum ice_status
+ice_aq_query_pfc_mode(struct ice_hw *hw, u8 *pfcmode_ret, struct ice_sq_cd *cd);
+enum ice_status
+ice_aq_set_dcb_parameters(struct ice_hw *hw, bool dcb_enable,
+			  struct ice_sq_cd *cd);
+enum ice_status
+ice_aq_set_pfc_mode(struct ice_hw *hw, u8 pfc_mode, struct ice_sq_cd *cd);
 enum ice_status
 ice_aq_get_dcb_cfg(struct ice_hw *hw, u8 mib_type, u8 bridgetype,
 		   struct ice_dcbx_cfg *dcbcfg);
