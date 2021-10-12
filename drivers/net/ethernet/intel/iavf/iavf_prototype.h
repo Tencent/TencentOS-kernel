@@ -54,7 +54,7 @@ enum iavf_status iavf_set_mac_type(struct iavf_hw *hw);
 
 extern struct iavf_rx_ptype_decoded iavf_ptype_lookup[];
 
-static inline struct iavf_rx_ptype_decoded decode_rx_desc_ptype(u8 ptype)
+static inline struct iavf_rx_ptype_decoded decode_rx_desc_ptype(u16 ptype)
 {
 	return iavf_ptype_lookup[ptype];
 }
@@ -70,7 +70,7 @@ void iavf_vf_parse_hw_config(struct iavf_hw *hw,
 enum iavf_status iavf_vf_reset(struct iavf_hw *hw);
 enum iavf_status iavf_aq_send_msg_to_pf(struct iavf_hw *hw,
 				enum virtchnl_ops v_opcode,
-				enum iavf_status v_retval,
+				enum virtchnl_status_code v_retval,
 				u8 *msg, u16 msglen,
 				struct iavf_asq_cmd_details *cmd_details);
 enum iavf_status iavf_aq_debug_dump(struct iavf_hw *hw, u8 cluster_id,

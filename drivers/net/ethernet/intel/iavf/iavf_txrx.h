@@ -262,19 +262,21 @@ static inline unsigned int iavf_txd_use_count(unsigned int size)
 #define DESC_NEEDED (MAX_SKB_FRAGS + 6)
 #define IAVF_MIN_DESC_PENDING	4
 
-#define IAVF_TX_FLAGS_HW_VLAN		BIT(1)
-#define IAVF_TX_FLAGS_SW_VLAN		BIT(2)
-#define IAVF_TX_FLAGS_TSO		BIT(3)
-#define IAVF_TX_FLAGS_IPV4		BIT(4)
-#define IAVF_TX_FLAGS_IPV6		BIT(5)
-#define IAVF_TX_FLAGS_FCCRC		BIT(6)
-#define IAVF_TX_FLAGS_FSO		BIT(7)
-#define IAVF_TX_FLAGS_FD_SB		BIT(9)
-#define IAVF_TX_FLAGS_TUNNEL		BIT(10)
-#define IAVF_TX_FLAGS_VLAN_MASK		0xffff0000
-#define IAVF_TX_FLAGS_VLAN_PRIO_MASK	0xe0000000
-#define IAVF_TX_FLAGS_VLAN_PRIO_SHIFT	29
-#define IAVF_TX_FLAGS_VLAN_SHIFT	16
+#define IAVF_TX_FLAGS_HW_VLAN			BIT(1)
+#define IAVF_TX_FLAGS_SW_VLAN			BIT(2)
+#define IAVF_TX_FLAGS_TSO			BIT(3)
+#define IAVF_TX_FLAGS_IPV4			BIT(4)
+#define IAVF_TX_FLAGS_IPV6			BIT(5)
+#define IAVF_TX_FLAGS_FCCRC			BIT(6)
+#define IAVF_TX_FLAGS_FSO			BIT(7)
+#define IAVF_TX_FLAGS_FD_SB			BIT(9)
+#define IAVF_TX_FLAGS_TUNNEL			BIT(10)
+#define IAVF_TX_FLAGS_HW_OUTER_SINGLE_VLAN	BIT(11)
+#define IAVF_TX_FLAGS_TSTAMP			BIT(12)
+#define IAVF_TX_FLAGS_VLAN_MASK			0xffff0000
+#define IAVF_TX_FLAGS_VLAN_PRIO_MASK		0xe0000000
+#define IAVF_TX_FLAGS_VLAN_PRIO_SHIFT		29
+#define IAVF_TX_FLAGS_VLAN_SHIFT		16
 
 struct iavf_tx_buffer {
 	struct iavf_tx_desc *next_to_watch;
@@ -322,6 +324,32 @@ struct iavf_rx_queue_stats {
 	u64 alloc_buff_failed;
 	u64 page_reuse_count;
 	u64 realloc_count;
+};
+
+struct iavf_ch_tx_q_stats {
+};
+
+struct iavf_ch_rx_q_stats {
+	u64 tcp_ctrl_pkts;
+	u64 only_ctrl_pkts;
+	u64 bp_no_data_pkt;
+	u64 tcp_fin_recv;
+	u64 tcp_rst_recv;
+	u64 tcp_syn_recv;
+};
+
+struct iavf_ch_q_poll_stats {
+	/* general packet counters for busy_poll versus napi_poll */
+	u64 pkt_busy_poll;
+	u64 pkt_not_busy_poll;
+};
+
+struct iavf_ch_q_stats {
+	struct iavf_ch_q_poll_stats poll;
+	union {
+		struct iavf_ch_tx_q_stats tx;
+		struct iavf_ch_rx_q_stats rx;
+	};
 };
 
 enum iavf_ring_state_t {
@@ -379,10 +407,16 @@ struct iavf_ring {
 	bool arm_wb;		/* do something to arm write back */
 	u8 packet_stride;
 
+	u8 rxdid;			/* Rx descriptor format */
+
 	u16 flags;
 #define IAVF_TXR_FLAGS_WB_ON_ITR		BIT(0)
 #define IAVF_RXR_FLAGS_BUILD_SKB_ENABLED	BIT(1)
 #define IAVF_TXR_FLAGS_XDP			BIT(2)
+#define IAVF_TXRX_FLAGS_VLAN_TAG_LOC_L2TAG1	BIT(3)
+#define IAVF_TXR_FLAGS_VLAN_TAG_LOC_L2TAG2	BIT(4)
+#define IAVF_RXR_FLAGS_VLAN_TAG_LOC_L2TAG2_2	BIT(5)
+#define IAVF_TXRX_FLAGS_HW_TSTAMP		BIT(6)
 
 	/* stats structs */
 	struct iavf_queue_stats	stats;
@@ -393,6 +427,8 @@ struct iavf_ring {
 		struct iavf_tx_queue_stats tx_stats;
 		struct iavf_rx_queue_stats rx_stats;
 	};
+
+	struct iavf_ch_q_stats ch_q_stats;
 
 	unsigned int size;		/* length of descriptor ring in bytes */
 	dma_addr_t dma;			/* physical address of ring */
@@ -411,11 +447,25 @@ struct iavf_ring {
 					 * for this ring.
 					 */
 
-	struct iavf_channel *ch;
+	u16 chnl_flags;
+#define IAVF_RING_CHNL_PERF_ENA	BIT(0)
+
+	struct iavf_channel_ex *ch;
+
 #ifdef HAVE_XDP_BUFF_RXQ
 	struct xdp_rxq_info xdp_rxq;
 #endif
 } ____cacheline_internodealigned_in_smp;
+
+static inline bool ring_ch_ena(struct iavf_ring *ring)
+{
+	return !!ring->ch;
+}
+
+static inline bool ring_ch_perf_ena(struct iavf_ring *ring)
+{
+	return ring->chnl_flags & IAVF_RING_CHNL_PERF_ENA;
+}
 
 static inline bool ring_uses_build_skb(struct iavf_ring *ring)
 {
@@ -483,9 +533,9 @@ int iavf_setup_rx_descriptors(struct iavf_ring *rx_ring);
 void iavf_free_tx_resources(struct iavf_ring *tx_ring);
 void iavf_free_rx_resources(struct iavf_ring *rx_ring);
 int iavf_napi_poll(struct napi_struct *napi, int budget);
-void iavf_force_wb(struct iavf_vsi *vsi, struct iavf_q_vector *q_vector);
 u32 iavf_get_tx_pending(struct iavf_ring *ring, bool in_sw);
 void iavf_detect_recover_hung(struct iavf_vsi *vsi);
+void iavf_chnl_detect_recover(struct iavf_vsi *vsi);
 int __iavf_maybe_stop_tx(struct iavf_ring *tx_ring, int size);
 bool __iavf_chk_linearize(struct sk_buff *skb);
 #ifdef HAVE_XDP_FRAME_STRUCT
@@ -500,7 +550,6 @@ void iavf_xdp_flush(struct net_device *dev);
 /**
  * iavf_xmit_descriptor_count - calculate number of Tx descriptors needed
  * @skb:     send buffer
- * @tx_ring: ring to send buffer on
  *
  * Returns number of data descriptors needed for this skb. Returns 0 to indicate
  * there is not enough descriptors available in this ring since we need at least

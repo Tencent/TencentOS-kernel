@@ -1475,7 +1475,6 @@ static const unsigned char __maybe_unused pcie_link_speed[] = {
 int __kc_pcie_get_minimum_link(struct pci_dev *dev, enum pci_bus_speed *speed,
 			       enum pcie_link_width *width)
 {
-	int ret;
 
 	*speed = PCI_SPEED_UNKNOWN;
 	*width = PCIE_LNK_WIDTH_UNKNOWN;
@@ -1484,8 +1483,8 @@ int __kc_pcie_get_minimum_link(struct pci_dev *dev, enum pci_bus_speed *speed,
 		u16 lnksta;
 		enum pci_bus_speed next_speed;
 		enum pcie_link_width next_width;
+		int ret = pcie_capability_read_word(dev, PCI_EXP_LNKSTA, &lnksta);
 
-		ret = pcie_capability_read_word(dev, PCI_EXP_LNKSTA, &lnksta);
 		if (ret)
 			return ret;
 
@@ -1541,6 +1540,50 @@ int __kc_dma_set_mask_and_coherent(struct device *dev, u64 mask)
 		err = dma_set_coherent_mask(dev, mask);
 	return err;
 }
+
+#if (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,0))
+static bool _kc_pci_bus_read_dev_vendor_id(struct pci_bus *bus, int devfn,
+					   u32 *l, int crs_timeout)
+{
+	int delay = 1;
+
+	if (pci_bus_read_config_dword(bus, devfn, PCI_VENDOR_ID, l))
+		return false;
+
+	/* some broken boards return 0 or ~0 if a slot is empty: */
+	if (*l == 0xffffffff || *l == 0x00000000 ||
+	    *l == 0x0000ffff || *l == 0xffff0000)
+		return false;
+
+	/* Configuration request Retry Status */
+	while (*l == 0xffff0001) {
+		if (!crs_timeout)
+			return false;
+
+		msleep(delay);
+		delay *= 2;
+		if (pci_bus_read_config_dword(bus, devfn, PCI_VENDOR_ID, l))
+			return false;
+		/* Card hasn't responded in 60 seconds?  Must be stuck. */
+		if (delay > crs_timeout) {
+			printk(KERN_WARNING "pci %04x:%02x:%02x.%d: not "
+			       "responding\n", pci_domain_nr(bus),
+			       bus->number, PCI_SLOT(devfn),
+			       PCI_FUNC(devfn));
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool _kc_pci_device_is_present(struct pci_dev *pdev)
+{
+	u32 v;
+
+	return _kc_pci_bus_read_dev_vendor_id(pdev->bus, pdev->devfn, &v, 0);
+}
+#endif /* <RHEL7.0 */
 #endif /* 3.13.0 */
 
 #if ( LINUX_VERSION_CODE < KERNEL_VERSION(3,14,0) )
@@ -1553,7 +1596,6 @@ int __kc_ipv6_find_hdr(const struct sk_buff *skb, unsigned int *offset,
 {
 	unsigned int start = skb_network_offset(skb) + sizeof(struct ipv6hdr);
 	u8 nexthdr = ipv6_hdr(skb)->nexthdr;
-	unsigned int len;
 	bool found;
 
 #define __KC_IP6_FH_F_FRAG	BIT(0)
@@ -1574,7 +1616,6 @@ int __kc_ipv6_find_hdr(const struct sk_buff *skb, unsigned int *offset,
 		start = *offset + sizeof(struct ipv6hdr);
 		nexthdr = ip6->nexthdr;
 	}
-	len = skb->len - start;
 
 	do {
 		struct ipv6_opt_hdr _hdr, *hp;
@@ -1639,7 +1680,6 @@ int __kc_ipv6_find_hdr(const struct sk_buff *skb, unsigned int *offset,
 
 		if (!found) {
 			nexthdr = hp->nexthdr;
-			len -= hdrlen;
 			start += hdrlen;
 		}
 	} while (!found);
@@ -2112,6 +2152,100 @@ unsigned int _kc_cpumask_local_spread(unsigned int i, int node)
 #endif
 
 /******************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,3,0))
+#if (!(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,4)) && \
+     !(SLE_VERSION_CODE >= SLE_VERSION(12,2,0)))
+/**
+ * _kc_skb_flow_dissect_flow_keys - parse SKB to fill _kc_flow_keys
+ * @skb: SKB used to fille _kc_flow_keys
+ * @flow: _kc_flow_keys to set with SKB fields
+ * @flags: currently unused flags
+ *
+ * The purpose of using kcompat for this function is so the caller doesn't have
+ * to care about which kernel version they are on, which prevents a larger than
+ * normal #ifdef mess created by using a HAVE_* flag for this case. This is also
+ * done for 4.2 kernels to simplify calling skb_flow_dissect_flow_keys()
+ * because in 4.2 kernels skb_flow_dissect_flow_keys() exists, but only has 2
+ * arguments. Recent kernels have skb_flow_dissect_flow_keys() that has 3
+ * arguments.
+ *
+ * The caller needs to understand that this function was only implemented as a
+ * bare-minimum replacement for recent versions of skb_flow_dissect_flow_keys()
+ * and this function is in no way similar to skb_flow_dissect_flow_keys(). An
+ * example use can be found in the ice driver, specifically ice_arfs.c.
+ *
+ * This function is treated as a whitelist of supported fields the SKB can
+ * parse. If new functionality is added make sure to keep this format (i.e. only
+ * check for fields that are explicity wanted).
+ *
+ * Current whitelist:
+ *
+ * TCPv4, TCPv6, UDPv4, UDPv6
+ *
+ * If any unexpected protocol or other field is found this function memsets the
+ * flow passed in back to 0 and returns false. Otherwise the flow is populated
+ * and returns true.
+ */
+bool
+_kc_skb_flow_dissect_flow_keys(const struct sk_buff *skb,
+			       struct _kc_flow_keys *flow,
+			       unsigned int __always_unused flags)
+{
+	memset(flow, 0, sizeof(*flow));
+
+	flow->basic.n_proto = skb->protocol;
+	switch (flow->basic.n_proto) {
+	case htons(ETH_P_IP):
+		flow->basic.ip_proto = ip_hdr(skb)->protocol;
+		flow->addrs.v4addrs.src = ip_hdr(skb)->saddr;
+		flow->addrs.v4addrs.dst = ip_hdr(skb)->daddr;
+		break;
+	case htons(ETH_P_IPV6):
+		flow->basic.ip_proto = ipv6_hdr(skb)->nexthdr;
+		memcpy(&flow->addrs.v6addrs.src, &ipv6_hdr(skb)->saddr,
+		       sizeof(struct in6_addr));
+		memcpy(&flow->addrs.v6addrs.dst, &ipv6_hdr(skb)->daddr,
+		       sizeof(struct in6_addr));
+		break;
+	default:
+		netdev_dbg(skb->dev, "%s: Unsupported/unimplemented layer 3 protocol %04x\n", __func__, htons(flow->basic.n_proto));
+		goto unsupported;
+	}
+
+	switch (flow->basic.ip_proto) {
+	case IPPROTO_TCP:
+	{
+		struct tcphdr *tcph;
+
+		tcph = tcp_hdr(skb);
+		flow->ports.src = tcph->source;
+		flow->ports.dst = tcph->dest;
+		break;
+	}
+	case IPPROTO_UDP:
+	{
+		struct udphdr *udph;
+
+		udph = udp_hdr(skb);
+		flow->ports.src = udph->source;
+		flow->ports.dst = udph->dest;
+		break;
+	}
+	default:
+		netdev_dbg(skb->dev, "%s: Unsupported/unimplemented layer 4 protocol %02x\n", __func__, flow->basic.ip_proto);
+		return false;
+	}
+
+	return true;
+
+unsupported:
+	memset(flow, 0, sizeof(*flow));
+	return false;
+}
+#endif /* ! >= RHEL7.4 && ! >= SLES12.2 */
+#endif /* 4.3.0 */
+
+/******************************************************************************/
 #if ( LINUX_VERSION_CODE < KERNEL_VERSION(4,5,0) )
 #if (!(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,3)))
 #ifdef CONFIG_SPARC
@@ -2219,6 +2353,38 @@ void _kc_ethtool_intersect_link_masks(struct ethtool_link_ksettings *dst,
 	}
 }
 #endif /* 4.15.0 */
+
+/*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,16,0))
+#if !(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,0)) && \
+     !(SLE_VERSION_CODE >= SLE_VERSION(12,5,0) && \
+       SLE_VERSION_CODE < SLE_VERSION(15,0,0) || \
+       SLE_VERSION_CODE >= SLE_VERSION(15,1,0))
+#if BITS_PER_LONG == 64
+/**
+ * bitmap_from_arr32 - copy the contents of u32 array of bits to bitmap
+ * @bitmap: array of unsigned longs, the destination bitmap
+ * @buf: array of u32 (in host byte order), the source bitmap
+ * @nbits: number of bits in @bitmap
+ */
+void bitmap_from_arr32(unsigned long *bitmap, const u32 *buf, unsigned int nbits)
+{
+	unsigned int i, halfwords;
+
+	halfwords = DIV_ROUND_UP(nbits, 32);
+	for (i = 0; i < halfwords; i++) {
+		bitmap[i/2] = (unsigned long) buf[i];
+		if (++i < halfwords)
+			bitmap[i/2] |= ((unsigned long) buf[i]) << 32;
+	}
+
+	/* Clear tail bits in last word beyond nbits. */
+	if (nbits % BITS_PER_LONG)
+		bitmap[(halfwords - 1) / 2] &= BITMAP_LAST_WORD_MASK(nbits);
+}
+#endif /* BITS_PER_LONG == 64 */
+#endif /* !(RHEL >= 8.0) && !(SLES >= 12.5 && SLES < 15.0 || SLES >= 15.1) */
+#endif /* 4.16.0 */
 
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(4,17,0))
@@ -2369,10 +2535,7 @@ void _kc_pcie_print_link_status(struct pci_dev *dev) {
 #endif /* 4.17.0 */
 
 /*****************************************************************************/
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5,1,0))
-#if (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,1)))
-#define HAVE_NDO_FDB_ADD_EXTACK
-#else /* !RHEL || RHEL < 8.1 */
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5,1,0)) || (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(8,1)))
 #ifdef HAVE_TC_SETUP_CLSFLOWER
 #define FLOW_DISSECTOR_MATCH(__rule, __type, __out)				\
 	const struct flow_match *__m = &(__rule)->match;			\
@@ -2457,8 +2620,7 @@ void flow_rule_match_ports(const struct flow_rule *rule,
 	FLOW_DISSECTOR_MATCH(rule, FLOW_DISSECTOR_KEY_PORTS, out);
 }
 #endif /* HAVE_TC_SETUP_CLSFLOWER */
-#endif /* !RHEL || RHEL < 8.1 */
-#endif /* 5.1.0 */
+#endif /* 5.1.0 || (RHEL && RHEL < 8.1) */
 
 /*****************************************************************************/
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5,3,0))
@@ -2493,3 +2655,30 @@ int _kc_flow_block_cb_setup_simple(struct flow_block_offload *f,
 #endif /* HAVE_TC_CB_AND_SETUP_QDISC_MQPRIO */
 #endif /* !RHEL >= 8.2 */
 #endif /* 5.3.0 */
+
+/*****************************************************************************/
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5,7,0))
+u64 _kc_pci_get_dsn(struct pci_dev *dev)
+{
+	u32 dword;
+	u64 dsn;
+	int pos;
+
+	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_DSN);
+	if (!pos)
+		return 0;
+
+	/*
+	 * The Device Serial Number is two dwords offset 4 bytes from the
+	 * capability position. The specification says that the first dword is
+	 * the lower half, and the second dword is the upper half.
+	 */
+	pos += 4;
+	pci_read_config_dword(dev, pos, &dword);
+	dsn = (u64)dword;
+	pci_read_config_dword(dev, pos + 4, &dword);
+	dsn |= ((u64)dword) << 32;
+
+	return dsn;
+}
+#endif /* 5.7.0 */
