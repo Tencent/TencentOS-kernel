@@ -32,6 +32,7 @@
 #include <linux/perf_event.h>
 
 #include <asm/barrier.h>
+#include <linux/extable.h>
 #include <asm/unaligned.h>
 
 /* Registers */
@@ -711,6 +712,24 @@ bool is_bpf_text_address(unsigned long addr)
 	rcu_read_unlock();
 
 	return ret;
+}
+
+const struct exception_table_entry *search_bpf_extables(unsigned long addr)
+{
+	const struct exception_table_entry *e = NULL;
+	struct bpf_prog *prog;
+
+	rcu_read_lock();
+	prog = bpf_prog_kallsyms_find(addr);
+	if (!prog)
+		goto out;
+	if (!prog->aux->num_exentries)
+		goto out;
+
+	e = search_extable(prog->aux->extable, prog->aux->num_exentries, addr);
+out:
+	rcu_read_unlock();
+	return e;
 }
 
 int bpf_get_kallsym(unsigned int symnum, unsigned long *value, char *type,
