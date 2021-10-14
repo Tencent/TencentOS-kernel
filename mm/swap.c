@@ -876,25 +876,16 @@ void lru_add_page_tail(struct page *page, struct page *page_tail,
 	VM_BUG_ON_PAGE(PageLRU(page_tail), page);
 	lockdep_assert_held(&lruvec_pgdat(lruvec)->lru_lock);
 
-	if (!list)
-		SetPageLRU(page_tail);
-
-	if (likely(PageLRU(page)))
-		list_add_tail(&page_tail->lru, &page->lru);
-	else if (list) {
+	if (list) {
 		/* page reclaim is reclaiming a huge page */
 		get_page(page_tail);
+		VM_WARN_ON(PageLRU(page));
 		list_add_tail(&page_tail->lru, list);
 	} else {
-		/*
-		 * Head page has not yet been counted, as an hpage,
-		 * so we must account for each subpage individually.
-		 *
-		 * Put page_tail on the list at the correct position
-		 * so they all end up in order.
-		 */
-		add_page_to_lru_list_tail(page_tail, lruvec,
-					  page_lru(page_tail));
+		/* head is still on lru (and we have it frozen) */
+		VM_WARN_ON(!PageLRU(page));
+		SetPageLRU(page_tail);
+		list_add_tail(&page_tail->lru, &page->lru);
 	}
 
 	if (!PageUnevictable(page))
