@@ -1932,7 +1932,8 @@ static unsigned noinline_for_stack move_pages_to_lru(struct lruvec *lruvec,
 				list_add(&page->lru, &pages_to_free);
 			continue;
 		}
-		lruvec = mem_cgroup_page_lruvec(page, pgdat);
+		VM_BUG_ON_PAGE(mem_cgroup_page_lruvec(page, page_pgdat(page))
+							!= lruvec, page);
 		lru = page_lru(page);
 		nr_pages = hpage_nr_pages(page);
 
