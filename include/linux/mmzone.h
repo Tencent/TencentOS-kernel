@@ -297,6 +297,8 @@ struct zone_reclaim_stat {
 };
 
 struct lruvec {
+	/* per lruvec lru_lock for memcg */
+	spinlock_t                      lru_lock;
 	struct list_head		lists[NR_LRU_LISTS];
 	struct zone_reclaim_stat	reclaim_stat;
 	/* Evictions & activations on the inactive file list */
@@ -768,7 +770,6 @@ typedef struct pglist_data {
 
 	/* Write-intensive fields used by page reclaim */
 	ZONE_PADDING(_pad1_)
-	spinlock_t		lru_lock;
 
 #ifdef CONFIG_DEFERRED_STRUCT_PAGE_INIT
 	/*
