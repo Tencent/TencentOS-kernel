@@ -63,6 +63,7 @@ struct request_sock {
 	u32				*saved_syn;
 	u32				secid;
 	u32				peer_secid;
+	u32				mark;
 };
 
 static inline struct request_sock *inet_reqsk(const struct sock *sk)
