@@ -143,5 +143,7 @@
 #define SCM_TIMESTAMPING        SO_TIMESTAMPING
 
 #endif
+/* get the MARK of a flow which have been set by iptables*/
+#define SO_MARK2		1000
 
 #endif /* __ASM_GENERIC_SOCKET_H */
