@@ -491,8 +491,15 @@ struct cgroup {
 	/* cgroup log subsys*/
 	struct mbuf_slot *mbuf;
 
+	/* memory latency stat */
+	struct sli_memlat_stat __percpu *sli_memlat_stat_percpu;
+
+	/* sched latency stat */
+	struct sli_schedlat_stat __percpu *sli_schedlat_stat_percpu;
+
 	/* ids of the ancestors at each level including self */
 	int ancestor_ids[];
+
 };
 
 /*

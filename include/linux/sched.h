@@ -299,6 +299,15 @@ struct sched_info {
 
 	/* When were we last queued to run? */
 	unsigned long long		last_queued;
+	
+	/* Are we in syscall? */
+	unsigned long			in_syscall;
+
+	/* Timestamps of syscall beginning */
+	unsigned long long		syscall_start;
+
+	/* syscall running time */
+	unsigned long long		syscall_exec_time;
 
 #endif /* CONFIG_SCHED_INFO */
 };
