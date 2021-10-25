@@ -59,6 +59,7 @@
 #include <linux/psi.h>
 #include <net/sock.h>
 #include <linux/mbuf.h>
+#include <linux/sli.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/cgroup.h>
@@ -3686,6 +3687,20 @@ static void cgroup_pressure_release(struct kernfs_open_file *of)
 }
 #endif /* CONFIG_PSI */
 
+static int cgroup_sli_memory_show(struct seq_file *seq, void *v)
+{
+	struct cgroup *cgroup = seq_css(seq)->cgroup;
+
+	return sli_memlat_stat_show(seq,cgroup);
+}
+
+static int cgroup_sli_cpu_show(struct seq_file *seq, void *v)
+{
+	struct cgroup *cgroup = seq_css(seq)->cgroup;
+
+	return sli_schedlat_stat_show(seq,cgroup);
+}
+
 void *cgroup_mbuf_start(struct seq_file *s, loff_t *pos)
 {
 	struct cgroup *cgrp = seq_css(s)->cgroup;
@@ -5106,6 +5121,16 @@ static struct cftype cgroup_base_files[] = {
 		.seq_next = cgroup_mbuf_next,
 		.seq_stop = cgroup_mbuf_stop,
 	},
+	{
+		.name = "sli.memory",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cgroup_sli_memory_show,
+	},
+	{
+		.name = "sli.cpu",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cgroup_sli_cpu_show,
+	},
 	{ }	/* terminate */
 };
 
@@ -5167,6 +5192,7 @@ static void css_free_rwork_fn(struct work_struct *work)
 			cgroup_put(cgroup_parent(cgrp));
 			kernfs_put(cgrp->kn);
 			psi_cgroup_free(cgrp);
+			sli_cgroup_free(cgrp);
 			if (cgroup_on_dfl(cgrp))
 				cgroup_rstat_exit(cgrp);
 			kfree(cgrp);
@@ -5429,9 +5455,13 @@ static struct cgroup *cgroup_create(struct cgroup *parent)
 	if (ret)
 		goto out_idr_free;
 
-	ret = cgroup_bpf_inherit(cgrp);
+	ret = sli_cgroup_alloc(cgrp);
 	if (ret)
 		goto out_psi_free;
+
+	ret = cgroup_bpf_inherit(cgrp);
+	if (ret)
+		goto out_sli_free;
 
 	/*
 	 * New cgroup inherits effective freeze counter, and
@@ -5497,6 +5527,8 @@ static struct cgroup *cgroup_create(struct cgroup *parent)
 
 	return cgrp;
 
+out_sli_free:
+	sli_cgroup_free(cgrp);
 out_psi_free:
 	psi_cgroup_free(cgrp);
 out_idr_free:
