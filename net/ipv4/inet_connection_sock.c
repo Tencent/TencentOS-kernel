@@ -23,6 +23,8 @@
 #include <net/sock_reuseport.h>
 #include <net/addrconf.h>
 
+int sysctl_tcp_pingpong_thresh __read_mostly = 3;
+
 #if IS_ENABLED(CONFIG_IPV6)
 /* match_sk*_wildcard == true:  IPV6_ADDR_ANY equals to any IPv6 addresses
  *				if IPv6 only, and any IPv4 addresses
