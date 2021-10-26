@@ -46,7 +46,20 @@
  * Defrag is invoked by khugepaged hugepage allocations and by page faults
  * for all hugepage allocations.
  */
-unsigned long transparent_hugepage_flags __read_mostly = 0;
+#if defined(CONFIG_X86_64) || defined(CONFIG_X86_32)
+	unsigned long transparent_hugepage_flags __read_mostly =
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE_ALWAYS
+	(1<<TRANSPARENT_HUGEPAGE_FLAG)|
+#endif
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE_MADVISE
+	(1<<TRANSPARENT_HUGEPAGE_REQ_MADV_FLAG)|
+#endif
+	(1<<TRANSPARENT_HUGEPAGE_DEFRAG_REQ_MADV_FLAG)|
+	(1<<TRANSPARENT_HUGEPAGE_DEFRAG_KHUGEPAGED_FLAG)|
+	(1<<TRANSPARENT_HUGEPAGE_USE_ZERO_PAGE_FLAG);
+#else
+	unsigned long transparent_hugepage_flags __read_mostly = 0;
+#endif
 
 static struct shrinker deferred_split_shrinker;
 
