@@ -2557,9 +2557,8 @@ static u64 get_iowait_time(int cpu)
 }
 
 
-static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
+static int cpuset_cgroup_stat_show_comm(struct seq_file *sf, void *v, struct cpuset *cs)
 {
-	struct cpuset *cs = css_cs(seq_css(sf));
 	int i, j;
 	u64 user, nice, system, idle, iowait, irq, softirq, steal;
 	u64 guest, guest_nice, n_ctx_switch, n_process, n_running, n_blocked;
@@ -2567,6 +2566,9 @@ static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
 	u64 sum_softirq = 0;
 	unsigned int per_softirq_sums[NR_SOFTIRQS] = {0};
 	struct timespec boottime;
+	bool is_top_cgrp;
+	int show_realinfo = cpuset_cpuinfo_show_realinfo;
+	is_top_cgrp = !cs->css.parent ? true : false;
 
 	user = nice = system = idle = iowait =
 		irq = softirq = steal = 0;
@@ -2621,7 +2623,10 @@ static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
 		steal = kcpustat_cpu(i).cpustat[CPUTIME_STEAL];
 		guest = kcpustat_cpu(i).cpustat[CPUTIME_GUEST];
 		guest_nice = kcpustat_cpu(i).cpustat[CPUTIME_GUEST_NICE];
-		seq_printf(sf, "cpu%d", i);
+		if (is_top_cgrp || show_realinfo)
+			seq_printf(sf, "cpu%d", i);
+		else
+			seq_printf(sf, "cpu%d", j++);
 		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(user));
 		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(nice));
 		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(system));
@@ -2676,6 +2681,12 @@ static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
 	return 0;
 }
 
+static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
+{
+	struct cpuset *cs = css_cs(seq_css(sf));
+	return cpuset_cgroup_stat_show_comm(sf, v, cs);
+}
+
 #ifdef CONFIG_X86
 /*
  *	Get CPU information for use by the procfs.
@@ -2724,15 +2735,14 @@ static void show_cpuinfo_misc(struct seq_file *m, struct cpuinfo_x86 *c)
 }
 #endif
 
-static int cpuset_cgroup_cpuinfo_show(struct seq_file *sf, void *v)
+static int cpuset_cgroup_cpuinfo_show_comm(struct seq_file *sf, void *v, struct cpuset *cs)
 {
 	int i, j, k = 0;
-	struct cpuset *cs = css_cs(seq_css(sf));
 	struct cpuinfo_x86 *c;
 	unsigned int cpu;
 	bool is_top_cgrp;
 
-	if (!seq_css(sf)->parent)
+	if (!cs->css.parent)
 		is_top_cgrp = true;
 	else
 		is_top_cgrp = false;
@@ -2822,6 +2832,13 @@ static int cpuset_cgroup_cpuinfo_show(struct seq_file *sf, void *v)
 	}
 	return 0;
 }
+
+static int cpuset_cgroup_cpuinfo_show(struct seq_file *sf, void *v)
+{
+	struct cpuset *cs = css_cs(seq_css(sf));
+	return cpuset_cgroup_cpuinfo_show_comm(sf, v, cs);
+}
+
 #endif
 
 static int cpuset_cgroup_loadavg_show(struct seq_file *sf, void *v);
@@ -4069,9 +4086,8 @@ static unsigned long cpuset_nr_running(struct cpuset *cs)
 	return nr_running;
 }
 
-static int cpuset_cgroup_loadavg_show(struct seq_file *sf, void *v)
+static int cpuset_cgroup_loadavg_show_comm(struct seq_file *sf, void *v, struct cpuset *cs)
 {
-	struct cpuset *cs = css_cs(seq_css(sf));
 	unsigned long loads[3] = {0};
 	unsigned long loads_r[3] = {0};
 	unsigned long loads_d[3] = {0};
@@ -4112,4 +4128,10 @@ static int cpuset_cgroup_loadavg_show(struct seq_file *sf, void *v)
 			LOAD_INT(loads_d[2]), LOAD_FRAC(loads_d[2]));
 
 	return 0;
+}
+
+static int cpuset_cgroup_loadavg_show(struct seq_file *sf, void *v)
+{
+	struct cpuset *cs = css_cs(seq_css(sf));
+	return cpuset_cgroup_loadavg_show_comm(sf, v, cs);
 }
