@@ -801,9 +801,8 @@ static int blkcg_dkstats_enable(struct cgroup_subsys_state *css,
 	return 0;
 }
 
-static int blkcg_dkstats_show(struct seq_file *sf, void *v)
+static int blkcg_dkstats_show_comm(struct seq_file *sf, void *v, struct blkcg *blkcg)
 {
-	struct blkcg *blkcg = css_to_blkcg(seq_css(sf));
 	struct class_dev_iter iter;
 	struct device *dev;
 
@@ -822,6 +821,12 @@ static int blkcg_dkstats_show(struct seq_file *sf, void *v)
  out:
 	mutex_unlock(&blkcg_pol_mutex);
 	return 0;
+}
+
+static int blkcg_dkstats_show(struct seq_file *sf, void *v)
+{
+	struct blkcg *blkcg = css_to_blkcg(seq_css(sf));
+	return blkcg_dkstats_show_comm(sf, v, blkcg);
 }
 
 const char *blkg_dev_name(struct blkcg_gq *blkg)

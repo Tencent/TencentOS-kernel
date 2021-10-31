@@ -5113,9 +5113,8 @@ static unsigned long memcg_nr_lru_pages(struct mem_cgroup *memcg,
 	return nr;
 }
 
-static int mem_cgroup_meminfo_read(struct seq_file *m, void *v)
+static int mem_cgroup_meminfo_read_comm(struct seq_file *m, void *v, struct mem_cgroup *memcg)
 {
-	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
 	u64 mem_limit, mem_usage;
 	u64 mem_swap, mem_swap_usage;
 	unsigned long mem_cache, mem_swap_cache;
@@ -5299,15 +5298,20 @@ static int mem_cgroup_meminfo_read(struct seq_file *m, void *v)
 	return 0;
 }
 
+static int mem_cgroup_meminfo_read(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
+	return mem_cgroup_meminfo_read_comm(m, v, memcg);
+}
+
 #define NR_VM_WRITEBACK_STAT_ITEMS	2
 extern const char * const vmstat_text[];
 extern unsigned int vmstat_text_size;
 
-static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
+static int mem_cgroup_vmstat_read_comm(struct seq_file *m, void *vv, struct mem_cgroup *memcg)
 {
 	unsigned long *v1, *v;
 	int i, stat_items_size;
-	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
 	u64 mem_limit, mem_usage;
 
 	mem_limit = memcg->memory.max;
@@ -5384,6 +5388,12 @@ static int mem_cgroup_sli_show(struct seq_file *m, void *v)
 	cgrp = memcg->css.cgroup;
 
 	return sli_memlat_stat_show(m, cgrp);
+}
+
+static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
+	return mem_cgroup_vmstat_read_comm(m, vv, memcg);
 }
 
 static struct cftype mem_cgroup_legacy_files[] = {
