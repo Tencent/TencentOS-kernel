@@ -2557,6 +2557,7 @@ static u64 get_iowait_time(int cpu)
 }
 
 
+extern int cpu_get_max_cpus(struct task_struct *p);
 static int cpuset_cgroup_stat_show_comm(struct seq_file *sf, void *v, struct cpuset *cs, int max_cpu)
 {
 	int i, j, k = 0;
@@ -2691,6 +2692,14 @@ static int cpuset_cgroup_stat_show_comm(struct seq_file *sf, void *v, struct cpu
 	seq_putc(sf, '\n');
 
 	return 0;
+}
+
+int cpuset_cgroupfs_stat_show(struct seq_file *m, void *v)
+{
+	struct cgroup_subsys_state *css = task_css(current, cpuset_cgrp_id);
+	struct cpuset *cs = css_cs(css);
+	int max_cpu = cpu_get_max_cpus(current);
+	return cpuset_cgroup_stat_show_comm(m, v, cs, max_cpu);
 }
 
 static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
@@ -2845,6 +2854,34 @@ static int cpuset_cgroup_cpuinfo_show_comm(struct seq_file *sf, void *v, struct 
 		seq_puts(sf, "\n\n");
 	}
 	return 0;
+}
+
+/* return 1 if allowed, otherwise 0 is returned */
+int cpuset_cgroups_cpu_allowed(struct task_struct *task, int cpu, int once)
+{
+	struct cgroup_subsys_state *css = task_css(task, cpuset_cgrp_id);
+	struct cpuset *cs = css_cs(css);
+	int max_cpu, i, k = 0;
+	if (!once)
+		return cpumask_test_cpu(cpu, cs->cpus_allowed);
+	max_cpu = cpu_get_max_cpus(task);
+	for_each_cpu(i, cs->cpus_allowed) {
+		if (++k > max_cpu)
+			return 0;
+		if (i == cpu)
+			return 1;
+		if (i > cpu)
+			return 0;
+	}
+	return 0;
+}
+
+int cpuset_cgroupfs_cpuinfo_show(struct seq_file *m, void *v)
+{
+	struct cgroup_subsys_state *css = task_css(current, cpuset_cgrp_id);
+	struct cpuset *cs = css_cs(css);
+	int max_cpu = cpu_get_max_cpus(current);
+	return cpuset_cgroup_cpuinfo_show_comm(m, v, cs, max_cpu);
 }
 
 static int cpuset_cgroup_cpuinfo_show(struct seq_file *sf, void *v)
@@ -4142,6 +4179,13 @@ static int cpuset_cgroup_loadavg_show_comm(struct seq_file *sf, void *v, struct 
 			LOAD_INT(loads_d[2]), LOAD_FRAC(loads_d[2]));
 
 	return 0;
+}
+
+int cpuset_cgroupfs_loadavg_show(struct seq_file *m, void *v)
+{
+	struct cgroup_subsys_state *css = task_css(current, cpuset_cgrp_id);
+	struct cpuset *cs = css_cs(css);
+	return cpuset_cgroup_loadavg_show_comm(m, v, cs);
 }
 
 static int cpuset_cgroup_loadavg_show(struct seq_file *sf, void *v)
