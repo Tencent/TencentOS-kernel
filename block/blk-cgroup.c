@@ -823,6 +823,12 @@ static int blkcg_dkstats_show_comm(struct seq_file *sf, void *v, struct blkcg *b
 	return 0;
 }
 
+int blkcg_cgroupfs_dkstats_show(struct seq_file *m, void *v)
+{
+	struct blkcg *blkcg = css_to_blkcg(task_css(current, io_cgrp_id));
+	return blkcg_dkstats_show_comm(m, v, blkcg);
+}
+
 static int blkcg_dkstats_show(struct seq_file *sf, void *v)
 {
 	struct blkcg *blkcg = css_to_blkcg(seq_css(sf));
