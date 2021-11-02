@@ -3457,6 +3457,21 @@ static int cgroup_type_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
+int cgroup_id_show(struct seq_file *seq, void *v)
+{
+	struct cgroup *cgrp = seq_css(seq)->cgroup;
+	int ssid;
+	struct cgroup_subsys *ss;
+
+	for_each_subsys(ss, ssid) {
+		struct cgroup_subsys_state *css = cgroup_css(cgrp, ss);
+
+		if (css)
+			seq_printf(seq, "%s:%u\n", ss->name, css->id);
+	}
+	return 0;
+}
+
 static ssize_t cgroup_type_write(struct kernfs_open_file *of, char *buf,
 				 size_t nbytes, loff_t off)
 {
@@ -5083,6 +5098,10 @@ static struct cftype cgroup_base_files[] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = cgroup_type_show,
 		.write = cgroup_type_write,
+	},
+	{
+		.name = "cgroup.id",
+		.seq_show = cgroup_id_show,
 	},
 	{
 		.name = "cgroup.procs",
