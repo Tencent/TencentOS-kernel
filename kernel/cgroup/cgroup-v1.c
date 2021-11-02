@@ -625,6 +625,10 @@ struct cftype cgroup1_base_files[] = {
 		.write_u64 = cgroup_clone_children_write,
 	},
 	{
+		.name = "cgroup.id",
+		.seq_show = cgroup_id_show,
+	},
+	{
 		.name = "cgroup.sane_behavior",
 		.flags = CFTYPE_ONLY_ON_ROOT,
 		.seq_show = cgroup_sane_behavior_show,
