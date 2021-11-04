@@ -720,6 +720,10 @@ void __init alternative_instructions(void)
 	 * patching.
 	 */
 
+#if defined(CONFIG_NUMA_AWARE_SPINLOCKS)
+        cna_configure_spin_lock_slowpath();
+#endif
+
 	apply_alternatives(__alt_instructions, __alt_instructions_end);
 
 #ifdef CONFIG_SMP
