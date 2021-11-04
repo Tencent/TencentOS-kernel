@@ -4,6 +4,8 @@
 #endif
 
 #include <linux/topology.h>
+#include <linux/sched/clock.h>
+#include <linux/moduleparam.h>
 
 /*
  * Implement a NUMA-aware version of MCS (aka CNA, or compact NUMA-aware lock).
@@ -43,12 +45,27 @@
  *          Dave Dice <dave.dice@oracle.com>
  */
 
+#define FLUSH_SECONDARY_QUEUE	1
+
 struct cna_node {
 	struct mcs_spinlock	mcs;
 	u16			numa_node;
 	u16			real_numa_node;
 	u32			encoded_tail;	/* self */
+	u64			start_time;
 };
+
+
+static ulong numa_spinlock_threshold_ns = 1000000;   /* 1ms, by default */
+module_param(numa_spinlock_threshold_ns, ulong, 0644);
+
+static inline bool intra_node_threshold_reached(struct cna_node *cn)
+{
+	u64 current_time = local_clock();
+	u64 threshold = cn->start_time + numa_spinlock_threshold_ns;
+
+	return current_time > threshold;
+}
 
 static void __init cna_init_nodes_per_cpu(unsigned int cpu)
 {
@@ -92,6 +109,7 @@ static __always_inline void cna_init_node(struct mcs_spinlock *node)
 	struct cna_node *cn = (struct cna_node *)node;
 
 	cn->numa_node = cn->real_numa_node;
+	cn->start_time = 0;
 }
 
 /*
@@ -191,8 +209,14 @@ static void cna_splice_next(struct mcs_spinlock *node,
 
 	/* stick `next` on the secondary queue tail */
 	if (node->locked <= 1) { /* if secondary queue is empty */
+		struct cna_node *cn = (struct cna_node *)node;
+
 		/* create secondary queue */
 		next->next = next;
+
+		cn->start_time = local_clock();
+		/* secondary queue is not empty iff start_time != 0 */
+		WARN_ON(!cn->start_time);
 	} else {
 		/* add to the tail of the secondary queue */
 		struct mcs_spinlock *tail_2nd = decode_tail(node->locked);
@@ -240,12 +264,18 @@ static int cna_order_queue(struct mcs_spinlock *node)
 static __always_inline u32 cna_wait_head_or_lock(struct qspinlock *lock,
 						 struct mcs_spinlock *node)
 {
-	/*
-	 * Try and put the time otherwise spent spin waiting on
-	 * _Q_LOCKED_PENDING_MASK to use by sorting our lists.
-	 */
-	while (LOCK_IS_BUSY(lock) && !cna_order_queue(node))
-		cpu_relax();
+	struct cna_node *cn = (struct cna_node *)node;
+	
+	if (!cn->start_time || !intra_node_threshold_reached(cn)) {
+		/*
+		 * Try and put the time otherwise spent spin waiting on
+		 * _Q_LOCKED_PENDING_MASK to use by sorting our lists.
+		 */
+		while (LOCK_IS_BUSY(lock) && !cna_order_queue(node))
+			cpu_relax();
+	} else {
+		cn->start_time = FLUSH_SECONDARY_QUEUE;
+	}
 
 	return 0; /* we lied; we didn't wait, go do so now */
 }
@@ -253,25 +283,42 @@ static __always_inline u32 cna_wait_head_or_lock(struct qspinlock *lock,
 static inline void cna_lock_handoff(struct mcs_spinlock *node,
 				 struct mcs_spinlock *next)
 {
+	struct cna_node *cn = (struct cna_node *)node;
 	u32 val = 1;
 
-	if (node->locked > 1) {
-		struct cna_node *cn = (struct cna_node *)node;
 
-		val = node->locked;	/* preseve secondary queue */
+	if (cn->start_time != FLUSH_SECONDARY_QUEUE) {
+		if (node->locked > 1) {
+			val = node->locked;	/* preseve secondary queue */
 
+			/*
+			 * We have a local waiter, either real or fake one;
+			 * reload @next in case it was changed by cna_order_queue().
+			 */
+			next = node->next;
+
+			/*
+			 * Pass over NUMA node id of primary queue, to maintain the
+			 * preference even if the next waiter is on a different node.
+			 */
+			((struct cna_node *)next)->numa_node = cn->numa_node;
+
+			((struct cna_node *)next)->start_time = cn->start_time;
+		}
+	} else {
 		/*
-		 * We have a local waiter, either real or fake one;
-		 * reload @next in case it was changed by cna_order_queue().
+		 * We decided to flush the secondary queue;
+		 * this can only happen if that queue is not empty.
 		 */
-		next = node->next;
 
+		WARN_ON(node->locked <= 1);
 		/*
-		 * Pass over NUMA node id of primary queue, to maintain the
-		 * preference even if the next waiter is on a different node.
+		 * Splice the secondary queue onto the primary queue and pass the lock
+		 * to the longest waiting remote waiter.
 		 */
-		((struct cna_node *)next)->numa_node = cn->numa_node;
-	}
+
+		next = cna_splice_head(NULL, 0, node, next);
+ 	}
 
 	arch_mcs_lock_handoff(&next->locked, val);
 }
@@ -323,3 +370,4 @@ void __init cna_configure_spin_lock_slowpath(void)
 
 	pr_info("Enabling CNA spinlock\n");
 }
+
