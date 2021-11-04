@@ -7,6 +7,7 @@
 #include <linux/sched/clock.h>
 #include <linux/sched/rt.h>
 #include <linux/moduleparam.h>
+#include <linux/random.h>
 
 /*
  * Implement a NUMA-aware version of MCS (aka CNA, or compact NUMA-aware lock).
@@ -68,6 +69,34 @@ static inline bool intra_node_threshold_reached(struct cna_node *cn)
 	u64 threshold = cn->start_time + numa_spinlock_threshold_ns;
 
 	return current_time > threshold;
+}
+
+/*
+ * Controls the probability for enabling the ordering of the main queue
+ * when the secondary queue is empty. The chosen value reduces the amount
+ * of unnecessary shuffling of threads between the two waiting queues
+ * when the contention is low, while responding fast enough and enabling
+ * the shuffling when the contention is high.
+ */
+#define SHUFFLE_REDUCTION_PROB_ARG  (7)
+
+/* Per-CPU pseudo-random number seed */
+static DEFINE_PER_CPU(u32, seed);
+
+/*
+ * Return false with probability 1 / 2^@num_bits.
+ * Intuitively, the larger @num_bits the less likely false is to be returned.
+ * @num_bits must be a number between 0 and 31.
+ */
+static bool probably(unsigned int num_bits)
+{
+	u32 s;
+
+	s = this_cpu_read(seed);
+	s = next_pseudo_random32(s);
+	this_cpu_write(seed, s);
+
+	return s & ((1 << num_bits) - 1);
 }
 
 static void __init cna_init_nodes_per_cpu(unsigned int cpu)
@@ -269,7 +298,17 @@ static __always_inline u32 cna_wait_head_or_lock(struct qspinlock *lock,
 						 struct mcs_spinlock *node)
 {
 	struct cna_node *cn = (struct cna_node *)node;
-	
+
+	if (node->locked <= 1 && probably(SHUFFLE_REDUCTION_PROB_ARG)) {
+		/*
+		 * When the secondary queue is empty, skip the calls to
+		 * cna_order_queue() below with high probability. This optimization
+		 * reduces the overhead of unnecessary shuffling of threads
+		 * between waiting queues when the lock is only lightly contended.
+		 */
+		return 0;
+	}
+
 	if (!cn->start_time || !intra_node_threshold_reached(cn)) {
 		
 		/*
