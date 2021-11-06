@@ -882,8 +882,6 @@ int ext4_dio_get_block(struct inode *inode, sector_t iblock,
 	/* We don't expect handle for direct IO */
 	WARN_ON_ONCE(ext4_journal_current_handle());
 
-	if (!create)
-		return _ext4_get_block(inode, iblock, bh, 0);
 	return ext4_get_block_trans(inode, iblock, bh, EXT4_GET_BLOCKS_CREATE);
 }
 
@@ -3889,43 +3887,6 @@ out:
 	return ret;
 }
 
-static ssize_t ext4_direct_IO_read(struct kiocb *iocb, struct iov_iter *iter)
-{
-	int unlocked = 0;
-	struct inode *inode = iocb->ki_filp->f_mapping->host;
-	ssize_t ret;
-
-	loff_t offset = iocb->ki_pos;
-	loff_t size = i_size_read(inode);
-
-	if (offset >= size)
-		return 0;
-
-	if (ext4_should_dioread_nolock(inode)) {
-		/*
-		 * Nolock dioread optimization may be dynamically disabled
-		 * via ext4_inode_block_unlocked_dio(). Check inode's state
-		 * while holding extra i_dio_count ref.
-		 */
-		inode_dio_begin(inode);
-		smp_mb();
-		if (unlikely(ext4_test_inode_state(inode,
-					EXT4_STATE_DIOREAD_LOCK)))
-			inode_dio_end(inode);
-		else
-			unlocked = 1;
-	}
-
-	ret = __blockdev_direct_IO(iocb, inode, inode->i_sb->s_bdev,
-				   iter, ext4_dio_get_block,
-				   NULL, NULL,
-				   unlocked ? 0 : DIO_LOCKING);
-	if (unlocked)
-		inode_dio_end(inode);
-
-	return ret;
-}
-
 static ssize_t ext4_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 {
 	struct file *file = iocb->ki_filp;
@@ -3952,10 +3913,7 @@ static ssize_t ext4_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 		return 0;
 
 	trace_ext4_direct_IO_enter(inode, offset, count, iov_iter_rw(iter));
-	if (iov_iter_rw(iter) == READ)
-		ret = ext4_direct_IO_read(iocb, iter);
-	else
-		ret = ext4_direct_IO_write(iocb, iter);
+	ret = ext4_direct_IO_write(iocb, iter);
 	trace_ext4_direct_IO_exit(inode, offset, count, iov_iter_rw(iter), ret);
 	return ret;
 }
