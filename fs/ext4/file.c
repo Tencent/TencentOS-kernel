@@ -443,6 +443,7 @@ static ssize_t ext4_dio_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	handle_t *handle;
 	struct inode *inode = file_inode(iocb->ki_filp);
 	loff_t offset = iocb->ki_pos;
+	const struct iomap_ops *iomap_ops = &ext4_iomap_ops;
 	size_t count = iov_iter_count(from);
 	bool extend = false, unaligned_io = false;
 	bool ilock_shared = true;
@@ -522,8 +523,9 @@ static ssize_t ext4_dio_write_iter(struct kiocb *iocb, struct iov_iter *from)
 
 		ext4_journal_stop(handle);
 	}
-
-	ret = iomap_dio_rw(iocb, from, &ext4_iomap_ops, &ext4_dio_write_ops,
+	if (ilock_shared)
+		iomap_ops = &ext4_iomap_overwrite_ops;
+	ret = iomap_dio_rw(iocb, from, iomap_ops, &ext4_dio_write_ops,
 			   is_sync_kiocb(iocb) || unaligned_io || extend);
 
 	if (extend)
