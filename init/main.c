@@ -46,6 +46,7 @@
 #include <linux/cpu.h>
 #include <linux/cpuset.h>
 #include <linux/cgroup.h>
+#include <linux/mbuf.h>
 #include <linux/efi.h>
 #include <linux/tick.h>
 #include <linux/sched/isolation.h>
@@ -623,11 +624,13 @@ asmlinkage __visible void __init start_kernel(void)
 	 * kmem_cache_init()
 	 */
 	setup_log_buf(0);
+	setup_mbuf();
 	vfs_caches_init_early();
 	sort_main_extable();
 	trap_init();
 	mm_init();
 
+	mbuf_bmap_init();
 	ftrace_init();
 
 	/* trace_printk can be enabled here */

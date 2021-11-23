@@ -26,6 +26,7 @@
 #include <linux/livepatch.h>
 #include <linux/syscalls.h>
 #include <linux/uaccess.h>
+#include <linux/sli.h>
 
 #include <asm/desc.h>
 #include <asm/traps.h>

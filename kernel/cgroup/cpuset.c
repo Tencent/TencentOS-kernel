@@ -171,6 +171,14 @@ struct cpuset {
 	/* for cpu load calc */
 	unsigned long calc_load_tasks;
 	unsigned long avenrun[3];
+
+	/* for cpu R load calc */
+	unsigned long calc_load_tasks_r;
+	unsigned long avenrun_r[3];
+
+	/* for cpu D load calc */
+	unsigned long calc_load_tasks_d;
+	unsigned long avenrun_d[3];
 };
 
 /*
@@ -2549,16 +2557,19 @@ static u64 get_iowait_time(int cpu)
 }
 
 
-static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
+extern int cpu_get_max_cpus(struct task_struct *p);
+static int cpuset_cgroup_stat_show_comm(struct seq_file *sf, void *v, struct cpuset *cs, int max_cpu)
 {
-	struct cpuset *cs = css_cs(seq_css(sf));
-	int i, j;
+	int i, j, k = 0;
 	u64 user, nice, system, idle, iowait, irq, softirq, steal;
 	u64 guest, guest_nice, n_ctx_switch, n_process, n_running, n_blocked;
 	u64 sum = 0;
 	u64 sum_softirq = 0;
 	unsigned int per_softirq_sums[NR_SOFTIRQS] = {0};
 	struct timespec boottime;
+	bool is_top_cgrp;
+	int show_realinfo = cpuset_cpuinfo_show_realinfo;
+	is_top_cgrp = !cs->css.parent ? true : false;
 
 	user = nice = system = idle = iowait =
 		irq = softirq = steal = 0;
@@ -2566,6 +2577,8 @@ static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
 	getboottime(&boottime);
 
 	for_each_cpu(i, cs->cpus_allowed) {
+		if (++k > max_cpu)
+			break;
 		user += kcpustat_cpu(i).cpustat[CPUTIME_USER];
 		nice += kcpustat_cpu(i).cpustat[CPUTIME_NICE];
 		system += kcpustat_cpu(i).cpustat[CPUTIME_SYSTEM];
@@ -2601,8 +2614,11 @@ static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
 	seq_putc(sf, '\n');
 
 	j = 0;
+	k = 0;
 	for_each_cpu(i, cs->cpus_allowed) {
 		/* Copy values here to work around gcc-2.95.3, gcc-2.96 */
+		if (++k > max_cpu)
+			break;
 		user = kcpustat_cpu(i).cpustat[CPUTIME_USER];
 		nice = kcpustat_cpu(i).cpustat[CPUTIME_NICE];
 		system = kcpustat_cpu(i).cpustat[CPUTIME_SYSTEM];
@@ -2613,7 +2629,10 @@ static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
 		steal = kcpustat_cpu(i).cpustat[CPUTIME_STEAL];
 		guest = kcpustat_cpu(i).cpustat[CPUTIME_GUEST];
 		guest_nice = kcpustat_cpu(i).cpustat[CPUTIME_GUEST_NICE];
-		seq_printf(sf, "cpu%d", i);
+		if (is_top_cgrp || show_realinfo)
+			seq_printf(sf, "cpu%d", i);
+		else
+			seq_printf(sf, "cpu%d", j++);
 		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(user));
 		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(nice));
 		seq_put_decimal_ull(sf, " ", nsec_to_clock_t(system));
@@ -2629,10 +2648,14 @@ static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
 	seq_put_decimal_ull(sf, "intr ", (unsigned long long)sum);
 
 	/* sum again ? it could be updated? */
+	k = 0;
 	for_each_irq_nr(j) {
 		sum = 0;
-		for_each_cpu(i, cs->cpus_allowed)
+		for_each_cpu(i, cs->cpus_allowed) {
+			if (++k > max_cpu)
+				break;
 			sum += kstat_irqs_cpu(j, i);
+		}
 
 		seq_put_decimal_ull(sf, " ", sum);
 	}
@@ -2641,7 +2664,10 @@ static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
 	n_process = 0;
 	n_running = 0;
 	n_blocked = 0;
+	k = 0;
 	for_each_cpu(i, cs->cpus_allowed) {
+		if (++k > max_cpu)
+			break;
 		n_ctx_switch += nr_context_switches_cpu(i);
 		n_process += per_cpu(total_forks, i);
 		n_running += nr_running_cpu(i);
@@ -2666,6 +2692,20 @@ static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
 	seq_putc(sf, '\n');
 
 	return 0;
+}
+
+int cpuset_cgroupfs_stat_show(struct seq_file *m, void *v)
+{
+	struct cgroup_subsys_state *css = task_css(current, cpuset_cgrp_id);
+	struct cpuset *cs = css_cs(css);
+	int max_cpu = cpu_get_max_cpus(current);
+	return cpuset_cgroup_stat_show_comm(m, v, cs, max_cpu);
+}
+
+static int cpuset_cgroup_stat_show(struct seq_file *sf, void *v)
+{
+	struct cpuset *cs = css_cs(seq_css(sf));
+	return cpuset_cgroup_stat_show_comm(sf, v, cs, INT_MAX);
 }
 
 #ifdef CONFIG_X86
@@ -2716,15 +2756,14 @@ static void show_cpuinfo_misc(struct seq_file *m, struct cpuinfo_x86 *c)
 }
 #endif
 
-static int cpuset_cgroup_cpuinfo_show(struct seq_file *sf, void *v)
+static int cpuset_cgroup_cpuinfo_show_comm(struct seq_file *sf, void *v, struct cpuset *cs, int max_cpu)
 {
 	int i, j, k = 0;
-	struct cpuset *cs = css_cs(seq_css(sf));
 	struct cpuinfo_x86 *c;
 	unsigned int cpu;
 	bool is_top_cgrp;
 
-	if (!seq_css(sf)->parent)
+	if (!cs->css.parent)
 		is_top_cgrp = true;
 	else
 		is_top_cgrp = false;
@@ -2737,6 +2776,8 @@ static int cpuset_cgroup_cpuinfo_show(struct seq_file *sf, void *v)
 		else
 			cpu = k;
 		k++;
+		if (k > max_cpu)
+			break;
 		seq_printf(sf, "processor\t: %u\n"
 				"vendor_id\t: %s\n"
 				"cpu family\t: %d\n"
@@ -2814,6 +2855,41 @@ static int cpuset_cgroup_cpuinfo_show(struct seq_file *sf, void *v)
 	}
 	return 0;
 }
+
+/* return 1 if allowed, otherwise 0 is returned */
+int cpuset_cgroups_cpu_allowed(struct task_struct *task, int cpu, int once)
+{
+	struct cgroup_subsys_state *css = task_css(task, cpuset_cgrp_id);
+	struct cpuset *cs = css_cs(css);
+	int max_cpu, i, k = 0;
+	if (!once)
+		return cpumask_test_cpu(cpu, cs->cpus_allowed);
+	max_cpu = cpu_get_max_cpus(task);
+	for_each_cpu(i, cs->cpus_allowed) {
+		if (++k > max_cpu)
+			return 0;
+		if (i == cpu)
+			return 1;
+		if (i > cpu)
+			return 0;
+	}
+	return 0;
+}
+
+int cpuset_cgroupfs_cpuinfo_show(struct seq_file *m, void *v)
+{
+	struct cgroup_subsys_state *css = task_css(current, cpuset_cgrp_id);
+	struct cpuset *cs = css_cs(css);
+	int max_cpu = cpu_get_max_cpus(current);
+	return cpuset_cgroup_cpuinfo_show_comm(m, v, cs, max_cpu);
+}
+
+static int cpuset_cgroup_cpuinfo_show(struct seq_file *sf, void *v)
+{
+	struct cpuset *cs = css_cs(seq_css(sf));
+	return cpuset_cgroup_cpuinfo_show_comm(sf, v, cs, INT_MAX);
+}
+
 #endif
 
 static int cpuset_cgroup_loadavg_show(struct seq_file *sf, void *v);
@@ -3039,6 +3115,10 @@ static struct cftype dfl_files[] = {
 		.seq_show = cpuset_common_seq_show,
 		.private = FILE_SUBPARTS_CPULIST,
 		.flags = CFTYPE_DEBUG,
+	},
+	{
+		.name = "loadavg",
+		.seq_show = cpuset_cgroup_loadavg_show,
 	},
 
 	{ }	/* terminate */
@@ -3980,11 +4060,23 @@ void cpuset_task_status_allowed(struct seq_file *m, struct task_struct *task)
 static void __cpuset_calc_load(struct cpuset *cs)
 {
 	long active = cs->calc_load_tasks;
+	long active_r = cs->calc_load_tasks_r;
+	long active_d = cs->calc_load_tasks_d;
+
 	active = active > 0 ? active * FIXED_1 : 0;
 	cs->avenrun[0] = calc_load(cs->avenrun[0], EXP_1, active);
 	cs->avenrun[1] = calc_load(cs->avenrun[1], EXP_5, active);
 	cs->avenrun[2] = calc_load(cs->avenrun[2], EXP_15, active);
 
+	active_r = active_r > 0 ? active_r * FIXED_1 : 0;
+	cs->avenrun_r[0] = calc_load(cs->avenrun_r[0], EXP_1, active_r);
+	cs->avenrun_r[1] = calc_load(cs->avenrun_r[1], EXP_5, active_r);
+	cs->avenrun_r[2] = calc_load(cs->avenrun_r[2], EXP_15, active_r);
+
+	active_d = active_d > 0 ? active_d * FIXED_1 : 0;
+	cs->avenrun_d[0] = calc_load(cs->avenrun_d[0], EXP_1, active_d);
+	cs->avenrun_d[1] = calc_load(cs->avenrun_d[1], EXP_5, active_d);
+	cs->avenrun_d[2] = calc_load(cs->avenrun_d[2], EXP_15, active_d);
 }
 /*calc cpu load for this cpuset*/
 void cgroup_cpuset_calc_load(void)
@@ -4001,11 +4093,20 @@ void cgroup_cpuset_calc_load(void)
 			continue;
 
 		cs->calc_load_tasks = 0;
+		cs->calc_load_tasks_r = 0;
+		cs->calc_load_tasks_d = 0;
 
 		css_task_iter_start(&cs->css, 0, &it);
 		while ((task = css_task_iter_next(&it))) {
-			if (task->state == TASK_RUNNING || task->state == TASK_UNINTERRUPTIBLE)
+			if (task->state == TASK_RUNNING || task->state & TASK_UNINTERRUPTIBLE) {
 				cs->calc_load_tasks ++;
+
+				/* calc R/D state process separately */
+				if (task->state == TASK_RUNNING)
+					cs->calc_load_tasks_r ++;
+				if (task->state & TASK_UNINTERRUPTIBLE)
+					cs->calc_load_tasks_d ++;
+			}
 		}
 		css_task_iter_end(&it);
 
@@ -4036,10 +4137,11 @@ static unsigned long cpuset_nr_running(struct cpuset *cs)
 	return nr_running;
 }
 
-static int cpuset_cgroup_loadavg_show(struct seq_file *sf, void *v)
+static int cpuset_cgroup_loadavg_show_comm(struct seq_file *sf, void *v, struct cpuset *cs)
 {
-	struct cpuset *cs = css_cs(seq_css(sf));
 	unsigned long loads[3] = {0};
+	unsigned long loads_r[3] = {0};
+	unsigned long loads_d[3] = {0};
 	unsigned long offset = FIXED_1/200;
 	int shift = 0;
 	unsigned long n_running = cpuset_nr_running(cs);
@@ -4047,6 +4149,15 @@ static int cpuset_cgroup_loadavg_show(struct seq_file *sf, void *v)
 	loads[0] = (cs->avenrun[0] + offset) << shift;
 	loads[1] = (cs->avenrun[1] + offset) << shift;
 	loads[2] = (cs->avenrun[2] + offset) << shift;
+
+	loads_r[0] = (cs->avenrun_r[0] + offset) << shift;
+	loads_r[1] = (cs->avenrun_r[1] + offset) << shift;
+	loads_r[2] = (cs->avenrun_r[2] + offset) << shift;
+
+	loads_d[0] = (cs->avenrun_d[0] + offset) << shift;
+	loads_d[1] = (cs->avenrun_d[1] + offset) << shift;
+	loads_d[2] = (cs->avenrun_d[2] + offset) << shift;
+
 #define LOAD_INT(x) ((x) >> FSHIFT)
 #define LOAD_FRAC(x) LOAD_INT(((x) & (FIXED_1-1)) * 100)
 
@@ -4056,5 +4167,29 @@ static int cpuset_cgroup_loadavg_show(struct seq_file *sf, void *v)
 			LOAD_INT(loads[2]), LOAD_FRAC(loads[2]),
 			n_running, nr_threads,
 			idr_get_cursor(&task_active_pid_ns(current)->idr) - 1);
+
+	seq_printf(sf, "%lu.%02lu %lu.%02lu %lu.%02lu\n",
+			LOAD_INT(loads_r[0]), LOAD_FRAC(loads_r[0]),
+			LOAD_INT(loads_r[1]), LOAD_FRAC(loads_r[1]),
+			LOAD_INT(loads_r[2]), LOAD_FRAC(loads_r[2]));
+
+	seq_printf(sf, "%lu.%02lu %lu.%02lu %lu.%02lu\n",
+			LOAD_INT(loads_d[0]), LOAD_FRAC(loads_d[0]),
+			LOAD_INT(loads_d[1]), LOAD_FRAC(loads_d[1]),
+			LOAD_INT(loads_d[2]), LOAD_FRAC(loads_d[2]));
+
 	return 0;
+}
+
+int cpuset_cgroupfs_loadavg_show(struct seq_file *m, void *v)
+{
+	struct cgroup_subsys_state *css = task_css(current, cpuset_cgrp_id);
+	struct cpuset *cs = css_cs(css);
+	return cpuset_cgroup_loadavg_show_comm(m, v, cs);
+}
+
+static int cpuset_cgroup_loadavg_show(struct seq_file *sf, void *v)
+{
+	struct cpuset *cs = css_cs(seq_css(sf));
+	return cpuset_cgroup_loadavg_show_comm(sf, v, cs);
 }

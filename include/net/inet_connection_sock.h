@@ -318,11 +318,11 @@ void inet_csk_update_fastreuse(struct inet_bind_bucket *tb,
 
 struct dst_entry *inet_csk_update_pmtu(struct sock *sk, u32 mtu);
 
-#define TCP_PINGPONG_THRESH	3
+extern int sysctl_tcp_pingpong_thresh;
 
 static inline void inet_csk_enter_pingpong_mode(struct sock *sk)
 {
-	inet_csk(sk)->icsk_ack.pingpong = TCP_PINGPONG_THRESH;
+	inet_csk(sk)->icsk_ack.pingpong = sysctl_tcp_pingpong_thresh;
 }
 
 static inline void inet_csk_exit_pingpong_mode(struct sock *sk)
@@ -332,7 +332,7 @@ static inline void inet_csk_exit_pingpong_mode(struct sock *sk)
 
 static inline bool inet_csk_in_pingpong_mode(struct sock *sk)
 {
-	return inet_csk(sk)->icsk_ack.pingpong >= TCP_PINGPONG_THRESH;
+	return inet_csk(sk)->icsk_ack.pingpong >= sysctl_tcp_pingpong_thresh;
 }
 
 static inline void inet_csk_inc_pingpong_cnt(struct sock *sk)
