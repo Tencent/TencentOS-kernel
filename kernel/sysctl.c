@@ -121,6 +121,7 @@ extern unsigned int sysctl_nr_open_min, sysctl_nr_open_max;
 extern int sysctl_nr_trim_pages;
 #endif
 
+extern int sysctl_qos_mbuf_enable;
 extern int sysctl_min_epoll_wait_time;
 extern unsigned int sysctl_softirq_accel_target;
 extern int sysctl_softirq_accel_mask;
@@ -306,6 +307,7 @@ int accept_info_flag;
 int sendto_info_flag;
 int recvfrom_info_flag;
 int execve_info_flag;
+extern int container_cpuquota_aware;
 
 /* The default sysctl tables: */
 
@@ -362,6 +364,13 @@ static int max_extfrag_threshold = 1000;
 #endif
 
 static struct ctl_table kern_table[] = {
+	{
+		.procname       = "container_cpuquota_aware",
+		.data           = &container_cpuquota_aware,
+		.maxlen         = sizeof(unsigned int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec,
+	},
 	{
 		.procname	= "connect_info_switch",
 		.data		= &connect_info_flag,
@@ -1447,6 +1456,15 @@ static struct ctl_table kern_table[] = {
 		.proc_handler   = proc_dointvec_minmax,
 		.extra1         = SYSCTL_ZERO,
 		.extra2         = SYSCTL_ONE,
+	},
+	{
+		.procname	= "qos_mbuf_enable",
+		.data		= &sysctl_qos_mbuf_enable,
+		.maxlen		= sizeof(int),
+		.mode		= 0600,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
 	},
 	{ }
 };

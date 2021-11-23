@@ -6,6 +6,7 @@
  * (balbir@in.ibm.com).
  */
 #include "sched.h"
+#include <linux/sli.h>
 
 /* Time spent by the tasks of the CPU accounting group executing in ... */
 enum cpuacct_stat_index {
@@ -300,9 +301,8 @@ static int cpuacct_stats_show(struct seq_file *sf, void *v)
 	return 0;
 }
 
-static int cpuacct_uptime_show(struct seq_file *sf, void *v)
+static int cpuacct_uptime_show_comm(struct seq_file *sf, void *v, struct cpuacct *ca)
 {
-	struct cpuacct *ca = css_ca(seq_css(sf));
 	struct timespec64 uptime, idle, curr;
 	u64 idletime = 0;
 	u32 cpu, rem;
@@ -321,6 +321,32 @@ static int cpuacct_uptime_show(struct seq_file *sf, void *v)
 			(unsigned long) idle.tv_sec,
 			(idle.tv_nsec / (NSEC_PER_SEC / 100)));
 	return 0;
+}
+
+static int cpuacct_sli_show(struct seq_file *sf, void *v)
+{
+	struct cgroup *cgrp = seq_css(sf)->cgroup;
+
+	return sli_schedlat_stat_show(sf, cgrp);
+}
+
+static int cpuacct_sli_max_show(struct seq_file *sf, void *v)
+{
+	struct cgroup *cgrp = seq_css(sf)->cgroup;
+
+	return sli_schedlat_max_show(sf, cgrp);
+}
+
+int cpuacct_cgroupfs_uptime_show(struct seq_file *m, void *v)
+{
+	struct cpuacct *ca = task_ca(current);
+	return cpuacct_uptime_show_comm(m, v, ca);
+}
+
+static int cpuacct_uptime_show(struct seq_file *sf, void *v)
+{
+	struct cpuacct *ca = css_ca(seq_css(sf));
+	return cpuacct_uptime_show_comm(sf, v, ca);
 }
 
 static struct cftype files[] = {
@@ -360,6 +386,24 @@ static struct cftype files[] = {
 	{
 		.name = "uptime",
 		.seq_show = cpuacct_uptime_show,
+	},
+	{
+		.name = "mbuf",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cgroup_mbuf_show,
+		.seq_start = cgroup_mbuf_start,
+		.seq_next = cgroup_mbuf_next,
+		.seq_stop = cgroup_mbuf_stop,
+	},
+	{
+		.name = "sli",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cpuacct_sli_show,
+	},
+	{
+		.name = "sli_max",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = cpuacct_sli_max_show,
 	},
 	{ }	/* terminate */
 };

@@ -23,6 +23,9 @@
 #include <net/sock_reuseport.h>
 #include <net/addrconf.h>
 
+int sysctl_tcp_pingpong_thresh __read_mostly = 3;
+EXPORT_SYMBOL(sysctl_tcp_pingpong_thresh);
+
 #if IS_ENABLED(CONFIG_IPV6)
 /* match_sk*_wildcard == true:  IPV6_ADDR_ANY equals to any IPv6 addresses
  *				if IPv6 only, and any IPv4 addresses
@@ -825,6 +828,7 @@ struct sock *inet_csk_clone_lock(const struct sock *sk,
 		struct inet_connection_sock *newicsk = inet_csk(newsk);
 
 		inet_sk_set_state(newsk, TCP_SYN_RECV);
+		newsk->sk_mark2 = req->mark;
 		newicsk->icsk_bind_hash = NULL;
 
 		inet_sk(newsk)->inet_dport = inet_rsk(req)->ir_rmt_port;

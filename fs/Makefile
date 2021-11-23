@@ -24,6 +24,7 @@ endif
 obj-$(CONFIG_PROC_FS) += proc_namespace.o
 
 obj-y				+= notify/
+obj-y				+= cgroupfs/
 obj-$(CONFIG_EPOLL)		+= eventpoll.o
 obj-y				+= anon_inodes.o
 obj-$(CONFIG_SIGNALFD)		+= signalfd.o

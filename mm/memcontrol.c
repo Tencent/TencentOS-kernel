@@ -63,8 +63,9 @@
 #include <net/sock.h>
 #include <net/ip.h>
 #include "slab.h"
-
+#include <linux/sli.h>
 #include <linux/uaccess.h>
+#include <linux/sli.h>
 
 #include <trace/events/vmscan.h>
 
@@ -2561,10 +2562,12 @@ void mem_cgroup_handle_over_high(void)
 	unsigned long pflags;
 	unsigned int nr_pages = current->memcg_nr_pages_over_high;
 	struct mem_cgroup *memcg;
+	u64 start;
 
 	if (likely(!nr_pages))
 		return;
 
+	sli_memlat_stat_start(&start);
 	memcg = get_mem_cgroup_from_mm(current->mm);
 	reclaim_high(memcg, nr_pages, GFP_KERNEL);
 	current->memcg_nr_pages_over_high = 0;
@@ -2594,6 +2597,7 @@ void mem_cgroup_handle_over_high(void)
 	psi_memstall_leave(&pflags);
 
 out:
+	sli_memlat_stat_end(MEM_LAT_MEMCG_DIRECT_RECLAIM, start);
 	css_put(&memcg->css);
 }
 
@@ -2608,6 +2612,7 @@ static int try_charge(struct mem_cgroup *memcg, gfp_t gfp_mask,
 	bool may_swap = true;
 	bool drained = false;
 	enum oom_status oom_status;
+	u64 start;
 
 	if (mem_cgroup_is_root(memcg))
 		return 0;
@@ -2667,9 +2672,11 @@ retry:
 
 	memcg_memory_event(mem_over_limit, MEMCG_MAX);
 
+	sli_memlat_stat_start(&start);
 	nr_reclaimed = try_to_free_mem_cgroup_pages(mem_over_limit, nr_pages,
 						    gfp_mask, may_swap);
 
+	sli_memlat_stat_end(MEM_LAT_MEMCG_DIRECT_RECLAIM, start);
 	if (mem_cgroup_margin(mem_over_limit) >= nr_pages)
 		goto retry;
 
@@ -5106,9 +5113,8 @@ static unsigned long memcg_nr_lru_pages(struct mem_cgroup *memcg,
 	return nr;
 }
 
-static int mem_cgroup_meminfo_read(struct seq_file *m, void *v)
+static int mem_cgroup_meminfo_read_comm(struct seq_file *m, void *v, struct mem_cgroup *memcg)
 {
-	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
 	u64 mem_limit, mem_usage;
 	u64 mem_swap, mem_swap_usage;
 	unsigned long mem_cache, mem_swap_cache;
@@ -5292,15 +5298,26 @@ static int mem_cgroup_meminfo_read(struct seq_file *m, void *v)
 	return 0;
 }
 
+int mem_cgroupfs_meminfo_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_task(current);
+	return mem_cgroup_meminfo_read_comm(m, v, memcg);
+}
+
+static int mem_cgroup_meminfo_read(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
+	return mem_cgroup_meminfo_read_comm(m, v, memcg);
+}
+
 #define NR_VM_WRITEBACK_STAT_ITEMS	2
 extern const char * const vmstat_text[];
 extern unsigned int vmstat_text_size;
 
-static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
+static int mem_cgroup_vmstat_read_comm(struct seq_file *m, void *vv, struct mem_cgroup *memcg)
 {
 	unsigned long *v1, *v;
 	int i, stat_items_size;
-	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
 	u64 mem_limit, mem_usage;
 
 	mem_limit = memcg->memory.max;
@@ -5359,6 +5376,36 @@ static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
 	}
 	kfree(v1);
 	return 0;
+}
+
+static int mem_cgroup_sli_max_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+	struct cgroup *cgrp;
+	cgrp = memcg->css.cgroup;
+
+	return sli_memlat_max_show(m, cgrp);
+}
+
+static int mem_cgroup_sli_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+	struct cgroup *cgrp;
+	cgrp = memcg->css.cgroup;
+
+	return sli_memlat_stat_show(m, cgrp);
+}
+
+int mem_cgroupfs_vmstat_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_task(current);
+	return mem_cgroup_vmstat_read_comm(m, v, memcg);
+}
+
+static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(seq_css(m));
+	return mem_cgroup_vmstat_read_comm(m, vv, memcg);
 }
 
 static struct cftype mem_cgroup_legacy_files[] = {
@@ -5518,6 +5565,16 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.private = MEMFILE_PRIVATE(_TCP, RES_MAX_USAGE),
 		.write = mem_cgroup_reset,
 		.read_u64 = mem_cgroup_read_u64,
+	},
+	{
+		.name = "sli",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = mem_cgroup_sli_show,
+	},
+	{
+		.name = "sli_max",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.seq_show = mem_cgroup_sli_max_show,
 	},
 	{ },	/* terminate */
 };

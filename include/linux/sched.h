@@ -32,7 +32,6 @@
 #include <linux/posix-timers.h>
 #include <linux/rseq.h>
 #include <linux/kabi.h>
-
 /* task_struct member predeclarations (sorted alphabetically): */
 struct audit_context;
 struct backing_dev_info;
@@ -300,6 +299,15 @@ struct sched_info {
 
 	/* When were we last queued to run? */
 	unsigned long long		last_queued;
+
+	/* The count of task switch */
+	unsigned long			task_switch;
+
+	/* Timestamps of task that was running in the kernel space */
+	unsigned long			kernel_exec_start;
+
+	/* Userspace execution time of process */
+	unsigned long			utime;
 
 #endif /* CONFIG_SCHED_INFO */
 };

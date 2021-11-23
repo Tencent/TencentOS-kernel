@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config CGROUPFS
+	bool "cgroupfs file system support"
+	default n
+	help
+	The cgroupfs is used to present independent resource views inside container,
+	include cpuinfo, meminfo, stat and so on.
