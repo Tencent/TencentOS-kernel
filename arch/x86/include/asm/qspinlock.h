@@ -29,6 +29,7 @@ static __always_inline u32 queued_fetch_set_pending_acquire(struct qspinlock *lo
 
 #ifdef CONFIG_NUMA_AWARE_SPINLOCKS
 extern void cna_configure_spin_lock_slowpath(void);
+extern void cna_set_llc_id_per_cpu(unsigned int cpu);
 #endif
 
 #ifdef CONFIG_PARAVIRT_SPINLOCKS

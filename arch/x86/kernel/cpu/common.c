@@ -58,6 +58,10 @@
 #include <asm/uv/uv.h>
 #endif
 
+#ifdef CONFIG_NUMA_AWARE_SPINLOCKS
+#include <asm/qspinlock.h>
+#endif
+
 #include "cpu.h"
 
 u32 elf_hwcap2 __read_mostly;
@@ -1531,6 +1535,10 @@ static void identify_cpu(struct cpuinfo_x86 *c)
 	 */
 	if (this_cpu->c_init)
 		this_cpu->c_init(c);
+
+#ifdef CONFIG_NUMA_AWARE_SPINLOCKS
+	cna_set_llc_id_per_cpu(smp_processor_id());
+#endif
 
 	/* Disable the PN if appropriate */
 	squash_the_stupid_serial_number(c);
