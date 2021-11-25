@@ -51,14 +51,17 @@
 
 #define CNA_PRIORITY_NODE      0xffff
 
+#define DEFAULT_LLC_ID 0xfffe
+
 struct cna_node {
 	struct mcs_spinlock	mcs;
-	u16			numa_node;
-	u16			real_numa_node;
+	u16			llc_id;
+	u16			real_llc_id;
 	u32			encoded_tail;	/* self */
 	u64			start_time;
 };
 
+bool use_llc_spinlock = false;
 
 static ulong numa_spinlock_threshold_ns = 1000000;   /* 1ms, by default */
 module_param(numa_spinlock_threshold_ns, ulong, 0644);
@@ -102,19 +105,40 @@ static bool probably(unsigned int num_bits)
 static void __init cna_init_nodes_per_cpu(unsigned int cpu)
 {
 	struct mcs_spinlock *base = per_cpu_ptr(&qnodes[0].mcs, cpu);
-	int numa_node = cpu_to_node(cpu);
 	int i;
 
 	for (i = 0; i < MAX_NODES; i++) {
 		struct cna_node *cn = (struct cna_node *)grab_mcs_node(base, i);
 
-		cn->real_numa_node = numa_node;
+		/*
+		*cpu_llc_id is not initialized when when this function is called
+		*so just set a fake llc id.
+		*/
+		cn->real_llc_id = DEFAULT_LLC_ID;
 		cn->encoded_tail = encode_tail(cpu, i);
 		/*
 		 * make sure @encoded_tail is not confused with other valid
 		 * values for @locked (0 or 1)
 		 */
 		WARN_ON(cn->encoded_tail <= 1);
+	}
+}
+
+/*
+* must be called after cpu_llc_id is initialized.
+*/
+void cna_set_llc_id_per_cpu(unsigned int cpu)
+{
+	struct mcs_spinlock *base = per_cpu_ptr(&qnodes[0].mcs, cpu);
+	int i;
+
+	if (!use_llc_spinlock)
+		return;
+
+	for (i = 0; i < MAX_NODES; i++) {
+		struct cna_node *cn = (struct cna_node *)grab_mcs_node(base, i);
+
+		cn->real_llc_id = per_cpu(cpu_llc_id, cpu);
 	}
 }
 
@@ -141,7 +165,7 @@ static __always_inline void cna_init_node(struct mcs_spinlock *node)
 	bool priority = !in_task() || irqs_disabled() || rt_task(current);
 	struct cna_node *cn = (struct cna_node *)node;
 
-	cn->numa_node = priority ? CNA_PRIORITY_NODE : cn->real_numa_node;
+	cn->llc_id = priority ? CNA_PRIORITY_NODE : cn->real_llc_id;
 	cn->start_time = 0;
 }
 
@@ -272,15 +296,15 @@ static int cna_order_queue(struct mcs_spinlock *node)
 {
 	struct mcs_spinlock *next = READ_ONCE(node->next);
 	struct cna_node *cn = (struct cna_node *)node;
-	int numa_node, next_numa_node;
+	int llc_id, next_llc_id;
 
 	if (!next)
 		return 0;
 
-	numa_node = cn->numa_node;
-	next_numa_node = ((struct cna_node *)next)->numa_node;
+	llc_id = cn->llc_id;
+	next_llc_id = ((struct cna_node *)next)->llc_id;
 
-	if (next_numa_node != numa_node && next_numa_node != CNA_PRIORITY_NODE) {
+	if (next_llc_id != llc_id && next_llc_id != CNA_PRIORITY_NODE) {
 		struct mcs_spinlock *nnext = READ_ONCE(next->next);
 
 		if (nnext)
@@ -315,8 +339,8 @@ static __always_inline u32 cna_wait_head_or_lock(struct qspinlock *lock,
 		 * We are at the head of the wait queue, no need to use
 		 * the fake NUMA node ID.
 		 */
-		if (cn->numa_node == CNA_PRIORITY_NODE)
-			cn->numa_node = cn->real_numa_node;
+		if (cn->llc_id == CNA_PRIORITY_NODE)
+			cn->llc_id = cn->real_llc_id;
 
 		/*
 		 * Try and put the time otherwise spent spin waiting on
@@ -352,7 +376,7 @@ static inline void cna_lock_handoff(struct mcs_spinlock *node,
 			 * Pass over NUMA node id of primary queue, to maintain the
 			 * preference even if the next waiter is on a different node.
 			 */
-			((struct cna_node *)next)->numa_node = cn->numa_node;
+			((struct cna_node *)next)->llc_id = cn->llc_id;
 
 			((struct cna_node *)next)->start_time = cn->start_time;
 		}
@@ -375,47 +399,48 @@ static inline void cna_lock_handoff(struct mcs_spinlock *node,
 }
 
 /*
- * Constant (boot-param configurable) flag selecting the NUMA-aware variant
+ * Constant (boot-param configurable) flag selecting the LLC-aware variant
  * of spinlock.  Possible values: -1 (off) / 0 (auto, default) / 1 (on).
  */
-static int numa_spinlock_flag;
+static int llc_spinlock_flag = -1;
 
-static int __init numa_spinlock_setup(char *str)
+static int __init llc_spinlock_setup(char *str)
 {
 	if (!strcmp(str, "auto")) {
-		numa_spinlock_flag = 0;
+		llc_spinlock_flag = 0;
 		return 1;
 	} else if (!strcmp(str, "on")) {
-		numa_spinlock_flag = 1;
+		llc_spinlock_flag = 1;
 		return 1;
 	} else if (!strcmp(str, "off")) {
-		numa_spinlock_flag = -1;
+		llc_spinlock_flag = -1;
 		return 1;
 	}
 
 	return 0;
 }
-__setup("numa_spinlock=", numa_spinlock_setup);
+__setup("llc_spinlock=", llc_spinlock_setup);
 
 void __cna_queued_spin_lock_slowpath(struct qspinlock *lock, u32 val);
 
 /*
- * Switch to the NUMA-friendly slow path for spinlocks when we have
- * multiple NUMA nodes in native environment, unless the user has
- * overridden this default behavior by setting the numa_spinlock flag.
+ * Switch to the llc-friendly slow path for spinlocks when we have
+ * multiple llc nodes in native environment, unless the user has
+ * overridden this default behavior by setting the llc_spinlock flag.
  */
 void __init cna_configure_spin_lock_slowpath(void)
 {
-
-	if (numa_spinlock_flag < 0)
+	if (llc_spinlock_flag < 0)
 		return;
 
-	if (numa_spinlock_flag == 0 && (nr_node_ids < 2 ||
+	if (llc_spinlock_flag == 0 && 
 		    pv_ops.lock.queued_spin_lock_slowpath !=
-			native_queued_spin_lock_slowpath))
+			native_queued_spin_lock_slowpath)
 		return;
 
 	cna_init_nodes();
+
+	use_llc_spinlock = true;
 
 	pv_ops.lock.queued_spin_lock_slowpath = __cna_queued_spin_lock_slowpath;
 
