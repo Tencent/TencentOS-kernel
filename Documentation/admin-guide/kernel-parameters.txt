@@ -5487,6 +5487,10 @@
 	xen.event_loop_timeout=	[XEN]
 			After which time (jiffies) the event handling loop
 			should start to delay EOI handling. Default is 2.
+	nopvspin	[X86,XEN,KVM]
+			Disables the qspinlock slow path using PV optimizations
+			which allow the hypervisor to 'idle' the guest on lock
+			contention.
 
 	xirc2ps_cs=	[NET,PCMCIA]
 			Format:
