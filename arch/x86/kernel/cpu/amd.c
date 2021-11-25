@@ -934,6 +934,13 @@ static void init_amd(struct cpuinfo_x86 *c)
 	case 0x17: init_amd_zn(c); break;
 	}
 
+	/* force to enable erms/fsrm for AMD EPYC 7K8 cpu*/
+	if (c->x86 == 25) {
+		if (!strncmp(&c->x86_model_id[0],"AMD EPYC 7K83 64-Core Processor",31)) {
+			set_cpu_cap(c, X86_FEATURE_ERMS);
+			set_cpu_cap(c, X86_FEATURE_FSRM);
+		}
+	}
 	/*
 	 * Enable workaround for FXSAVE leak on CPUs
 	 * without a XSaveErPtr feature
