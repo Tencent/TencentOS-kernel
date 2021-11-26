@@ -137,25 +137,25 @@ static char * get_memlat_name(enum sli_memlat_stat_item sidx)
 
 	switch (sidx) {
 	case MEM_LAT_GLOBAL_DIRECT_RECLAIM:
-		name = "global_direct_reclaim";
+		name = "memlat_global_direct_reclaim";
 		break;
 	case MEM_LAT_MEMCG_DIRECT_RECLAIM:
-		name =  "memcg_direct_reclaim";
+		name =  "memlat_memcg_direct_reclaim";
 		break;
 	case MEM_LAT_DIRECT_COMPACT:
-		name = "direct_compact";
+		name = "memlat_direct_compact";
 		break;
 	case MEM_LAT_GLOBAL_DIRECT_SWAPOUT:
-		name = "global_direct_swapout";
+		name = "memlat_global_direct_swapout";
 		break;
 	case MEM_LAT_MEMCG_DIRECT_SWAPOUT:
-		name = "memcg_direct_swapout";
+		name = "memlat_memcg_direct_swapout";
 		break;
 	case MEM_LAT_DIRECT_SWAPIN:
-		name = "direct_swapin";
+		name = "memlat_direct_swapin";
 		break;
 	case MEM_LAT_PAGE_ALLOC:
-		name = "page_alloc";
+		name = "memlat_page_alloc";
 		break;
 	default:
 		break;
@@ -279,22 +279,14 @@ int sli_memlat_stat_show(struct seq_file *m, struct cgroup *cgrp)
 
 	for (sidx = MEM_LAT_GLOBAL_DIRECT_RECLAIM;sidx < MEM_LAT_STAT_NR;sidx++) {
 		seq_printf(m,"%s:\n",get_memlat_name(sidx));
-		seq_printf(m, "\t0-1ms: \t\t%llu\n",
-				   sli_memlat_stat_gather(cgrp, sidx, LAT_0_1));
-		seq_printf(m, "\t1-4ms: \t\t%llu\n",
-				   sli_memlat_stat_gather(cgrp, sidx, LAT_1_4));
-		seq_printf(m, "\t4-8ms: \t\t%llu\n",
-				   sli_memlat_stat_gather(cgrp, sidx, LAT_4_8));
-		seq_printf(m, "\t8-16ms: \t%llu\n",
-				   sli_memlat_stat_gather(cgrp, sidx, LAT_8_16));
-		seq_printf(m, "\t16-32ms: \t%llu\n",
-				   sli_memlat_stat_gather(cgrp, sidx, LAT_16_32));
-		seq_printf(m, "\t32-64ms: \t%llu\n",
-				   sli_memlat_stat_gather(cgrp, sidx, LAT_32_64));
-		seq_printf(m, "\t64-128ms: \t%llu\n",
-				   sli_memlat_stat_gather(cgrp, sidx, LAT_64_128));
-		seq_printf(m, "\t>=128ms: \t%llu\n",
-				   sli_memlat_stat_gather(cgrp, sidx, LAT_128_INF));
+		seq_printf(m, "0-1ms: %llu\n", sli_memlat_stat_gather(cgrp, sidx, LAT_0_1));
+		seq_printf(m, "1-4ms: %llu\n", sli_memlat_stat_gather(cgrp, sidx, LAT_1_4));
+		seq_printf(m, "4-8ms: %llu\n", sli_memlat_stat_gather(cgrp, sidx, LAT_4_8));
+		seq_printf(m, "8-16ms: %llu\n", sli_memlat_stat_gather(cgrp, sidx, LAT_8_16));
+		seq_printf(m, "16-32ms: %llu\n", sli_memlat_stat_gather(cgrp, sidx, LAT_16_32));
+		seq_printf(m, "32-64ms: %llu\n", sli_memlat_stat_gather(cgrp, sidx, LAT_32_64));
+		seq_printf(m, "64-128ms: %llu\n", sli_memlat_stat_gather(cgrp, sidx, LAT_64_128));
+		seq_printf(m, ">=128ms: %llu\n", sli_memlat_stat_gather(cgrp, sidx, LAT_128_INF));
 	}
 
 	return 0;
@@ -645,22 +637,14 @@ int sli_schedlat_stat_show(struct seq_file *m, struct cgroup *cgrp)
 
 	for (sidx = SCHEDLAT_WAIT;sidx < SCHEDLAT_STAT_NR;sidx++) {
 		seq_printf(m,"%s:\n",get_schedlat_name(sidx));
-		seq_printf(m, "\t0-1ms: \t\t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, LAT_0_1));
-		seq_printf(m, "\t1-4ms: \t\t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, LAT_1_4));
-		seq_printf(m, "\t4-8ms: \t\t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, LAT_4_8));
-		seq_printf(m, "\t8-16ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, LAT_8_16));
-		seq_printf(m, "\t16-32ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, LAT_16_32));
-		seq_printf(m, "\t32-64ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, LAT_32_64));
-		seq_printf(m, "\t64-128ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, LAT_64_128));
-		seq_printf(m, "\t>=128ms: \t%llu\n",
-				   sli_schedlat_stat_gather(cgrp, sidx, LAT_128_INF));
+		seq_printf(m, "0-1ms: %llu\n", sli_schedlat_stat_gather(cgrp, sidx, LAT_0_1));
+		seq_printf(m, "1-4ms: %llu\n", sli_schedlat_stat_gather(cgrp, sidx, LAT_1_4));
+		seq_printf(m, "4-8ms: %llu\n", sli_schedlat_stat_gather(cgrp, sidx, LAT_4_8));
+		seq_printf(m, "8-16ms: %llu\n", sli_schedlat_stat_gather(cgrp, sidx, LAT_8_16));
+		seq_printf(m, "16-32ms: %llu\n", sli_schedlat_stat_gather(cgrp, sidx, LAT_16_32));
+		seq_printf(m, "32-64ms: %llu\n", sli_schedlat_stat_gather(cgrp, sidx, LAT_32_64));
+		seq_printf(m, "64-128ms: %llu\n", sli_schedlat_stat_gather(cgrp, sidx, LAT_64_128));
+		seq_printf(m, ">=128ms: %llu\n", sli_schedlat_stat_gather(cgrp, sidx, LAT_128_INF));
 	}
 
 	return 0;
