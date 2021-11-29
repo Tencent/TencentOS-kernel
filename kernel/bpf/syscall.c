@@ -687,10 +687,8 @@ static int map_create(union bpf_attr *attr)
 		if (attr->btf_value_type_id) {
 			err = map_check_btf(map, btf, attr->btf_key_type_id,
 					attr->btf_value_type_id);
-			if (err) {
-				btf_put(btf);
+			if (err)
 				goto free_map;
-			}
 		}
 		map->btf_key_type_id = attr->btf_key_type_id;
 		map->btf_value_type_id = attr->btf_value_type_id;
