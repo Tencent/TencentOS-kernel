@@ -40,7 +40,9 @@ struct schedlat_thr {
 };
 
 static DEFINE_STATIC_KEY_TRUE(sli_no_enabled);
+#ifdef CONFIG_MEMCG
 static struct memlat_thr memlat_threshold;
+#endif
 static struct schedlat_thr schedlat_threshold;
 
 static const struct member_offset memlat_member_offset[] = {
@@ -95,6 +97,7 @@ static void store_task_stack(struct task_struct *task, char *reason,
 	return;
 }
 
+#ifdef CONFIG_MEMCG
 static u64 get_memlat_threshold(enum sli_memlat_stat_item sidx)
 {
 	long threshold = -1;
@@ -163,6 +166,7 @@ static char * get_memlat_name(enum sli_memlat_stat_item sidx)
 
 	return name;
 }
+#endif
 
 static enum sli_lat_count get_lat_count_idx(u64 duration)
 {
@@ -251,7 +255,7 @@ static char * get_schedlat_name(enum sli_memlat_stat_item sidx)
 
 	return name;
 }
-
+#ifdef CONFIG_MEMCG
 static u64 sli_memlat_stat_gather(struct cgroup *cgrp,
 				 enum sli_memlat_stat_item sidx,
 				 enum sli_lat_count cidx)
@@ -353,7 +357,6 @@ void sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start)
 	duration = local_clock() - start;
 	threshold = get_memlat_threshold(sidx);
 	cidx = get_lat_count_idx(duration);
-
 	rcu_read_lock();
 	memcg = mem_cgroup_from_task(current);
 	if (!memcg || memcg == root_mem_cgroup ) {
@@ -459,6 +462,7 @@ static const struct file_operations sli_memlat_thr_fops = {
 	.write		= sli_memlat_thr_write,
 	.release	= single_release,
 };
+#endif
 
 void sli_schedlat_stat(struct task_struct *task, enum sli_schedlat_stat_item sidx, u64 delta)
 {
@@ -819,11 +823,15 @@ void sli_cgroup_free(struct cgroup *cgroup)
 static int __init sli_proc_init(void)
 {
 	/* default threshhold is the max value of u64 */
+#ifdef CONFIG_MEMCG
 	sli_memlat_thr_set(-1);
+#endif
 	sli_schedlat_thr_set(-1);
 	proc_mkdir("sli", NULL);
 	proc_create("sli/sli_enabled", 0, NULL, &sli_enabled_fops);
+#ifdef CONFIG_MEMCG
 	proc_create("sli/memory_latency_threshold", 0, NULL, &sli_memlat_thr_fops);
+#endif
 	proc_create("sli/sched_latency_threshold", 0, NULL, &sli_schedlat_thr_fops);
 	return 0;
 }
