@@ -2000,7 +2000,7 @@ module_param_call(hashsize, nf_conntrack_set_hashsize, param_get_uint,
 static __always_inline unsigned int total_extension_size(void)
 {
 	/* remember to add new extensions below */
-	BUILD_BUG_ON(NF_CT_EXT_NUM > 9);
+	BUILD_BUG_ON(NF_CT_EXT_NUM > 10);
 
 	return sizeof(struct nf_ct_ext) +
 	       sizeof(struct nf_conn_help)
