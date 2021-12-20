@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2018 Broadcom. All Rights Reserved. The term *
+ * Copyright (C) 2017-2020 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.     *
  * Copyright (C) 2004-2014 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -30,9 +30,11 @@
 #include <scsi/scsi_device.h>
 #include <scsi/scsi_transport_fc.h>
 #include <scsi/fc/fc_fs.h>
-
+#if defined(BUILD_NVME)
+#if (IS_ENABLED(CONFIG_NVME_FC))
 #include <linux/nvme-fc-driver.h>
-
+#endif
+#endif
 #include "lpfc_hw4.h"
 #include "lpfc_hw.h"
 #include "lpfc_sli.h"
@@ -49,6 +51,8 @@
 #define LPFC_MBUF_POOL_SIZE     64      /* max elements in MBUF safety pool */
 #define LPFC_MEM_POOL_SIZE      64      /* max elem in non-DMA safety pool */
 #define LPFC_DEVICE_DATA_POOL_SIZE 64   /* max elements in device data pool */
+#define LPFC_RRQ_POOL_SIZE	256	/* max elements in non-DMA  pool */
+#define LPFC_MBX_POOL_SIZE	256	/* max elements in MBX non-DMA pool */
 
 int
 lpfc_mem_alloc_active_rrq_pool_s4(struct lpfc_hba *phba) {
@@ -89,16 +93,14 @@ lpfc_mem_alloc(struct lpfc_hba *phba, int align)
 	struct lpfc_dma_pool *pool = &phba->lpfc_mbuf_safety_pool;
 	int i;
 
-
 	phba->lpfc_mbuf_pool = dma_pool_create("lpfc_mbuf_pool", &phba->pcidev->dev,
 							LPFC_BPL_SIZE,
 							align, 0);
 	if (!phba->lpfc_mbuf_pool)
 		goto fail;
 
-	pool->elements = kmalloc_array(LPFC_MBUF_POOL_SIZE,
-				       sizeof(struct lpfc_dmabuf),
-				       GFP_KERNEL);
+	pool->elements = kmalloc(sizeof(struct lpfc_dmabuf) *
+					 LPFC_MBUF_POOL_SIZE, GFP_KERNEL);
 	if (!pool->elements)
 		goto fail_free_lpfc_mbuf_pool;
 
@@ -113,8 +115,8 @@ lpfc_mem_alloc(struct lpfc_hba *phba, int align)
 		pool->current_count++;
 	}
 
-	phba->mbox_mem_pool = mempool_create_kmalloc_pool(LPFC_MEM_POOL_SIZE,
-							 sizeof(LPFC_MBOXQ_t));
+	phba->mbox_mem_pool = mempool_create_kmalloc_pool(LPFC_MBX_POOL_SIZE,
+							  sizeof(LPFC_MBOXQ_t));
 	if (!phba->mbox_mem_pool)
 		goto fail_free_mbuf_pool;
 
@@ -125,7 +127,7 @@ lpfc_mem_alloc(struct lpfc_hba *phba, int align)
 
 	if (phba->sli_rev == LPFC_SLI_REV4) {
 		phba->rrq_pool =
-			mempool_create_kmalloc_pool(LPFC_MEM_POOL_SIZE,
+			mempool_create_kmalloc_pool(LPFC_RRQ_POOL_SIZE,
 						sizeof(struct lpfc_node_rrq));
 		if (!phba->rrq_pool)
 			goto fail_free_nlp_mem_pool;
@@ -230,9 +232,6 @@ lpfc_mem_free(struct lpfc_hba *phba)
 	dma_pool_destroy(phba->lpfc_hrb_pool);
 	phba->lpfc_hrb_pool = NULL;
 
-	dma_pool_destroy(phba->txrdy_payload_pool);
-	phba->txrdy_payload_pool = NULL;
-
 	dma_pool_destroy(phba->lpfc_hbq_pool);
 	phba->lpfc_hbq_pool = NULL;
 
@@ -240,7 +239,8 @@ lpfc_mem_free(struct lpfc_hba *phba)
 	phba->rrq_pool = NULL;
 
 	/* Free NLP memory pool */
-	mempool_destroy(phba->nlp_mem_pool);
+	if (phba->nlp_mem_pool)
+		mempool_destroy(phba->nlp_mem_pool);
 	phba->nlp_mem_pool = NULL;
 	if (phba->sli_rev == LPFC_SLI_REV4 && phba->active_rrq_pool) {
 		mempool_destroy(phba->active_rrq_pool);
@@ -248,7 +248,8 @@ lpfc_mem_free(struct lpfc_hba *phba)
 	}
 
 	/* Free mbox memory pool */
-	mempool_destroy(phba->mbox_mem_pool);
+	if (phba->mbox_mem_pool)
+		mempool_destroy(phba->mbox_mem_pool);
 	phba->mbox_mem_pool = NULL;
 
 	/* Free MBUF memory pool */
@@ -338,6 +339,19 @@ lpfc_mem_free_all(struct lpfc_hba *phba)
 
 	dma_pool_destroy(phba->lpfc_cmd_rsp_buf_pool);
 	phba->lpfc_cmd_rsp_buf_pool = NULL;
+
+	/* Free Congestion Data buffer */
+	if (phba->cgn_i) {
+		dma_free_coherent(&phba->pcidev->dev,
+				  sizeof(struct lpfc_cgn_info),
+				  phba->cgn_i->virt, phba->cgn_i->phys);
+		kfree(phba->cgn_i);
+		phba->cgn_i = NULL;
+	}
+
+	/* Free RX table */
+	kfree(phba->rxtable);
+	phba->rxtable = NULL;
 
 	/* Free the iocb lookup array */
 	kfree(psli->iocbq_lookup);

@@ -1,8 +1,8 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2019 Broadcom. All Rights Reserved. The term *
- * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.  *
+ * Copyright (C) 2017-2020 Broadcom. All Rights Reserved. The term *
+ * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.     *
  * Copyright (C) 2004-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
  * www.broadcom.com                                                *
@@ -21,7 +21,16 @@
  * included with this package.                                     *
  ********************************************************************/
 
-#define LPFC_NVME_DEFAULT_SEGS		(64 + 1)	/* 256K IOs */
+#if !defined(BUILD_NVME)
+#define	FC_TYPE_NVME			0x28
+#endif
+
+#define LPFC_NVME_MIN_SEGS		16
+#define LPFC_NVME_DEFAULT_SEGS		66	/* 256K IOs - 64 + 2 */
+#define LPFC_NVME_MAX_SEGS		510
+#define LPFC_NVMET_MIN_POSTBUF		16
+#define LPFC_NVMET_DEFAULT_POSTBUF	1024
+#define LPFC_NVMET_MAX_POSTBUF		4096
 
 #define LPFC_NVME_ERSP_LEN		0x20
 
@@ -30,14 +39,12 @@
 #define LPFC_NVME_FB_SHIFT		9
 #define LPFC_NVME_MAX_FB		(1 << 20)	/* 1M */
 
-#define LPFC_MAX_NVME_INFO_TMP_LEN	100
-#define LPFC_NVME_INFO_MORE_STR		"\nCould be more info...\n"
-
 #define lpfc_ndlp_get_nrport(ndlp)					\
 	((!ndlp->nrport || (ndlp->upcall_flags & NLP_WAIT_FOR_UNREG))	\
 	? NULL : ndlp->nrport)
 
 struct lpfc_nvme_qhandle {
+	struct list_head list;	/* list entry to maintain qhandle list */
 	uint32_t index;		/* WQ index to use */
 	uint32_t qidx;		/* queue index passed to create */
 	uint32_t cpu_id;	/* current cpu id at time of create */
@@ -62,6 +69,9 @@ struct lpfc_nvme_lport {
 	atomic_t cmpl_fcp_err;
 	atomic_t cmpl_ls_xb;
 	atomic_t cmpl_ls_err;
+	/* Maintaining qhandle list */
+	struct list_head qhandle_list;
+	spinlock_t qhandle_list_lock;
 };
 
 struct lpfc_nvme_rport {
@@ -73,4 +83,13 @@ struct lpfc_nvme_rport {
 
 struct lpfc_nvme_fcpreq_priv {
 	struct lpfc_io_buf *nvme_buf;
+
+	/* Used for pending IO */
+	struct list_head nvme_pend_list;
+	struct list_head nvme_abts_pend_list;
+	struct nvme_fc_local_port *pnvme_lport;
+	struct nvme_fc_remote_port *pnvme_rport;
+	void *hw_queue_handle;
+	struct nvmefc_fcp_req *pnvme_fcreq;
+	uint32_t status;
 };
