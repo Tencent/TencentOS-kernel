@@ -942,7 +942,7 @@ static inline void mem_cgroup_cancel_charge(struct page *page,
 }
 
 static inline int mem_cgroup_charge(struct page *page, struct mm_struct *mm,
-				    gfp_t gfp_mask, bool lrucare)
+				    gfp_t gfp_mask)
 {
 	return 0;
 }
@@ -975,7 +975,7 @@ static inline bool lruvec_holds_page_lru_lock(struct page *page,
 					      struct lruvec *lruvec)
 {
 	pg_data_t *pgdat = page_pgdat(page);
-	return lruvec == &pgdat->__lruvec;
+	return lruvec == &pgdat->lruvec;
 }
 
 static inline bool mm_match_cgroup(struct mm_struct *mm,
@@ -1002,16 +1002,16 @@ static inline struct lruvec *lock_page_lruvec(struct page *page)
 {
 	struct pglist_data *pgdat = page_pgdat(page);
 
-	spin_lock(&pgdat->__lruvec.lru_lock);
-	return &pgdat->__lruvec;
+	spin_lock(&pgdat->lruvec.lru_lock);
+	return &pgdat->lruvec;
 }
 
 static inline struct lruvec *lock_page_lruvec_irq(struct page *page)
 {
 	struct pglist_data *pgdat = page_pgdat(page);
 
-	spin_lock_irq(&pgdat->__lruvec.lru_lock);
-	return &pgdat->__lruvec;
+	spin_lock_irq(&pgdat->lruvec.lru_lock);
+	return &pgdat->lruvec;
 }
 
 static inline struct lruvec *lock_page_lruvec_irqsave(struct page *page,
@@ -1019,8 +1019,8 @@ static inline struct lruvec *lock_page_lruvec_irqsave(struct page *page,
 {
 	struct pglist_data *pgdat = page_pgdat(page);
 
-	spin_lock_irqsave(&pgdat->__lruvec.lru_lock, *flagsp);
-	return &pgdat->__lruvec;
+	spin_lock_irqsave(&pgdat->lruvec.lru_lock, *flagsp);
+	return &pgdat->lruvec;
 }
 
 static inline struct mem_cgroup *
@@ -1472,9 +1472,11 @@ static inline void mem_cgroup_flush_foreign(struct bdi_writeback *wb)
 struct sock;
 bool mem_cgroup_charge_skmem(struct mem_cgroup *memcg, unsigned int nr_pages);
 void mem_cgroup_uncharge_skmem(struct mem_cgroup *memcg, unsigned int nr_pages);
+
+extern unsigned int vm_pagecache_limit_retry_times;
+
 #ifdef CONFIG_MEMCG
 
-extern unsigned int vm_pagecache_limit_retry_times __read_mostly;
 extern void mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask);
 
 extern struct static_key_false memcg_sockets_enabled_key;
@@ -1498,6 +1500,7 @@ extern void memcg_set_shrinker_bit(struct mem_cgroup *memcg,
 				   int nid, int shrinker_id);
 #else
 #define mem_cgroup_sockets_enabled 0
+static inline void mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask) { };
 static inline void mem_cgroup_sk_alloc(struct sock *sk) { };
 static inline void mem_cgroup_sk_free(struct sock *sk) { };
 static inline bool mem_cgroup_under_socket_pressure(struct mem_cgroup *memcg)

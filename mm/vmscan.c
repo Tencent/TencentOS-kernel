@@ -167,6 +167,7 @@ struct scan_control {
  */
 int vm_swappiness = 60;
 unsigned long vm_pagecache_limit_pages __read_mostly = 0;
+unsigned int vm_pagecache_limit_retry_times __read_mostly = 0;
 unsigned long vm_pagecache_limit_reclaim_pages = 0;
 int vm_pagecache_limit_ratio __read_mostly = 0;
 int vm_pagecache_limit_reclaim_ratio __read_mostly = 0;
@@ -4281,6 +4282,7 @@ out:
 	return nr_locked_zones;
 }
 
+#ifdef CONFIG_MEMCG
 /*
  * Function to shrink the page cache
  *
@@ -4390,6 +4392,12 @@ out:
 
 	return sc.nr_reclaimed;
 }
+#else /* CONFIG_MEMCG */
+static unsigned long __shrink_page_cache(gfp_t mask, struct mem_cgroup *memcg, unsigned long nr_pages)
+{
+	return 0;
+}
+#endif
 
 static int kpagecache_limitd(void *data)
 {
