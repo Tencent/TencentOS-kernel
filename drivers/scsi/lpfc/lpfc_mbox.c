@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2018 Broadcom. All Rights Reserved. The term *
+ * Copyright (C) 2017-2020 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.     *
  * Copyright (C) 2004-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -515,6 +515,7 @@ lpfc_init_link(struct lpfc_hba * phba,
 
 	if ((phba->pcidev->device == PCI_DEVICE_ID_LANCER_G6_FC ||
 	     phba->pcidev->device == PCI_DEVICE_ID_LANCER_G7_FC) &&
+	    !(phba->sli4_hba.pc_sli4_params.pls) &&
 	    mb->un.varInitLnk.link_flags & FLAGS_TOPOLOGY_MODE_LOOP) {
 		mb->un.varInitLnk.link_flags = FLAGS_TOPOLOGY_MODE_PT_PT;
 		phba->cfg_topology = FLAGS_TOPOLOGY_MODE_PT_PT;
@@ -755,7 +756,6 @@ lpfc_reg_rpi(struct lpfc_hba *phba, uint16_t vpi, uint32_t did,
 	struct lpfc_dmabuf *mp;
 
 	memset(pmb, 0, sizeof (LPFC_MBOXQ_t));
-
 	mb->un.varRegLogin.rpi = 0;
 	if (phba->sli_rev == LPFC_SLI_REV4)
 		mb->un.varRegLogin.rpi = phba->sli4_hba.rpi_ids[rpi];
@@ -1296,10 +1296,8 @@ lpfc_config_port(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 	/* If HBA supports SLI=3 ask for it */
 
 	if (phba->sli_rev == LPFC_SLI_REV3 && phba->vpd.sli3Feat.cerbm) {
-		if (phba->cfg_enable_bg)
+		if (phba->sli3_options & LPFC_SLI3_BG_ENABLED)
 			mb->un.varCfgPort.cbg = 1; /* configure BlockGuard */
-		if (phba->cfg_enable_dss)
-			mb->un.varCfgPort.cdss = 1; /* Configure Security */
 		mb->un.varCfgPort.cerbm = 1; /* Request HBQs */
 		mb->un.varCfgPort.ccrp = 1; /* Command Ring Polling */
 		mb->un.varCfgPort.max_hbq = lpfc_sli_hbq_count();
@@ -1379,7 +1377,8 @@ lpfc_config_port(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 	 */
 
 	if (phba->cfg_hostmem_hgp && phba->sli_rev != 3) {
-		phba->host_gp = &phba->mbox->us.s2.host[0];
+		phba->host_gp = (struct lpfc_hgp __iomem *)
+				 &phba->mbox->us.s2.host[0];
 		phba->hbq_put = NULL;
 		offset = (uint8_t *)&phba->mbox->us.s2.host -
 			(uint8_t *)phba->slim2p.virt;
@@ -2085,7 +2084,7 @@ lpfc_request_features(struct lpfc_hba *phba, struct lpfcMboxq *mboxq)
 	bf_set(lpfc_mbx_rq_ftr_rq_perfh, &mboxq->u.mqe.un.req_ftrs, 1);
 
 	/* Enable DIF (block guard) only if configured to do so. */
-	if (phba->cfg_enable_bg)
+	if (phba->sli3_options & LPFC_SLI3_BG_ENABLED)
 		bf_set(lpfc_mbx_rq_ftr_rq_dif, &mboxq->u.mqe.un.req_ftrs, 1);
 
 	/* Enable NPIV only if configured to do so. */
@@ -2299,7 +2298,7 @@ lpfc_sli4_dump_cfg_rg23(struct lpfc_hba *phba, struct lpfcMboxq *mbox)
 	return 0;
 }
 
-static void
+void
 lpfc_mbx_cmpl_rdp_link_stat(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 {
 	MAILBOX_t *mb;
@@ -2320,7 +2319,7 @@ mbx_failed:
 	rdp_context->cmpl(phba, rdp_context, rc);
 }
 
-static void
+void
 lpfc_mbx_cmpl_rdp_page_a2(struct lpfc_hba *phba, LPFC_MBOXQ_t *mbox)
 {
 	struct lpfc_dmabuf *mp = (struct lpfc_dmabuf *)mbox->ctx_buf;
@@ -2367,7 +2366,7 @@ lpfc_mbx_cmpl_rdp_page_a0(struct lpfc_hba *phba, LPFC_MBOXQ_t *mbox)
 		goto error;
 
 	lpfc_sli_bemem_bcopy(mp->virt, &rdp_context->page_a0,
-				DMP_SFF_PAGE_A0_SIZE);
+			     DMP_SFF_PAGE_A0_SIZE);
 
 	memset(mbox, 0, sizeof(*mbox));
 
@@ -2380,13 +2379,13 @@ lpfc_mbx_cmpl_rdp_page_a0(struct lpfc_hba *phba, LPFC_MBOXQ_t *mbox)
 
 	bf_set(lpfc_mqe_command, &mbox->u.mqe, MBX_DUMP_MEMORY);
 	bf_set(lpfc_mbx_memory_dump_type3_type,
-		&mbox->u.mqe.un.mem_dump_type3, DMP_LMSD);
+	       &mbox->u.mqe.un.mem_dump_type3, DMP_LMSD);
 	bf_set(lpfc_mbx_memory_dump_type3_link,
-		&mbox->u.mqe.un.mem_dump_type3, phba->sli4_hba.physical_port);
+	       &mbox->u.mqe.un.mem_dump_type3, phba->sli4_hba.physical_port);
 	bf_set(lpfc_mbx_memory_dump_type3_page_no,
-		&mbox->u.mqe.un.mem_dump_type3, DMP_PAGE_A2);
+	       &mbox->u.mqe.un.mem_dump_type3, DMP_PAGE_A2);
 	bf_set(lpfc_mbx_memory_dump_type3_length,
-		&mbox->u.mqe.un.mem_dump_type3, DMP_SFF_PAGE_A2_SIZE);
+	       &mbox->u.mqe.un.mem_dump_type3, DMP_SFF_PAGE_A2_SIZE);
 	mbox->u.mqe.un.mem_dump_type3.addr_lo = putPaddrLow(mp->phys);
 	mbox->u.mqe.un.mem_dump_type3.addr_hi = putPaddrHigh(mp->phys);
 
@@ -2439,13 +2438,13 @@ lpfc_sli4_dump_page_a0(struct lpfc_hba *phba, struct lpfcMboxq *mbox)
 	mbox->ctx_buf = mp;
 
 	bf_set(lpfc_mbx_memory_dump_type3_type,
-		&mbox->u.mqe.un.mem_dump_type3, DMP_LMSD);
+	       &mbox->u.mqe.un.mem_dump_type3, DMP_LMSD);
 	bf_set(lpfc_mbx_memory_dump_type3_link,
-		&mbox->u.mqe.un.mem_dump_type3, phba->sli4_hba.physical_port);
+	       &mbox->u.mqe.un.mem_dump_type3, phba->sli4_hba.physical_port);
 	bf_set(lpfc_mbx_memory_dump_type3_page_no,
-		&mbox->u.mqe.un.mem_dump_type3, DMP_PAGE_A0);
+	       &mbox->u.mqe.un.mem_dump_type3, DMP_PAGE_A0);
 	bf_set(lpfc_mbx_memory_dump_type3_length,
-		&mbox->u.mqe.un.mem_dump_type3, DMP_SFF_PAGE_A0_SIZE);
+	       &mbox->u.mqe.un.mem_dump_type3, DMP_SFF_PAGE_A0_SIZE);
 	mbox->u.mqe.un.mem_dump_type3.addr_lo = putPaddrLow(mp->phys);
 	mbox->u.mqe.un.mem_dump_type3.addr_hi = putPaddrHigh(mp->phys);
 
@@ -2622,3 +2621,39 @@ lpfc_resume_rpi(struct lpfcMboxq *mbox, struct lpfc_nodelist *ndlp)
 	resume_rpi->event_tag = ndlp->phba->fc_eventTag;
 }
 
+/**
+ * lpfc_supported_pages - Initialize the PORT_CAPABILITIES supported pages
+ *                        mailbox command.
+ * @mbox: pointer to lpfc mbox command to initialize.
+ *
+ * The PORT_CAPABILITIES supported pages mailbox command is issued to
+ * retrieve the particular feature pages supported by the port.
+ **/
+void
+lpfc_supported_pages(struct lpfcMboxq *mbox)
+{
+	struct lpfc_mbx_supp_pages *supp_pages;
+
+	memset(mbox, 0, sizeof(*mbox));
+	supp_pages = &mbox->u.mqe.un.supp_pages;
+	bf_set(lpfc_mqe_command, &mbox->u.mqe, MBX_PORT_CAPABILITIES);
+	bf_set(cpn, supp_pages, LPFC_SUPP_PAGES);
+}
+
+/**
+ * lpfc_pc_sli4_params - Initialize the PORT_CAPABILITIES SLI4 Params mbox cmd.
+ * @mbox: pointer to lpfc mbox command to initialize.
+ *
+ * The PORT_CAPABILITIES SLI4 parameters mailbox command is issued to
+ * retrieve the particular SLI4 features supported by the port.
+ **/
+void
+lpfc_pc_sli4_params(struct lpfcMboxq *mbox)
+{
+	struct lpfc_mbx_pc_sli4_params *sli4_params;
+
+	memset(mbox, 0, sizeof(*mbox));
+	sli4_params = &mbox->u.mqe.un.sli4_params;
+	bf_set(lpfc_mqe_command, &mbox->u.mqe, MBX_PORT_CAPABILITIES);
+	bf_set(cpn, sli4_params, LPFC_SLI4_PARAMETERS);
+}

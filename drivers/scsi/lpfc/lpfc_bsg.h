@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2019 Broadcom. All Rights Reserved. The term *
+ * Copyright (C) 2017-2020 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.     *
  * Copyright (C) 2010-2015 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -37,12 +37,18 @@
 #define LPFC_BSG_VENDOR_MENLO_DATA		9
 #define LPFC_BSG_VENDOR_DIAG_MODE_END		10
 #define LPFC_BSG_VENDOR_LINK_DIAG_TEST		11
+#ifndef NO_APEX
+#define LPFC_BSG_VENDOR_GET_FCP_PRIORITY	12
+#define LPFC_BSG_VENDOR_SET_FCP_PRIORITY	13
+#endif
 #define LPFC_BSG_VENDOR_FORCED_LINK_SPEED	14
+#define LPFC_BSG_VENDOR_AUTH_CFG_MGMT		15
 #define LPFC_BSG_VENDOR_RAS_GET_LWPD		16
 #define LPFC_BSG_VENDOR_RAS_GET_FWLOG		17
 #define LPFC_BSG_VENDOR_RAS_GET_CONFIG		18
 #define LPFC_BSG_VENDOR_RAS_SET_CONFIG		19
 #define LPFC_BSG_VENDOR_GET_TRUNK_INFO		20
+#define LPFC_BSG_VENDOR_GET_CGNBUF_INFO		21
 
 struct set_ct_event {
 	uint32_t command;
@@ -105,8 +111,13 @@ struct get_mgmt_rev {
 	uint32_t command;
 };
 
+#ifndef NO_APEX
+#define MANAGEMENT_MAJOR_REV   2
+#define MANAGEMENT_MINOR_REV   0
+#else
 #define MANAGEMENT_MAJOR_REV   1
 #define MANAGEMENT_MINOR_REV   1
+#endif
 
 /* the MgmtRevInfo structure */
 struct MgmtRevInfo {
@@ -225,6 +236,10 @@ struct lpfc_sli_config_hdr {
 	uint32_t reserved5;
 };
 
+#define LPFC_CSF_BOOT_DEV		0x1D
+#define LPFC_CSF_QUERY			0
+#define LPFC_CSF_SAVE			1
+
 struct lpfc_sli_config_emb0_subsys {
 	struct lpfc_sli_config_hdr	sli_config_hdr;
 #define LPFC_MBX_SLI_CONFIG_MAX_MSE     19
@@ -243,6 +258,15 @@ struct lpfc_sli_config_emb0_subsys {
 #define FCOE_OPCODE_ADD_FCF		0x09
 #define FCOE_OPCODE_SET_DPORT_MODE	0x27
 #define FCOE_OPCODE_GET_DPORT_RESULTS	0x28
+	uint32_t timeout;		/* comn_set_feature timeout */
+	uint32_t request_length;	/* comn_set_feature request len */
+	uint32_t version;		/* comn_set_feature version */
+	uint32_t csf_feature;		/* comn_set_feature feature */
+	uint32_t word69;		/* comn_set_feature parameter len */
+	uint32_t word70;		/* comn_set_feature parameter val0 */
+#define lpfc_emb0_subcmnd_csf_p0_SHIFT	0
+#define lpfc_emb0_subcmnd_csf_p0_MASK	0x3
+#define lpfc_emb0_subcmnd_csf_p0_WORD	word70
 };
 
 struct lpfc_sli_config_emb1_subsys {
@@ -261,6 +285,7 @@ struct lpfc_sli_config_emb1_subsys {
 #define COMN_OPCODE_WRITE_OBJECT	0xAC
 #define COMN_OPCODE_READ_OBJECT_LIST	0xAD
 #define COMN_OPCODE_DELETE_OBJECT	0xAE
+#define COMN_OPCODE_SET_FEATURES	0xBF
 #define COMN_OPCODE_GET_CNTL_ADDL_ATTRIBUTES	0x79
 #define COMN_OPCODE_GET_CNTL_ATTRIBUTES	0x20
 	uint32_t timeout;
@@ -294,6 +319,40 @@ struct lpfc_sli_config_mbox {
 	} un;
 };
 
+#ifndef NO_APEX
+struct lpfc_fcp_pri_rule {
+	uint8_t src_wwpn[8];
+	uint8_t tgt_wwpn[8];
+	uint8_t first_lun[8];
+	uint8_t last_lun[8];
+	uint8_t fcp_priority;
+	uint8_t rsvrd[3];
+};
+
+struct lpfc_fcp_pri_rules {
+	uint32_t number_of_entries; /* Number of rules in the array */
+	struct lpfc_fcp_pri_rule rule_entry[0];
+};
+
+struct get_lpfc_fcp_pri_rules {
+	uint32_t command;
+	uint32_t number_of_entries; /* number of rules to return */
+};
+
+struct get_lpfc_fcp_pri_rules_reply {
+	struct lpfc_fcp_pri_rules rule;
+};
+
+struct set_lpfc_fcp_pri_rules {
+	uint32_t command;
+	uint32_t number_of_entries; /* number of rules passed to driver */
+};
+/* limits for fcp priority rules */
+#define LPFC_MAX_FCP_RULES 999 /* number of rules */
+/* so we can add 1 more than the get */
+#define LPFC_MAX_FCP_SET_RULES (LPFC_MAX_FCP_RULES + 1)
+#endif
+
 #define LPFC_FORCED_LINK_SPEED_NOT_SUPPORTED	0
 #define LPFC_FORCED_LINK_SPEED_SUPPORTED	1
 struct get_forced_link_speed_support {
@@ -302,6 +361,73 @@ struct get_forced_link_speed_support {
 struct forced_link_speed_support_reply {
 	uint8_t supported;
 };
+
+struct lpfc_bsg_auth_cfg_item {
+	uint8_t		lwwpn[8];
+	uint8_t		rwwpn[8];
+	uint16_t	auth_tmo;
+	uint8_t		auth_mode;
+	struct {
+		uint8_t bi_direction	: 1;
+		uint8_t rsvd		: 6;
+		uint8_t valid		: 1;
+	} auth_flags;
+	uint8_t		auth_priority[4];
+	uint8_t		hash_priority[4];
+	uint8_t		dh_grp_priority[8];
+	uint32_t	reauth_interval;
+#define REAUTH_MAX_INTERVAL	3600	/* minutes */
+	uint32_t	status;
+	uint32_t	rsvd;
+};
+
+struct lpfc_bsg_auth_cfg_list {
+	uint32_t version;
+	uint32_t entry_cnt;
+	uint32_t rsvd;
+	struct lpfc_bsg_auth_cfg_item cfg_item[0];
+};
+
+#define AUTH_MGMT_OP_SET_CFG  1
+#define AUTH_MGMT_OP_GET_CFG  2
+#define AUTH_MGMT_OP_DEL_CFG  3
+#define AUTH_MGMT_OP_SET_PWD  4
+#define AUTH_MGMT_OP_GET_PWD  5
+#define AUTH_MGMT_OP_RMW_OBJ  6
+#define AUTH_MGMT_OP_DEL_OBJ  7
+
+struct auth_cfg_mgmt_req {
+	uint32_t command;
+	uint32_t cfg_op;
+	uint8_t	wwpn[8];
+	uint32_t param;
+};
+
+struct lpfc_bsg_auth_pwd_info {
+	uint16_t length;
+	uint16_t type;
+	uint8_t  pwd[128];
+};
+
+struct lpfc_bsg_auth_pwd_item {
+	uint8_t				lwwpn[8];
+	uint8_t				rwwpn[8];
+	struct lpfc_bsg_auth_pwd_info	local;
+	struct lpfc_bsg_auth_pwd_info	remote;
+};
+
+#define LPFC_BSG_AUTH_STS_SUCCESS			0x0000
+#define LPFC_BSG_AUTH_STS_NOT_CONFIGURED		0x8001
+#define LPFC_BSG_AUTH_STS_MORE_DATA_AVAILABLE		0x8007
+#define LPFC_BSG_AUTH_STS_INVALID_OPERATION		0x8009
+#define LPFC_BSG_AUTH_STS_OUT_OF_RESOURCES		0x800a
+#define LPFC_BSG_AUTH_STS_IN_PROGRESS			0x800b
+#define LPFC_BSG_AUTH_STS_PSSWDS_SAME			0x8011
+#define LPFC_BSG_AUTH_STS_DRVTYPE_NOT_SUPPORTED		0x8030
+#define LPFC_BSG_AUTH_STS_AUTHENTICATION_NOT_SUPPORTED	0x8031
+#define LPFC_BSG_AUTH_STS_GENERAL_ERROR			0x8032
+#define LPFC_BSG_AUTH_STS_CONFIG_NOT_FOUND		0x8034
+#define LPFC_BSG_AUTH_STS_LOCAL_SECRET_NOT_SET		0x8050
 
 struct lpfc_bsg_ras_req {
 	uint32_t command;
@@ -370,6 +496,13 @@ struct lpfc_trunk_info {
 
 struct get_trunk_info_req {
 	uint32_t command;
+};
+
+struct get_cgnbuf_info_req {
+	uint32_t command;
+	uint32_t read_size;
+	uint32_t reset;
+#define LPFC_BSG_CGN_RESET_STAT		1
 };
 
 /* driver only */

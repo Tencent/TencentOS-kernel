@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2018 Broadcom. All Rights Reserved. The term *
+ * Copyright (C) 2017-2020 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.     *
  * Copyright (C) 2004-2013 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -41,6 +41,10 @@ enum lpfc_work_type {
 	LPFC_EVT_DEV_LOSS,
 	LPFC_EVT_FASTPATH_MGMT_EVT,
 	LPFC_EVT_RESET_HBA,
+#ifndef BUILD_BRCMFCOE
+	LPFC_EVT_REAUTH,
+#endif
+	LPFC_EVT_RECOVER_PORT
 };
 
 /* structure used to queue event to the discovery tasklet */
@@ -76,8 +80,46 @@ struct lpfc_node_rrqs {
 	unsigned long xri_bitmap[XRI_BITMAP_ULONGS];
 };
 
+struct throttle_history {
+	/* Throttle log defaults if more than 10 messages per second */
+	#define ONE_SEC  1000000 /* one second */
+	bool logit;                 /* True means throttle logging on     */
+	uint32_t log_messages_lost;   /* Messages discarded due to throttle */
+	uint32_t log_messages;        /* Log messages count within second   */
+	uint64_t log_start;           /* start of message burst in usec     */
+	char announcement[16];		/* announcement string */
+};
+
+struct dhchap_config {
+	uint16_t		auth_tmo;
+	uint8_t			auth_mode;
+	uint8_t			bidirectional;
+	uint32_t		tran_id;
+	uint32_t		hash_id;
+	uint32_t		dh_grp_id;
+	uint32_t		reauth_interval;
+	uint8_t			local_passwd[128];
+	uint32_t		local_passwd_len;
+	uint8_t			remote_passwd[128];
+	uint32_t		remote_passwd_len;
+	uint8_t			state;
+	uint8_t			msg;
+	uint8_t			direction;
+	uint8_t			dh_grp_cnt;
+	uint8_t			hash_pri[4];
+	uint8_t			dh_grp_pri[8];
+	uint8_t			rand_num[20];
+	uint8_t			nonce[16];
+	uint8_t			dhkey[256];
+	uint32_t		dhkey_len;
+	unsigned long		last_auth;
+	struct timer_list	nlp_reauthfunc;
+};
+
 struct lpfc_nodelist {
 	struct list_head nlp_listp;
+	struct throttle_history log;		/* used to record throttle */
+	struct serv_parm fc_sparam;		/* buffer for service params */
 	struct lpfc_name nlp_portname;
 	struct lpfc_name nlp_nodename;
 	uint32_t         nlp_flag;		/* entry flags */
@@ -115,6 +157,7 @@ struct lpfc_nodelist {
 	u8		nlp_nvme_info;	        /* NVME NSLER Support */
 #define NLP_NVME_NSLER     0x1			/* NVME NSLER device */
 
+	uint32_t        first_burst;	/* First Burst size for ndlp */
 	uint16_t        nlp_usg_map;	/* ndlp management usage bitmap */
 #define NLP_USG_NODE_ACT_BIT	0x1	/* Indicate ndlp is actively used */
 #define NLP_USG_IACT_REQ_BIT	0x2	/* Request to inactivate ndlp */
@@ -128,19 +171,28 @@ struct lpfc_nodelist {
 	struct lpfc_vport *vport;
 	struct lpfc_work_evt els_retry_evt;
 	struct lpfc_work_evt dev_loss_evt;
+	struct lpfc_work_evt reauth_evt;
+	struct lpfc_work_evt recovery_evt;
 	struct kref     kref;
 	atomic_t cmd_pending;
 	uint32_t cmd_qdepth;
+#ifndef NO_APEX
+#define MAX_FCP_PRI_LUN 256
+	uint8_t	fcp_priority[MAX_FCP_PRI_LUN]; /* 512 lun priority */
+#endif
 	unsigned long last_change_time;
 	unsigned long *active_rrqs_xri_bitmap;
 	struct lpfc_scsicmd_bkt *lat_data;	/* Latency data */
 	uint32_t fc4_prli_sent;
 	uint32_t upcall_flags;
 #define NLP_WAIT_FOR_UNREG    0x1
+#define NLP_WAIT_FOR_LOGO     0x2
 
 	uint32_t nvme_fb_size; /* NVME target's supported byte cnt */
 #define NVME_FB_BIT_SHIFT 9    /* PRLI Rsp first burst in 512B units. */
+	struct dhchap_config dhc_cfg;
 	uint32_t nlp_defer_did;
+	wait_queue_head_t *logo_waitq;
 };
 struct lpfc_node_rrq {
 	struct list_head list;
@@ -159,7 +211,8 @@ struct lpfc_node_rrq {
 /* Defines for nlp_flag (uint32) */
 #define NLP_IGNR_REG_CMPL  0x00000001 /* Rcvd rscn before we cmpl reg login */
 #define NLP_REG_LOGIN_SEND 0x00000002   /* sent reglogin to adapter */
-#define NLP_RELEASE_RPI    0x00000004   /* Release RPI to free pool */
+#define NLP_SKIP_EXT_DIF   0x00000004	/* Target could support External DIF */
+#define NLP_RELEASE_RPI    0x00000008   /* Release RPI to free pool */
 #define NLP_SUPPRESS_RSP   0x00000010	/* Remote NPort supports suppress rsp */
 #define NLP_PLOGI_SND      0x00000020	/* sent PLOGI request for this entry */
 #define NLP_PRLI_SND       0x00000040	/* sent PRLI request for this entry */
@@ -169,6 +222,7 @@ struct lpfc_node_rrq {
 #define NLP_ELS_SND_MASK   0x000007e0	/* sent ELS request for this entry */
 #define NLP_NVMET_RECOV    0x00001000   /* NVMET auditing node for recovery. */
 #define NLP_FCP_PRLI_RJT   0x00002000   /* Rport does not support FCP PRLI. */
+#define NLP_AUTH_TMO       0x00004000	/* authentication timer is active */
 #define NLP_UNREG_INP      0x00008000	/* UNREG_RPI cmd is in progress */
 #define NLP_DEFER_RM       0x00010000	/* Remove this ndlp if no longer used */
 #define NLP_DELAY_TMO      0x00020000	/* delay timeout is running for node */
@@ -185,7 +239,7 @@ struct lpfc_node_rrq {
 #define NLP_RM_DFLT_RPI    0x04000000	/* need to remove leftover dflt RPI */
 #define NLP_NODEV_REMOVE   0x08000000	/* Defer removal till discovery ends */
 #define NLP_TARGET_REMOVE  0x10000000   /* Target remove in process */
-#define NLP_SC_REQ         0x20000000	/* Target requires authentication */
+#define NLP_EXTERNAL_DIF   0x20000000	/* Target could support External DIF */
 #define NLP_FIRSTBURST     0x40000000	/* Target supports FirstBurst */
 #define NLP_RPI_REGISTERED 0x80000000	/* nlp_rpi is valid */
 

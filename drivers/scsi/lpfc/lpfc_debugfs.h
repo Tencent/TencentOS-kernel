@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2019 Broadcom. All Rights Reserved. The term *
+ * Copyright (C) 2017-2020 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.     *
  * Copyright (C) 2007-2011 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -32,6 +32,10 @@
 #define LPFC_NODELIST_SIZE 8192
 #define LPFC_NODELIST_ENTRY_SIZE 120
 
+/* ediflist output buffer size */
+#define LPFC_EDIFLIST_SIZE 8192
+#define LPFC_EDIFLIST_ENTRY_SIZE 120
+
 /* dumpHBASlim output buffer size */
 #define LPFC_DUMPHBASLIM_SIZE 4096
 
@@ -44,14 +48,26 @@
 /* hbqinfo output buffer size */
 #define LPFC_HBQINFO_SIZE 8192
 
+/* multixripool output buffer size */
+#define LPFC_DUMP_MULTIXRIPOOL_SIZE 8192
+
+enum {
+	DUMP_IO,
+	DUMP_MBX,
+	DUMP_ELS,
+	DUMP_NVMELS,
+};
+
 /* nvmestat output buffer size */
 #define LPFC_NVMESTAT_SIZE 8192
-#define LPFC_NVMEKTIME_SIZE 8192
-#define LPFC_CPUCHECK_SIZE 8192
+#define LPFC_IOKTIME_SIZE 8192
 #define LPFC_NVMEIO_TRC_SIZE 8192
 
 /* scsistat output buffer size */
 #define LPFC_SCSISTAT_SIZE 8192
+
+/* E2E Congestion Info Buffer size */
+#define LPFC_CGN_BUF_SIZE 8192
 
 #define LPFC_DEBUG_OUT_LINE_SZ	80
 
@@ -279,22 +295,12 @@ struct lpfc_idiag {
 	struct lpfc_idiag_offset offset;
 	void *ptr_private;
 };
-
-#else
-
-#define lpfc_nvmeio_data(phba, fmt, arg...) \
-	no_printk(fmt, ##arg)
-
 #endif
 
-/* multixripool output buffer size */
-#define LPFC_DUMP_MULTIXRIPOOL_SIZE 8192
-
-enum {
-	DUMP_IO,
-	DUMP_MBX,
-	DUMP_ELS,
-	DUMP_NVMELS,
+#define MAX_DEBUGFS_RX_TABLE_SIZE	(100 * LPFC_MAX_RXMONITOR_ENTRY)
+struct lpfc_rx_monitor_debug {
+	char *i_private;
+	char *buffer;
 };
 
 /* Mask for discovery_trace */
