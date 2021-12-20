@@ -1,8 +1,8 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2019 Broadcom. All Rights Reserved. The term *
- * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.  *
+ * Copyright (C) 2017-2021 Broadcom. All Rights Reserved. The term *
+ * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.     *
  * Copyright (C) 2007-2015 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
  * www.broadcom.com                                                *
@@ -31,14 +31,18 @@
 #include <linux/pci.h>
 #include <linux/spinlock.h>
 #include <linux/ctype.h>
+#include <linux/vmalloc.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_device.h>
 #include <scsi/scsi_host.h>
 #include <scsi/scsi_transport_fc.h>
 #include <scsi/fc/fc_fs.h>
-
+#if defined(BUILD_NVME)
+#if (IS_ENABLED(CONFIG_NVME_FC))
 #include <linux/nvme-fc-driver.h>
+#endif
+#endif
 
 #include "lpfc_hw4.h"
 #include "lpfc_hw.h"
@@ -107,10 +111,12 @@ MODULE_PARM_DESC(lpfc_debugfs_max_slow_ring_trc,
 	"Set debugfs slow ring trace depth");
 
 /* This MUST be a power of 2 */
+#ifdef BUILD_NVME
 static int lpfc_debugfs_max_nvmeio_trc;
 module_param(lpfc_debugfs_max_nvmeio_trc, int, 0444);
 MODULE_PARM_DESC(lpfc_debugfs_max_nvmeio_trc,
 		 "Set debugfs NVME IO trace depth");
+#endif
 
 static int lpfc_debugfs_mask_disc_trc;
 module_param(lpfc_debugfs_mask_disc_trc, int, S_IRUGO);
@@ -170,7 +176,7 @@ lpfc_debugfs_disc_trc_data(struct lpfc_vport *vport, char *buf, int size)
 		snprintf(buffer,
 			LPFC_DEBUG_TRC_ENTRY_SIZE, "%010d:%010d ms:%s\n",
 			dtp->seq_cnt, ms, dtp->fmt);
-		len +=  scnprintf(buf+len, size-len, buffer,
+		len += scnprintf(buf + len, size - len, buffer,
 			dtp->data1, dtp->data2, dtp->data3);
 	}
 	for (i = 0; i < index; i++) {
@@ -181,7 +187,7 @@ lpfc_debugfs_disc_trc_data(struct lpfc_vport *vport, char *buf, int size)
 		snprintf(buffer,
 			LPFC_DEBUG_TRC_ENTRY_SIZE, "%010d:%010d ms:%s\n",
 			dtp->seq_cnt, ms, dtp->fmt);
-		len +=  scnprintf(buf+len, size-len, buffer,
+		len += scnprintf(buf + len, size - len, buffer,
 			dtp->data1, dtp->data2, dtp->data3);
 	}
 
@@ -236,7 +242,7 @@ lpfc_debugfs_slow_ring_trc_data(struct lpfc_hba *phba, char *buf, int size)
 		snprintf(buffer,
 			LPFC_DEBUG_TRC_ENTRY_SIZE, "%010d:%010d ms:%s\n",
 			dtp->seq_cnt, ms, dtp->fmt);
-		len +=  scnprintf(buf+len, size-len, buffer,
+		len += scnprintf(buf + len, size - len, buffer,
 			dtp->data1, dtp->data2, dtp->data3);
 	}
 	for (i = 0; i < index; i++) {
@@ -247,7 +253,7 @@ lpfc_debugfs_slow_ring_trc_data(struct lpfc_hba *phba, char *buf, int size)
 		snprintf(buffer,
 			LPFC_DEBUG_TRC_ENTRY_SIZE, "%010d:%010d ms:%s\n",
 			dtp->seq_cnt, ms, dtp->fmt);
-		len +=  scnprintf(buf+len, size-len, buffer,
+		len += scnprintf(buf + len, size - len, buffer,
 			dtp->data1, dtp->data2, dtp->data3);
 	}
 
@@ -307,7 +313,7 @@ lpfc_debugfs_hbqinfo_data(struct lpfc_hba *phba, char *buf, int size)
 
 	i = lpfc_debugfs_last_hbq;
 
-	len +=  scnprintf(buf+len, size-len, "HBQ %d Info\n", i);
+	len += scnprintf(buf + len, size - len, "HBQ %d Info\n", i);
 
 	hbqs =  &phba->hbqs[i];
 	posted = 0;
@@ -315,21 +321,21 @@ lpfc_debugfs_hbqinfo_data(struct lpfc_hba *phba, char *buf, int size)
 		posted++;
 
 	hip =  lpfc_hbq_defs[i];
-	len +=  scnprintf(buf+len, size-len,
+	len += scnprintf(buf + len, size - len,
 		"idx:%d prof:%d rn:%d bufcnt:%d icnt:%d acnt:%d posted %d\n",
 		hip->hbq_index, hip->profile, hip->rn,
 		hip->buffer_count, hip->init_count, hip->add_count, posted);
 
 	raw_index = phba->hbq_get[i];
 	getidx = le32_to_cpu(raw_index);
-	len +=  scnprintf(buf+len, size-len,
+	len += scnprintf(buf + len, size - len,
 		"entries:%d bufcnt:%d Put:%d nPut:%d localGet:%d hbaGet:%d\n",
 		hbqs->entry_count, hbqs->buffer_count, hbqs->hbqPutIdx,
 		hbqs->next_hbqPutIdx, hbqs->local_hbqGetIdx, getidx);
 
 	hbqe = (struct lpfc_hbq_entry *) phba->hbqs[i].hbq_virt;
 	for (j=0; j<hbqs->entry_count; j++) {
-		len +=  scnprintf(buf+len, size-len,
+		len += scnprintf(buf + len, size - len,
 			"%03d: %08x %04x %05x ", j,
 			le32_to_cpu(hbqe->bde.addrLow),
 			le32_to_cpu(hbqe->bde.tus.w),
@@ -341,16 +347,16 @@ lpfc_debugfs_hbqinfo_data(struct lpfc_hba *phba, char *buf, int size)
 		low = hbqs->hbqPutIdx - posted;
 		if (low >= 0) {
 			if ((j >= hbqs->hbqPutIdx) || (j < low)) {
-				len +=  scnprintf(buf + len, size - len,
-						"Unused\n");
+				len += scnprintf(buf + len,
+						 size - len, "Unused\n");
 				goto skipit;
 			}
 		}
 		else {
 			if ((j >= hbqs->hbqPutIdx) &&
 				(j < (hbqs->entry_count+low))) {
-				len +=  scnprintf(buf + len, size - len,
-						"Unused\n");
+				len += scnprintf(buf + len,
+						 size - len, "Unused\n");
 				goto skipit;
 			}
 		}
@@ -360,7 +366,7 @@ lpfc_debugfs_hbqinfo_data(struct lpfc_hba *phba, char *buf, int size)
 			hbq_buf = container_of(d_buf, struct hbq_dmabuf, dbuf);
 			phys = ((uint64_t)hbq_buf->dbuf.phys & 0xffffffff);
 			if (phys == le32_to_cpu(hbqe->bde.addrLow)) {
-				len +=  scnprintf(buf+len, size-len,
+				len += scnprintf(buf + len, size - len,
 					"Buf%d: x%px %06x\n", i,
 					hbq_buf->dbuf.virt, hbq_buf->tag);
 				found = 1;
@@ -369,7 +375,8 @@ lpfc_debugfs_hbqinfo_data(struct lpfc_hba *phba, char *buf, int size)
 			i++;
 		}
 		if (!found) {
-			len +=  scnprintf(buf+len, size-len, "No DMAinfo?\n");
+			len += scnprintf(buf + len,
+					 size - len, "No DMAinfo?\n");
 		}
 skipit:
 		hbqe++;
@@ -568,6 +575,71 @@ lpfc_debugfs_multixripools_data(struct lpfc_hba *phba, char *buf, int size)
 	return strnlen(buf, size);
 }
 
+/**
+ * lpfc_debugfs_multixripools_write - Clear multi-XRI pools statistics
+ * @file: The file pointer to read from.
+ * @buf: The buffer to copy the user data from.
+ * @nbytes: The number of bytes to get.
+ * @ppos: The position in the file to start reading from.
+ *
+ * Description:
+ * This routine clears multi-XRI pools statistics when buf contains "clear".
+ *
+ * Return Value:
+ * It returns the @nbytges passing in from debugfs user space when successful.
+ * In case of error conditions, it returns proper error code back to the user
+ * space.
+ **/
+static ssize_t
+lpfc_debugfs_multixripools_write(struct file *file, const char __user *buf,
+				 size_t nbytes, loff_t *ppos)
+{
+	struct lpfc_debug *debug = file->private_data;
+	struct lpfc_hba *phba = (struct lpfc_hba *)debug->i_private;
+	char mybuf[64];
+	char *pbuf;
+	u32 i;
+	u32 hwq_count;
+	struct lpfc_sli4_hdw_queue *qp;
+	struct lpfc_multixri_pool *multixri_pool;
+
+	if (nbytes > 64)
+		nbytes = 64;
+
+	memset(mybuf, 0, sizeof(mybuf));
+
+	if (copy_from_user(mybuf, buf, nbytes))
+		return -EFAULT;
+	pbuf = &mybuf[0];
+
+	if ((strncmp(pbuf, "clear", strlen("clear"))) == 0) {
+		hwq_count = phba->cfg_hdw_queue;
+		for (i = 0; i < hwq_count; i++) {
+			qp = &phba->sli4_hba.hdwq[i];
+			multixri_pool = qp->p_multixri_pool;
+			if (!multixri_pool)
+				continue;
+
+			qp->empty_io_bufs = 0;
+			multixri_pool->pbl_empty_count = 0;
+#ifdef LPFC_MXP_STAT
+			multixri_pool->above_limit_count = 0;
+			multixri_pool->below_limit_count = 0;
+			multixri_pool->stat_max_hwm = 0;
+			multixri_pool->local_pbl_hit_count = 0;
+			multixri_pool->other_pbl_hit_count = 0;
+
+			multixri_pool->stat_pbl_count = 0;
+			multixri_pool->stat_pvt_count = 0;
+			multixri_pool->stat_busy_count = 0;
+			multixri_pool->stat_snapshot_taken = 0;
+#endif
+		}
+		return strlen(pbuf);
+	}
+
+	return -EINVAL;
+}
 
 #ifdef LPFC_HDWQ_LOCK_STAT
 static int lpfc_debugfs_last_lock;
@@ -676,7 +748,7 @@ lpfc_debugfs_dumpHBASlim_data(struct lpfc_hba *phba, char *buf, int size)
 	off = 0;
 	spin_lock_irq(&phba->hbalock);
 
-	len +=  scnprintf(buf+len, size-len, "HBA SLIM\n");
+	len += scnprintf(buf + len, size - len, "HBA SLIM\n");
 	lpfc_memcpy_from_slim(buffer,
 		phba->MBslimaddr + lpfc_debugfs_last_hba_slim_off, 1024);
 
@@ -690,7 +762,7 @@ lpfc_debugfs_dumpHBASlim_data(struct lpfc_hba *phba, char *buf, int size)
 
 	i = 1024;
 	while (i > 0) {
-		len +=  scnprintf(buf+len, size-len,
+		len += scnprintf(buf + len, size - len,
 		"%08x: %08x %08x %08x %08x %08x %08x %08x %08x\n",
 		off, *ptr, *(ptr+1), *(ptr+2), *(ptr+3), *(ptr+4),
 		*(ptr+5), *(ptr+6), *(ptr+7));
@@ -734,11 +806,11 @@ lpfc_debugfs_dumpHostSlim_data(struct lpfc_hba *phba, char *buf, int size)
 	off = 0;
 	spin_lock_irq(&phba->hbalock);
 
-	len +=  scnprintf(buf+len, size-len, "SLIM Mailbox\n");
+	len += scnprintf(buf + len, size - len, "SLIM Mailbox\n");
 	ptr = (uint32_t *)phba->slim2p.virt;
 	i = sizeof(MAILBOX_t);
 	while (i > 0) {
-		len +=  scnprintf(buf+len, size-len,
+		len += scnprintf(buf + len, size - len,
 		"%08x: %08x %08x %08x %08x %08x %08x %08x %08x\n",
 		off, *ptr, *(ptr+1), *(ptr+2), *(ptr+3), *(ptr+4),
 		*(ptr+5), *(ptr+6), *(ptr+7));
@@ -747,11 +819,11 @@ lpfc_debugfs_dumpHostSlim_data(struct lpfc_hba *phba, char *buf, int size)
 		off += (8 * sizeof(uint32_t));
 	}
 
-	len +=  scnprintf(buf+len, size-len, "SLIM PCB\n");
+	len += scnprintf(buf + len, size - len, "SLIM PCB\n");
 	ptr = (uint32_t *)phba->pcb;
 	i = sizeof(PCB_t);
 	while (i > 0) {
-		len +=  scnprintf(buf+len, size-len,
+		len += scnprintf(buf + len, size - len,
 		"%08x: %08x %08x %08x %08x %08x %08x %08x %08x\n",
 		off, *ptr, *(ptr+1), *(ptr+2), *(ptr+3), *(ptr+4),
 		*(ptr+5), *(ptr+6), *(ptr+7));
@@ -764,7 +836,7 @@ lpfc_debugfs_dumpHostSlim_data(struct lpfc_hba *phba, char *buf, int size)
 		for (i = 0; i < 4; i++) {
 			pgpp = &phba->port_gp[i];
 			pring = &psli->sli3_ring[i];
-			len +=  scnprintf(buf+len, size-len,
+			len += scnprintf(buf + len, size - len,
 					 "Ring %d: CMD GetInx:%d "
 					 "(Max:%d Next:%d "
 					 "Local:%d flg:x%x)  "
@@ -781,7 +853,8 @@ lpfc_debugfs_dumpHostSlim_data(struct lpfc_hba *phba, char *buf, int size)
 		word1 = readl(phba->CAregaddr);
 		word2 = readl(phba->HSregaddr);
 		word3 = readl(phba->HCregaddr);
-		len +=  scnprintf(buf+len, size-len, "HA:%08x CA:%08x HS:%08x "
+		len += scnprintf(buf + len,
+				 size - len, "HA:%08x CA:%08x HS:%08x "
 				 "HC:%08x\n", word0, word1, word2, word3);
 	}
 	spin_unlock_irq(&phba->hbalock);
@@ -809,22 +882,26 @@ lpfc_debugfs_nodelist_data(struct lpfc_vport *vport, char *buf, int size)
 	int len = 0;
 	int i, iocnt, outio, cnt;
 	struct Scsi_Host *shost = lpfc_shost_from_vport(vport);
-	struct lpfc_hba  *phba = vport->phba;
 	struct lpfc_nodelist *ndlp;
 	unsigned char *statep;
+#if defined(BUILD_NVME)
+#if (IS_ENABLED(CONFIG_NVME_FC))
+	struct lpfc_hba  *phba = vport->phba;
 	struct nvme_fc_local_port *localport;
 	struct nvme_fc_remote_port *nrport = NULL;
 	struct lpfc_nvme_rport *rport;
+#endif
+#endif
 
 	cnt = (LPFC_NODELIST_SIZE / LPFC_NODELIST_ENTRY_SIZE);
 	outio = 0;
 
-	len += scnprintf(buf+len, size-len, "\nFCP Nodelist Entries ...\n");
+	len += scnprintf(buf + len, size - len, "\nFCP Nodelist Entries ...\n");
 	spin_lock_irq(shost->host_lock);
 	list_for_each_entry(ndlp, &vport->fc_nodes, nlp_listp) {
 		iocnt = 0;
 		if (!cnt) {
-			len +=  scnprintf(buf+len, size-len,
+			len += scnprintf(buf + len, size - len,
 				"Missing Nodelist Entries\n");
 			break;
 		}
@@ -862,34 +939,37 @@ lpfc_debugfs_nodelist_data(struct lpfc_vport *vport, char *buf, int size)
 		default:
 			statep = "UNKNOWN";
 		}
-		len += scnprintf(buf+len, size-len, "%s DID:x%06x ",
+		len += scnprintf(buf + len, size - len, "%s DID:x%06x ",
 				statep, ndlp->nlp_DID);
-		len += scnprintf(buf+len, size-len,
+		len += scnprintf(buf + len, size - len,
 				"WWPN x%llx ",
 				wwn_to_u64(ndlp->nlp_portname.u.wwn));
-		len += scnprintf(buf+len, size-len,
+		len += scnprintf(buf + len, size - len,
 				"WWNN x%llx ",
 				wwn_to_u64(ndlp->nlp_nodename.u.wwn));
 		if (ndlp->nlp_flag & NLP_RPI_REGISTERED)
-			len += scnprintf(buf+len, size-len, "RPI:%03d ",
+			len += scnprintf(buf + len, size - len, "RPI:%03d ",
 					ndlp->nlp_rpi);
 		else
-			len += scnprintf(buf+len, size-len, "RPI:none ");
-		len +=  scnprintf(buf+len, size-len, "flag:x%08x ",
+			len += scnprintf(buf + len, size - len, "RPI:none ");
+		len += scnprintf(buf + len, size - len, "flag:x%08x ",
 			ndlp->nlp_flag);
 		if (!ndlp->nlp_type)
-			len += scnprintf(buf+len, size-len, "UNKNOWN_TYPE ");
+			len += scnprintf(buf + len, size - len,
+					 "UNKNOWN_TYPE ");
 		if (ndlp->nlp_type & NLP_FC_NODE)
-			len += scnprintf(buf+len, size-len, "FC_NODE ");
+			len += scnprintf(buf + len, size - len, "FC_NODE ");
 		if (ndlp->nlp_type & NLP_FABRIC) {
-			len += scnprintf(buf+len, size-len, "FABRIC ");
+			len += scnprintf(buf + len, size - len, "FABRIC ");
 			iocnt = 0;
 		}
 		if (ndlp->nlp_type & NLP_FCP_TARGET)
-			len += scnprintf(buf+len, size-len, "FCP_TGT sid:%d ",
-				ndlp->nlp_sid);
+			len += scnprintf(buf + len,
+					size - len, "FCP_TGT sid:%d ",
+					ndlp->nlp_sid);
 		if (ndlp->nlp_type & NLP_FCP_INITIATOR)
-			len += scnprintf(buf+len, size-len, "FCP_INITIATOR ");
+			len += scnprintf(buf + len,
+					size - len, "FCP_INITIATOR ");
 		if (ndlp->nlp_type & NLP_NVME_TARGET)
 			len += scnprintf(buf + len,
 					size - len, "NVME_TGT sid:%d ",
@@ -897,9 +977,9 @@ lpfc_debugfs_nodelist_data(struct lpfc_vport *vport, char *buf, int size)
 		if (ndlp->nlp_type & NLP_NVME_INITIATOR)
 			len += scnprintf(buf + len,
 					size - len, "NVME_INITIATOR ");
-		len += scnprintf(buf+len, size-len, "usgmap:%x ",
+		len += scnprintf(buf + len, size - len, "usgmap:%x ",
 			ndlp->nlp_usg_map);
-		len += scnprintf(buf+len, size-len, "refcnt:%x",
+		len += scnprintf(buf + len, size - len, "refcnt:%x",
 			kref_read(&ndlp->kref));
 		if (iocnt) {
 			i = atomic_read(&ndlp->cmd_pending);
@@ -910,13 +990,15 @@ lpfc_debugfs_nodelist_data(struct lpfc_vport *vport, char *buf, int size)
 		}
 		len += scnprintf(buf + len, size - len, "defer:%x ",
 			ndlp->nlp_defer_did);
-		len +=  scnprintf(buf+len, size-len, "\n");
+		len += scnprintf(buf + len, size - len, "\n");
 	}
 	spin_unlock_irq(shost->host_lock);
 
 	len += scnprintf(buf + len, size - len,
 			"\nOutstanding IO x%x\n",  outio);
 
+#if defined(BUILD_NVME)
+#if (IS_ENABLED(CONFIG_NVME_FC))
 	if (phba->nvmet_support && phba->targetport && (vport == phba->pport)) {
 		len += scnprintf(buf + len, size - len,
 				"\nNVME Targetport Entry ...\n");
@@ -993,26 +1075,29 @@ lpfc_debugfs_nodelist_data(struct lpfc_vport *vport, char *buf, int size)
 
 		/* An NVME rport can have multiple roles. */
 		if (nrport->port_role & FC_PORT_ROLE_NVME_INITIATOR)
-			len +=  scnprintf(buf + len, size - len,
+			len += scnprintf(buf + len, size - len,
 					 "INITIATOR ");
 		if (nrport->port_role & FC_PORT_ROLE_NVME_TARGET)
-			len +=  scnprintf(buf + len, size - len,
+			len += scnprintf(buf + len, size - len,
 					 "TARGET ");
 		if (nrport->port_role & FC_PORT_ROLE_NVME_DISCOVERY)
-			len +=  scnprintf(buf + len, size - len,
+			len += scnprintf(buf + len, size - len,
 					 "DISCSRVC ");
 		if (nrport->port_role & ~(FC_PORT_ROLE_NVME_INITIATOR |
 					  FC_PORT_ROLE_NVME_TARGET |
 					  FC_PORT_ROLE_NVME_DISCOVERY))
-			len +=  scnprintf(buf + len, size - len,
+			len += scnprintf(buf + len, size - len,
 					 "UNKNOWN ROLE x%x",
 					 nrport->port_role);
 		/* Terminate the string. */
-		len +=  scnprintf(buf + len, size - len, "\n");
+		len += scnprintf(buf + len, size - len, "\n");
 	}
 
 	spin_unlock_irq(shost->host_lock);
+
  out_exit:
+#endif
+#endif
 	return len;
 }
 
@@ -1032,6 +1117,8 @@ lpfc_debugfs_nodelist_data(struct lpfc_vport *vport, char *buf, int size)
 static int
 lpfc_debugfs_nvmestat_data(struct lpfc_vport *vport, char *buf, int size)
 {
+	int len = 0;
+#if defined(BUILD_NVME) && (IS_ENABLED(CONFIG_NVME_FC))
 	struct lpfc_hba   *phba = vport->phba;
 	struct lpfc_nvmet_tgtport *tgtp;
 	struct lpfc_nvmet_rcv_ctx *ctxp, *next_ctxp;
@@ -1041,7 +1128,6 @@ lpfc_debugfs_nvmestat_data(struct lpfc_vport *vport, char *buf, int size)
 	uint64_t data1, data2, data3;
 	uint64_t tot, totin, totout;
 	int cnt, i;
-	int len = 0;
 
 	if (phba->nvmet_support) {
 		if (!phba->targetport)
@@ -1123,7 +1209,7 @@ lpfc_debugfs_nvmestat_data(struct lpfc_vport *vport, char *buf, int size)
 				atomic_read(&tgtp->xmt_abort_rsp),
 				atomic_read(&tgtp->xmt_abort_rsp_error));
 
-		len +=  scnprintf(buf + len, size - len, "\n");
+		len += scnprintf(buf + len, size - len, "\n");
 
 		cnt = 0;
 		spin_lock(&phba->sli4_hba.abts_nvmet_buf_list_lock);
@@ -1138,8 +1224,8 @@ lpfc_debugfs_nvmestat_data(struct lpfc_vport *vport, char *buf, int size)
 					"ABORT: %d ctx entries\n", cnt);
 			spin_lock(&phba->sli4_hba.abts_nvmet_buf_list_lock);
 			list_for_each_entry_safe(ctxp, next_ctxp,
-				    &phba->sli4_hba.lpfc_abts_nvmet_ctx_list,
-				    list) {
+				&phba->sli4_hba.lpfc_abts_nvmet_ctx_list,
+				list) {
 				if (len >= (size - LPFC_DEBUG_OUT_LINE_SZ))
 					break;
 				len += scnprintf(buf + len, size - len,
@@ -1234,6 +1320,7 @@ lpfc_debugfs_nvmestat_data(struct lpfc_vport *vport, char *buf, int size)
 				atomic_read(&lport->cmpl_fcp_err));
 
 	}
+#endif
 
 	return len;
 }
@@ -1299,8 +1386,88 @@ buffer_done:
 	return len;
 }
 
+void
+lpfc_io_ktime(struct lpfc_hba *phba, struct lpfc_io_buf *lpfc_cmd)
+{
+	uint64_t seg1, seg2, seg3, seg4;
+	uint64_t segsum;
+
+	if (!lpfc_cmd->ts_last_cmd ||
+	    !lpfc_cmd->ts_cmd_start ||
+	    !lpfc_cmd->ts_cmd_wqput ||
+	    !lpfc_cmd->ts_isr_cmpl ||
+	    !lpfc_cmd->ts_data_io)
+		return;
+
+	if (lpfc_cmd->ts_data_io < lpfc_cmd->ts_cmd_start)
+		return;
+	if (lpfc_cmd->ts_cmd_start < lpfc_cmd->ts_last_cmd)
+		return;
+	if (lpfc_cmd->ts_cmd_wqput < lpfc_cmd->ts_cmd_start)
+		return;
+	if (lpfc_cmd->ts_isr_cmpl < lpfc_cmd->ts_cmd_wqput)
+		return;
+	if (lpfc_cmd->ts_data_io < lpfc_cmd->ts_isr_cmpl)
+		return;
+	/*
+	 * Segment 1 - Time from Last FCP command cmpl is handed
+	 * off to NVME Layer to start of next command.
+	 * Segment 2 - Time from Driver receives a IO cmd start
+	 * from NVME Layer to WQ put is done on IO cmd.
+	 * Segment 3 - Time from Driver WQ put is done on IO cmd
+	 * to MSI-X ISR for IO cmpl.
+	 * Segment 4 - Time from MSI-X ISR for IO cmpl to when
+	 * cmpl is handled off to the NVME Layer.
+	 */
+	seg1 = lpfc_cmd->ts_cmd_start - lpfc_cmd->ts_last_cmd;
+	if (seg1 > 5000000)  /* 5 ms - for sequential IOs only */
+		seg1 = 0;
+
+	/* Calculate times relative to start of IO */
+	seg2 = (lpfc_cmd->ts_cmd_wqput - lpfc_cmd->ts_cmd_start);
+	segsum = seg2;
+	seg3 = lpfc_cmd->ts_isr_cmpl - lpfc_cmd->ts_cmd_start;
+	if (segsum > seg3)
+		return;
+	seg3 -= segsum;
+	segsum += seg3;
+
+	seg4 = lpfc_cmd->ts_data_io - lpfc_cmd->ts_cmd_start;
+	if (segsum > seg4)
+		return;
+	seg4 -= segsum;
+
+	phba->ktime_data_samples++;
+	phba->ktime_seg1_total += seg1;
+	if (seg1 < phba->ktime_seg1_min)
+		phba->ktime_seg1_min = seg1;
+	else if (seg1 > phba->ktime_seg1_max)
+		phba->ktime_seg1_max = seg1;
+	phba->ktime_seg2_total += seg2;
+	if (seg2 < phba->ktime_seg2_min)
+		phba->ktime_seg2_min = seg2;
+	else if (seg2 > phba->ktime_seg2_max)
+		phba->ktime_seg2_max = seg2;
+	phba->ktime_seg3_total += seg3;
+	if (seg3 < phba->ktime_seg3_min)
+		phba->ktime_seg3_min = seg3;
+	else if (seg3 > phba->ktime_seg3_max)
+		phba->ktime_seg3_max = seg3;
+	phba->ktime_seg4_total += seg4;
+	if (seg4 < phba->ktime_seg4_min)
+		phba->ktime_seg4_min = seg4;
+	else if (seg4 > phba->ktime_seg4_max)
+		phba->ktime_seg4_max = seg4;
+
+	lpfc_cmd->ts_last_cmd = 0;
+	lpfc_cmd->ts_cmd_start = 0;
+	lpfc_cmd->ts_cmd_wqput  = 0;
+	lpfc_cmd->ts_isr_cmpl = 0;
+	lpfc_cmd->ts_data_io = 0;
+}
+
 /**
- * lpfc_debugfs_nvmektime_data - Dump target node list to a buffer
+ * lpfc_debugfs_ioktime_data - Dump target node list to a buffer
  * @vport: The vport to gather target node info from.
  * @buf: The buffer to dump log into.
  * @size: The maximum amount of data to process.
@@ -1313,13 +1480,13 @@ buffer_done:
  * not exceed @size.
  **/
 static int
-lpfc_debugfs_nvmektime_data(struct lpfc_vport *vport, char *buf, int size)
+lpfc_debugfs_ioktime_data(struct lpfc_vport *vport, char *buf, int size)
 {
 	struct lpfc_hba   *phba = vport->phba;
 	int len = 0;
 
 	if (phba->nvmet_support == 0) {
-		/* NVME Initiator */
+		/* Initiator */
 		len += scnprintf(buf + len, PAGE_SIZE - len,
 				"ktime %s: Total Samples: %lld\n",
 				(phba->ktime_on ?  "Enabled" : "Disabled"),
@@ -1329,8 +1496,8 @@ lpfc_debugfs_nvmektime_data(struct lpfc_vport *vport, char *buf, int size)
 
 		len += scnprintf(
 			buf + len, PAGE_SIZE - len,
-			"Segment 1: Last NVME Cmd cmpl "
-			"done -to- Start of next NVME cnd (in driver)\n");
+			"Segment 1: Last Cmd cmpl "
+			"done -to- Start of next Cmd (in driver)\n");
 		len += scnprintf(
 			buf + len, PAGE_SIZE - len,
 			"avg:%08lld min:%08lld max %08lld\n",
@@ -1340,7 +1507,7 @@ lpfc_debugfs_nvmektime_data(struct lpfc_vport *vport, char *buf, int size)
 			phba->ktime_seg1_max);
 		len += scnprintf(
 			buf + len, PAGE_SIZE - len,
-			"Segment 2: Driver start of NVME cmd "
+			"Segment 2: Driver start of Cmd "
 			"-to- Firmware WQ doorbell\n");
 		len += scnprintf(
 			buf + len, PAGE_SIZE - len,
@@ -1363,7 +1530,7 @@ lpfc_debugfs_nvmektime_data(struct lpfc_vport *vport, char *buf, int size)
 		len += scnprintf(
 			buf + len, PAGE_SIZE - len,
 			"Segment 4: MSI-X ISR cmpl -to- "
-			"NVME cmpl done\n");
+			"Cmd cmpl done\n");
 		len += scnprintf(
 			buf + len, PAGE_SIZE - len,
 			"avg:%08lld min:%08lld max %08lld\n",
@@ -1383,7 +1550,7 @@ lpfc_debugfs_nvmektime_data(struct lpfc_vport *vport, char *buf, int size)
 	}
 
 	/* NVME Target */
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"ktime %s: Total Samples: %lld %lld\n",
 			(phba->ktime_on ? "Enabled" : "Disabled"),
 			phba->ktime_data_samples,
@@ -1391,46 +1558,46 @@ lpfc_debugfs_nvmektime_data(struct lpfc_vport *vport, char *buf, int size)
 	if (phba->ktime_data_samples == 0)
 		return len;
 
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"Segment 1: MSI-X ISR Rcv cmd -to- "
 			"cmd pass to NVME Layer\n");
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"avg:%08lld min:%08lld max %08lld\n",
 			div_u64(phba->ktime_seg1_total,
 				phba->ktime_data_samples),
 			phba->ktime_seg1_min,
 			phba->ktime_seg1_max);
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"Segment 2: cmd pass to NVME Layer- "
 			"-to- Driver rcv cmd OP (action)\n");
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"avg:%08lld min:%08lld max %08lld\n",
 			div_u64(phba->ktime_seg2_total,
 				phba->ktime_data_samples),
 			phba->ktime_seg2_min,
 			phba->ktime_seg2_max);
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"Segment 3: Driver rcv cmd OP -to- "
 			"Firmware WQ doorbell: cmd\n");
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"avg:%08lld min:%08lld max %08lld\n",
 			div_u64(phba->ktime_seg3_total,
 				phba->ktime_data_samples),
 			phba->ktime_seg3_min,
 			phba->ktime_seg3_max);
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"Segment 4: Firmware WQ doorbell: cmd "
 			"-to- MSI-X ISR for cmd cmpl\n");
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"avg:%08lld min:%08lld max %08lld\n",
 			div_u64(phba->ktime_seg4_total,
 				phba->ktime_data_samples),
 			phba->ktime_seg4_min,
 			phba->ktime_seg4_max);
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"Segment 5: MSI-X ISR for cmd cmpl "
 			"-to- NVME layer passed cmd done\n");
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"avg:%08lld min:%08lld max %08lld\n",
 			div_u64(phba->ktime_seg5_total,
 				phba->ktime_data_samples),
@@ -1438,10 +1605,10 @@ lpfc_debugfs_nvmektime_data(struct lpfc_vport *vport, char *buf, int size)
 			phba->ktime_seg5_max);
 
 	if (phba->ktime_status_samples == 0) {
-		len += scnprintf(buf + len, PAGE_SIZE-len,
+		len += scnprintf(buf + len, PAGE_SIZE - len,
 				"Total: cmd received by MSI-X ISR "
 				"-to- cmd completed on wire\n");
-		len += scnprintf(buf + len, PAGE_SIZE-len,
+		len += scnprintf(buf + len, PAGE_SIZE - len,
 				"avg:%08lld min:%08lld "
 				"max %08lld\n",
 				div_u64(phba->ktime_seg10_total,
@@ -1451,46 +1618,46 @@ lpfc_debugfs_nvmektime_data(struct lpfc_vport *vport, char *buf, int size)
 		return len;
 	}
 
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"Segment 6: NVME layer passed cmd done "
 			"-to- Driver rcv rsp status OP\n");
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"avg:%08lld min:%08lld max %08lld\n",
 			div_u64(phba->ktime_seg6_total,
 				phba->ktime_status_samples),
 			phba->ktime_seg6_min,
 			phba->ktime_seg6_max);
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"Segment 7: Driver rcv rsp status OP "
 			"-to- Firmware WQ doorbell: status\n");
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"avg:%08lld min:%08lld max %08lld\n",
 			div_u64(phba->ktime_seg7_total,
 				phba->ktime_status_samples),
 			phba->ktime_seg7_min,
 			phba->ktime_seg7_max);
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"Segment 8: Firmware WQ doorbell: status"
 			" -to- MSI-X ISR for status cmpl\n");
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"avg:%08lld min:%08lld max %08lld\n",
 			div_u64(phba->ktime_seg8_total,
 				phba->ktime_status_samples),
 			phba->ktime_seg8_min,
 			phba->ktime_seg8_max);
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"Segment 9: MSI-X ISR for status cmpl  "
 			"-to- NVME layer passed status done\n");
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"avg:%08lld min:%08lld max %08lld\n",
 			div_u64(phba->ktime_seg9_total,
 				phba->ktime_status_samples),
 			phba->ktime_seg9_min,
 			phba->ktime_seg9_max);
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"Total: cmd received by MSI-X ISR -to- "
 			"cmd completed on wire\n");
-	len += scnprintf(buf + len, PAGE_SIZE-len,
+	len += scnprintf(buf + len, PAGE_SIZE - len,
 			"avg:%08lld min:%08lld max %08lld\n",
 			div_u64(phba->ktime_seg10_total,
 				phba->ktime_status_samples),
@@ -1547,7 +1714,7 @@ lpfc_debugfs_nvmeio_trc_data(struct lpfc_hba *phba, char *buf, int size)
 		if (!dtp->fmt)
 			continue;
 
-		len +=  scnprintf(buf + len, size - len, dtp->fmt,
+		len += scnprintf(buf + len, size - len, dtp->fmt,
 			dtp->data1, dtp->data2, dtp->data3);
 
 		if (phba->nvmeio_trc_output_idx >= phba->nvmeio_trc_size) {
@@ -1576,7 +1743,7 @@ lpfc_debugfs_nvmeio_trc_data(struct lpfc_hba *phba, char *buf, int size)
 		if (!dtp->fmt)
 			continue;
 
-		len +=  scnprintf(buf + len, size - len, dtp->fmt,
+		len += scnprintf(buf + len, size - len, dtp->fmt,
 			dtp->data1, dtp->data2, dtp->data3);
 
 		if (phba->nvmeio_trc_output_idx >= phba->nvmeio_trc_size) {
@@ -1602,42 +1769,50 @@ out:
 }
 
 /**
- * lpfc_debugfs_cpucheck_data - Dump target node list to a buffer
+ * lpfc_debugfs_hdwqstat_data - Dump I/O stats to a buffer
  * @vport: The vport to gather target node info from.
  * @buf: The buffer to dump log into.
  * @size: The maximum amount of data to process.
  *
  * Description:
- * This routine dumps the NVME statistics associated with @vport
+ * This routine dumps the NVME + SCSI statistics associated with @vport
  *
  * Return Value:
  * This routine returns the amount of bytes that were dumped into @buf and will
  * not exceed @size.
  **/
 static int
-lpfc_debugfs_cpucheck_data(struct lpfc_vport *vport, char *buf, int size)
+lpfc_debugfs_hdwqstat_data(struct lpfc_vport *vport, char *buf, int size)
 {
 	struct lpfc_hba   *phba = vport->phba;
 	struct lpfc_sli4_hdw_queue *qp;
-	int i, j, max_cnt;
-	int len = 0;
+	struct lpfc_hdwq_stat *c_stat;
+	int i, j, len;
 	uint32_t tot_xmt;
 	uint32_t tot_rcv;
 	uint32_t tot_cmpl;
+	char tmp[LPFC_MAX_SCSI_INFO_TMP_LEN] = {0};
 
-	len += scnprintf(buf + len, PAGE_SIZE - len,
-			"CPUcheck %s ",
-			(phba->cpucheck_on & LPFC_CHECK_NVME_IO ?
-				"Enabled" : "Disabled"));
-	if (phba->nvmet_support) {
-		len += scnprintf(buf + len, PAGE_SIZE - len,
-				"%s\n",
-				(phba->cpucheck_on & LPFC_CHECK_NVMET_RCV ?
-					"Rcv Enabled\n" : "Rcv Disabled\n"));
-	} else {
-		len += scnprintf(buf + len, PAGE_SIZE - len, "\n");
-	}
-	max_cnt = size - LPFC_DEBUG_OUT_LINE_SZ;
+	scnprintf(tmp, sizeof(tmp), "HDWQ Stats:\n\n");
+	if (strlcat(buf, tmp, size) >= size)
+		goto buffer_done;
+
+	scnprintf(tmp, sizeof(tmp), "(NVME Accounting: %s) ",
+		  (phba->hdwqstat_on &
+		  (LPFC_CHECK_NVME_IO | LPFC_CHECK_NVMET_IO) ?
+		  "Enabled" : "Disabled"));
+	if (strlcat(buf, tmp, size) >= size)
+		goto buffer_done;
+
+	scnprintf(tmp, sizeof(tmp), "(SCSI Accounting: %s) ",
+		  (phba->hdwqstat_on & LPFC_CHECK_SCSI_IO ?
+		  "Enabled" : "Disabled"));
+	if (strlcat(buf, tmp, size) >= size)
+		goto buffer_done;
+
+	scnprintf(tmp, sizeof(tmp), "\n\n");
+	if (strlcat(buf, tmp, size) >= size)
+		goto buffer_done;
 
 	for (i = 0; i < phba->cfg_hdw_queue; i++) {
 		qp = &phba->sli4_hba.hdwq[i];
@@ -1645,46 +1820,149 @@ lpfc_debugfs_cpucheck_data(struct lpfc_vport *vport, char *buf, int size)
 		tot_rcv = 0;
 		tot_xmt = 0;
 		tot_cmpl = 0;
-		for (j = 0; j < LPFC_CHECK_CPU_CNT; j++) {
-			tot_xmt += qp->cpucheck_xmt_io[j];
-			tot_cmpl += qp->cpucheck_cmpl_io[j];
+
+		for_each_present_cpu(j) {
+			c_stat = per_cpu_ptr(phba->sli4_hba.c_stat, j);
+
+			/* Only display for this HDWQ */
+			if (i != c_stat->hdwq_no)
+				continue;
+
+			/* Only display non-zero counters */
+			if (!c_stat->xmt_io && !c_stat->cmpl_io &&
+			    !c_stat->rcv_io)
+				continue;
+
+			if (!tot_xmt && !tot_cmpl && !tot_rcv) {
+				/* Print HDWQ string only the first time */
+				scnprintf(tmp, sizeof(tmp), "[HDWQ %d]:\t", i);
+				if (strlcat(buf, tmp, size) >= size)
+					goto buffer_done;
+			}
+
+			tot_xmt += c_stat->xmt_io;
+			tot_cmpl += c_stat->cmpl_io;
 			if (phba->nvmet_support)
-				tot_rcv += qp->cpucheck_rcv_io[j];
+				tot_rcv += c_stat->rcv_io;
+
+			scnprintf(tmp, sizeof(tmp), "| [CPU %d]: ", j);
+			if (strlcat(buf, tmp, size) >= size)
+				goto buffer_done;
+
+			if (phba->nvmet_support) {
+				scnprintf(tmp, sizeof(tmp),
+					  "XMT 0x%x CMPL 0x%x RCV 0x%x |",
+					  c_stat->xmt_io, c_stat->cmpl_io,
+					  c_stat->rcv_io);
+				if (strlcat(buf, tmp, size) >= size)
+					goto buffer_done;
+			} else {
+				scnprintf(tmp, sizeof(tmp),
+					  "XMT 0x%x CMPL 0x%x |",
+					  c_stat->xmt_io, c_stat->cmpl_io);
+				if (strlcat(buf, tmp, size) >= size)
+					goto buffer_done;
+			}
 		}
 
-		/* Only display Hardware Qs with something */
+		/* Check if nothing to display */
 		if (!tot_xmt && !tot_cmpl && !tot_rcv)
 			continue;
 
-		len += scnprintf(buf + len, PAGE_SIZE - len,
-				"HDWQ %03d: ", i);
-		for (j = 0; j < LPFC_CHECK_CPU_CNT; j++) {
-			/* Only display non-zero counters */
-			if (!qp->cpucheck_xmt_io[j] &&
-			    !qp->cpucheck_cmpl_io[j] &&
-			    !qp->cpucheck_rcv_io[j])
-				continue;
-			if (phba->nvmet_support) {
-				len += scnprintf(buf + len, PAGE_SIZE - len,
-						"CPU %03d: %x/%x/%x ", j,
-						qp->cpucheck_rcv_io[j],
-						qp->cpucheck_xmt_io[j],
-						qp->cpucheck_cmpl_io[j]);
-			} else {
-				len += scnprintf(buf + len, PAGE_SIZE - len,
-						"CPU %03d: %x/%x ", j,
-						qp->cpucheck_xmt_io[j],
-						qp->cpucheck_cmpl_io[j]);
-			}
-		}
-		len += scnprintf(buf + len, PAGE_SIZE - len,
-				"Total: %x\n", tot_xmt);
-		if (len >= max_cnt) {
-			len += scnprintf(buf + len, PAGE_SIZE - len,
-					"Truncated ...\n");
-			return len;
+		scnprintf(tmp, sizeof(tmp), "\t->\t[HDWQ Total: ");
+		if (strlcat(buf, tmp, size) >= size)
+			goto buffer_done;
+
+		if (phba->nvmet_support) {
+			scnprintf(tmp, sizeof(tmp),
+				  "XMT 0x%x CMPL 0x%x RCV 0x%x]\n\n",
+				  tot_xmt, tot_cmpl, tot_rcv);
+			if (strlcat(buf, tmp, size) >= size)
+				goto buffer_done;
+		} else {
+			scnprintf(tmp, sizeof(tmp),
+				  "XMT 0x%x CMPL 0x%x]\n\n",
+				  tot_xmt, tot_cmpl);
+			if (strlcat(buf, tmp, size) >= size)
+				goto buffer_done;
 		}
 	}
+
+buffer_done:
+	len = strnlen(buf, size);
+	return len;
+}
+
+/**
+ * lpfc_debugfs_ediflist_data - Dump target External DIF list to a buffer
+ * @vport: The vport to gather target External DIF info from.
+ * @buf: The buffer to dump log into.
+ * @size: The maximum amount of data to process.
+ *
+ * Description:
+ * This routine dumps current target External DIF list associated with @vport
+ * to @buf up to @size bytes of data. Each node entry in the dump will contain a
+ * node state, DID, WWPN, WWNN, RPI, flags, type, and other useful fields.
+ *
+ * Return Value:
+ * This routine returns the amount of bytes that were dumped into @buf and will
+ * not exceed @size.
+ **/
+static int
+lpfc_debugfs_ediflist_data(struct lpfc_vport *vport, char *buf, int size)
+{
+	int len = 0;
+	int cnt;
+	struct lpfc_external_dif_support *edifp;
+	unsigned char *statep, *name;
+
+	cnt = (LPFC_EDIFLIST_SIZE / LPFC_EDIFLIST_ENTRY_SIZE);
+
+	spin_lock_irq(&vport->external_dif_lock);
+	list_for_each_entry(edifp, &vport->external_dif_list, listentry) {
+		if (!cnt) {
+			len += scnprintf(buf + len, size - len,
+				"Missing External DIF Entries\n");
+			break;
+		}
+		cnt--;
+		switch (edifp->state) {
+		case LPFC_EDSM_IGNORE:
+			statep = "IGNORE   ";
+			break;
+		case LPFC_EDSM_INIT:
+			statep = "INIT     ";
+			break;
+		case LPFC_EDSM_NEEDS_INQUIRY:
+			statep = "NEEDS_INQ";
+			break;
+		case LPFC_EDSM_PATH_STANDBY:
+			statep = "STANDBY  ";
+			break;
+		case LPFC_EDSM_PATH_READY:
+			statep = "READY    ";
+			break;
+		case LPFC_EDSM_PATH_CHECK:
+			statep = "CHECK    ";
+			break;
+		default:
+			statep = "UNKNOWN  ";
+		}
+		len += scnprintf(buf + len,
+				 size - len, "%s Device (x%x/x%llx) ",
+			statep, edifp->sid, edifp->lun);
+		name = (unsigned char *)&edifp->portName;
+		len += scnprintf(buf + len, size - len,
+			"WWPN %02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x ",
+			*name, *(name+1), *(name+2), *(name+3),
+			*(name+4), *(name+5), *(name+6), *(name+7));
+		len += scnprintf(buf + len, size - len,
+				"dif_info:x%x inq:%d err3f:%d err4b:%d",
+				edifp->dif_info, edifp->inq_cnt, edifp->err3f_cnt,
+				edifp->err4b_cnt);
+		len += scnprintf(buf + len, size - len, "\n");
+	}
+	spin_unlock_irq(&vport->external_dif_lock);
 	return len;
 }
 
@@ -2047,10 +2325,6 @@ lpfc_debugfs_lockstat_write(struct file *file, const char __user *buf,
 	char *pbuf;
 	int i;
 
-	/* Protect copy from user */
-	if (!access_ok(buf, nbytes))
-		return -EFAULT;
-
 	memset(mybuf, 0, sizeof(mybuf));
 
 	if (copy_from_user(mybuf, buf, nbytes))
@@ -2077,6 +2351,103 @@ lpfc_debugfs_lockstat_write(struct file *file, const char __user *buf,
 	return nbytes;
 }
 #endif
+
+int
+lpfc_debugfs_ras_log_data(struct lpfc_hba *phba, char *buffer, int size)
+{
+	int copied = 0;
+	struct lpfc_dmabuf *dmabuf, *next;
+
+	memset(buffer, 0, size);
+
+	spin_lock_irq(&phba->hbalock);
+	if (phba->ras_fwlog.state != ACTIVE) {
+		spin_unlock_irq(&phba->hbalock);
+		return -EINVAL;
+	}
+	spin_unlock_irq(&phba->hbalock);
+
+	list_for_each_entry_safe(dmabuf, next,
+				 &phba->ras_fwlog.fwlog_buff_list, list) {
+		/* Check if copying will go over size and a '\0' char */
+		if ((copied + LPFC_RAS_MAX_ENTRY_SIZE) >= (size - 1)) {
+			memcpy(buffer + copied, dmabuf->virt,
+			       size - copied - 1);
+			copied += size - copied - 1;
+			break;
+		}
+		memcpy(buffer + copied, dmabuf->virt, LPFC_RAS_MAX_ENTRY_SIZE);
+		copied += LPFC_RAS_MAX_ENTRY_SIZE;
+	}
+	return copied;
+}
+
+static int
+lpfc_debugfs_ras_log_release(struct inode *inode, struct file *file)
+{
+	struct lpfc_debug *debug = file->private_data;
+
+	vfree(debug->buffer);
+	kfree(debug);
+
+	return 0;
+}
+
+/**
+ * lpfc_debugfs_ras_log_open - Open the RAS log debugfs buffer
+ * @inode: The inode pointer that contains a vport pointer.
+ * @file: The file pointer to attach the log output.
+ *
+ * Description:
+ * This routine is the entry point for the debugfs open file operation. It gets
+ * the vport from the i_private field in @inode, allocates the necessary buffer
+ * for the log, fills the buffer from the in-memory log for this vport, and then
+ * returns a pointer to that log in the private_data field in @file.
+ *
+ * Returns:
+ * This function returns zero if successful. On error it will return a negative
+ * error value.
+ **/
+static int
+lpfc_debugfs_ras_log_open(struct inode *inode, struct file *file)
+{
+	struct lpfc_hba *phba = inode->i_private;
+	struct lpfc_debug *debug;
+	int size;
+	int rc = -ENOMEM;
+
+	spin_lock_irq(&phba->hbalock);
+	if (phba->ras_fwlog.state != ACTIVE) {
+		spin_unlock_irq(&phba->hbalock);
+		rc = -EINVAL;
+		goto out;
+	}
+	spin_unlock_irq(&phba->hbalock);
+	debug = kmalloc(sizeof(*debug), GFP_KERNEL);
+	if (!debug)
+		goto out;
+
+	size = LPFC_RAS_MIN_BUFF_POST_SIZE * phba->cfg_ras_fwlog_buffsize;
+	debug->buffer = vmalloc(size);
+	if (!debug->buffer)
+		goto free_debug;
+
+	debug->len = lpfc_debugfs_ras_log_data(phba, debug->buffer, size);
+	if (debug->len < 0) {
+		rc = -EINVAL;
+		goto free_buffer;
+	}
+	file->private_data = debug;
+
+	return 0;
+
+free_buffer:
+	vfree(debug->buffer);
+free_debug:
+	kfree(debug);
+out:
+	return rc;
+}
 
 /**
  * lpfc_debugfs_dumpHBASlim_open - Open the Dump HBA SLIM debugfs buffer
@@ -2162,6 +2533,13 @@ out:
 	return rc;
 }
 
+static int
+lpfc_debugfs_dif_err_open(struct inode *inode, struct file *file)
+{
+	file->private_data = inode->i_private;
+	return 0;
+}
+
 static ssize_t
 lpfc_debugfs_dif_err_read(struct file *file, char __user *buf,
 	size_t nbytes, loff_t *ppos)
@@ -2186,7 +2564,7 @@ lpfc_debugfs_dif_err_read(struct file *file, char __user *buf,
 		cnt = scnprintf(cbuf, 32, "%u\n", phba->lpfc_injerr_rref_cnt);
 	else if (dent == phba->debug_InjErrNPortID)
 		cnt = scnprintf(cbuf, 32, "0x%06x\n",
-				phba->lpfc_injerr_nportid);
+				 phba->lpfc_injerr_nportid);
 	else if (dent == phba->debug_InjErrWWPN) {
 		memcpy(&tmp, &phba->lpfc_injerr_wwpn, sizeof(struct lpfc_name));
 		tmp = cpu_to_be64(tmp);
@@ -2217,15 +2595,16 @@ lpfc_debugfs_dif_err_write(struct file *file, const char __user *buf,
 	memset(dstbuf, 0, 33);
 	size = (nbytes < 32) ? nbytes : 32;
 	if (copy_from_user(dstbuf, buf, size))
-		return -EFAULT;
+		return 0;
 
 	if (dent == phba->debug_InjErrLBA) {
-		if ((buf[0] == 'o') && (buf[1] == 'f') && (buf[2] == 'f'))
+		if ((dstbuf[0] == 'o') && (dstbuf[1] == 'f') &&
+		    (dstbuf[2] == 'f'))
 			tmp = (uint64_t)(-1);
 	}
 
 	if ((tmp == 0) && (kstrtoull(dstbuf, 0, &tmp)))
-		return -EINVAL;
+		return 0;
 
 	if (dent == phba->debug_writeGuard)
 		phba->lpfc_injerr_wgrd_cnt = (uint32_t)tmp;
@@ -2302,6 +2681,48 @@ out:
 }
 
 /**
+ * lpfc_debugfs_ediflist_open - Open the ediflist debugfs file
+ * @inode: The inode pointer that contains a vport pointer.
+ * @file: The file pointer to attach the log output.
+ *
+ * Description:
+ * This routine is the entry point for the debugfs open file operation. It gets
+ * the vport from the i_private field in @inode, allocates the necessary buffer
+ * for the log, fills the buffer from the in-memory log for this vport, and then
+ * returns a pointer to that log in the private_data field in @file.
+ *
+ * Returns:
+ * This function returns zero if successful. On error it will return an negative
+ * error value.
+ **/
+static int
+lpfc_debugfs_ediflist_open(struct inode *inode, struct file *file)
+{
+	struct lpfc_vport *vport = inode->i_private;
+	struct lpfc_debug *debug;
+	int rc = -ENOMEM;
+
+	debug = kmalloc(sizeof(*debug), GFP_KERNEL);
+	if (!debug)
+		goto out;
+
+	/* Round to page boundary */
+	debug->buffer = kmalloc(LPFC_EDIFLIST_SIZE, GFP_KERNEL);
+	if (!debug->buffer) {
+		kfree(debug);
+		goto out;
+	}
+
+	debug->len = lpfc_debugfs_ediflist_data(vport, debug->buffer,
+		LPFC_EDIFLIST_SIZE);
+	file->private_data = debug;
+
+	rc = 0;
+out:
+	return rc;
+}
+
+/**
  * lpfc_debugfs_lseek - Seek through a debugfs file
  * @file: The file pointer to seek through.
  * @off: The offset to seek to or the amount to seek by.
@@ -2321,8 +2742,22 @@ out:
 static loff_t
 lpfc_debugfs_lseek(struct file *file, loff_t off, int whence)
 {
-	struct lpfc_debug *debug = file->private_data;
-	return fixed_size_llseek(file, off, whence, debug->len);
+	struct lpfc_debug *debug;
+	loff_t pos = -1;
+
+	debug = file->private_data;
+
+	switch (whence) {
+	case 0:
+		pos = off;
+		break;
+	case 1:
+		pos = file->f_pos + off;
+		break;
+	case 2:
+		pos = debug->len + off;
+	}
+	return (pos < 0 || pos > debug->len) ? -EINVAL : (file->f_pos = pos);
 }
 
 /**
@@ -2374,76 +2809,6 @@ lpfc_debugfs_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-/**
- * lpfc_debugfs_multixripools_write - Clear multi-XRI pools statistics
- * @file: The file pointer to read from.
- * @buf: The buffer to copy the user data from.
- * @nbytes: The number of bytes to get.
- * @ppos: The position in the file to start reading from.
- *
- * Description:
- * This routine clears multi-XRI pools statistics when buf contains "clear".
- *
- * Return Value:
- * It returns the @nbytges passing in from debugfs user space when successful.
- * In case of error conditions, it returns proper error code back to the user
- * space.
- **/
-static ssize_t
-lpfc_debugfs_multixripools_write(struct file *file, const char __user *buf,
-				 size_t nbytes, loff_t *ppos)
-{
-	struct lpfc_debug *debug = file->private_data;
-	struct lpfc_hba *phba = (struct lpfc_hba *)debug->i_private;
-	char mybuf[64];
-	char *pbuf;
-	u32 i;
-	u32 hwq_count;
-	struct lpfc_sli4_hdw_queue *qp;
-	struct lpfc_multixri_pool *multixri_pool;
-
-	if (nbytes > 64)
-		nbytes = 64;
-
-	/* Protect copy from user */
-	if (!access_ok(buf, nbytes))
-		return -EFAULT;
-
-	memset(mybuf, 0, sizeof(mybuf));
-
-	if (copy_from_user(mybuf, buf, nbytes))
-		return -EFAULT;
-	pbuf = &mybuf[0];
-
-	if ((strncmp(pbuf, "clear", strlen("clear"))) == 0) {
-		hwq_count = phba->cfg_hdw_queue;
-		for (i = 0; i < hwq_count; i++) {
-			qp = &phba->sli4_hba.hdwq[i];
-			multixri_pool = qp->p_multixri_pool;
-			if (!multixri_pool)
-				continue;
-
-			qp->empty_io_bufs = 0;
-			multixri_pool->pbl_empty_count = 0;
-#ifdef LPFC_MXP_STAT
-			multixri_pool->above_limit_count = 0;
-			multixri_pool->below_limit_count = 0;
-			multixri_pool->stat_max_hwm = 0;
-			multixri_pool->local_pbl_hit_count = 0;
-			multixri_pool->other_pbl_hit_count = 0;
-
-			multixri_pool->stat_pbl_count = 0;
-			multixri_pool->stat_pvt_count = 0;
-			multixri_pool->stat_busy_count = 0;
-			multixri_pool->stat_snapshot_taken = 0;
-#endif
-		}
-		return strlen(pbuf);
-	}
-
-	return -EINVAL;
-}
-
 static int
 lpfc_debugfs_nvmestat_open(struct inode *inode, struct file *file)
 {
@@ -2477,6 +2842,7 @@ static ssize_t
 lpfc_debugfs_nvmestat_write(struct file *file, const char __user *buf,
 			    size_t nbytes, loff_t *ppos)
 {
+#if defined(BUILD_NVME) && (IS_ENABLED(CONFIG_NVME_TARGET_FC))
 	struct lpfc_debug *debug = file->private_data;
 	struct lpfc_vport *vport = (struct lpfc_vport *)debug->i_private;
 	struct lpfc_hba   *phba = vport->phba;
@@ -2529,6 +2895,7 @@ lpfc_debugfs_nvmestat_write(struct file *file, const char __user *buf,
 		atomic_set(&tgtp->xmt_abort_rsp, 0);
 		atomic_set(&tgtp->xmt_abort_rsp_error, 0);
 	}
+#endif
 	return nbytes;
 }
 
@@ -2571,10 +2938,6 @@ lpfc_debugfs_scsistat_write(struct file *file, const char __user *buf,
 	char mybuf[6] = {0};
 	int i;
 
-	/* Protect copy from user */
-	if (!access_ok(buf, nbytes))
-		return -EFAULT;
-
 	if (copy_from_user(mybuf, buf, (nbytes >= sizeof(mybuf)) ?
 				       (sizeof(mybuf) - 1) : nbytes))
 		return -EFAULT;
@@ -2591,7 +2954,7 @@ lpfc_debugfs_scsistat_write(struct file *file, const char __user *buf,
 }
 
 static int
-lpfc_debugfs_nvmektime_open(struct inode *inode, struct file *file)
+lpfc_debugfs_ioktime_open(struct inode *inode, struct file *file)
 {
 	struct lpfc_vport *vport = inode->i_private;
 	struct lpfc_debug *debug;
@@ -2602,14 +2965,14 @@ lpfc_debugfs_nvmektime_open(struct inode *inode, struct file *file)
 		goto out;
 
 	 /* Round to page boundary */
-	debug->buffer = kmalloc(LPFC_NVMEKTIME_SIZE, GFP_KERNEL);
+	debug->buffer = kmalloc(LPFC_IOKTIME_SIZE, GFP_KERNEL);
 	if (!debug->buffer) {
 		kfree(debug);
 		goto out;
 	}
 
-	debug->len = lpfc_debugfs_nvmektime_data(vport, debug->buffer,
-		LPFC_NVMEKTIME_SIZE);
+	debug->len = lpfc_debugfs_ioktime_data(vport, debug->buffer,
+		LPFC_IOKTIME_SIZE);
 
 	debug->i_private = inode->i_private;
 	file->private_data = debug;
@@ -2620,8 +2983,8 @@ out:
 }
 
 static ssize_t
-lpfc_debugfs_nvmektime_write(struct file *file, const char __user *buf,
-			     size_t nbytes, loff_t *ppos)
+lpfc_debugfs_ioktime_write(struct file *file, const char __user *buf,
+			   size_t nbytes, loff_t *ppos)
 {
 	struct lpfc_debug *debug = file->private_data;
 	struct lpfc_vport *vport = (struct lpfc_vport *)debug->i_private;
@@ -2807,7 +3170,7 @@ lpfc_debugfs_nvmeio_trc_write(struct file *file, const char __user *buf,
 	kfree(phba->nvmeio_trc);
 
 	/* Allocate new trace buffer and initialize */
-	phba->nvmeio_trc = kzalloc((sizeof(struct lpfc_debugfs_nvmeio_trc) *
+	phba->nvmeio_trc = kmalloc((sizeof(struct lpfc_debugfs_nvmeio_trc) *
 				    sz), GFP_KERNEL);
 	if (!phba->nvmeio_trc) {
 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
@@ -2815,6 +3178,8 @@ lpfc_debugfs_nvmeio_trc_write(struct file *file, const char __user *buf,
 				"nvmeio_trc buffer\n");
 		return -ENOMEM;
 	}
+	memset(phba->nvmeio_trc, 0,
+	       (sizeof(struct lpfc_debugfs_nvmeio_trc) * sz));
 	atomic_set(&phba->nvmeio_trc_cnt, 0);
 	phba->nvmeio_trc_on = 0;
 	phba->nvmeio_trc_output_idx = 0;
@@ -2823,7 +3188,7 @@ lpfc_debugfs_nvmeio_trc_write(struct file *file, const char __user *buf,
 }
 
 static int
-lpfc_debugfs_cpucheck_open(struct inode *inode, struct file *file)
+lpfc_debugfs_hdwqstat_open(struct inode *inode, struct file *file)
 {
 	struct lpfc_vport *vport = inode->i_private;
 	struct lpfc_debug *debug;
@@ -2834,14 +3199,14 @@ lpfc_debugfs_cpucheck_open(struct inode *inode, struct file *file)
 		goto out;
 
 	 /* Round to page boundary */
-	debug->buffer = kmalloc(LPFC_CPUCHECK_SIZE, GFP_KERNEL);
+	debug->buffer = kcalloc(1, LPFC_SCSISTAT_SIZE, GFP_KERNEL);
 	if (!debug->buffer) {
 		kfree(debug);
 		goto out;
 	}
 
-	debug->len = lpfc_debugfs_cpucheck_data(vport, debug->buffer,
-		LPFC_CPUCHECK_SIZE);
+	debug->len = lpfc_debugfs_hdwqstat_data(vport, debug->buffer,
+						LPFC_SCSISTAT_SIZE);
 
 	debug->i_private = inode->i_private;
 	file->private_data = debug;
@@ -2852,16 +3217,16 @@ out:
 }
 
 static ssize_t
-lpfc_debugfs_cpucheck_write(struct file *file, const char __user *buf,
+lpfc_debugfs_hdwqstat_write(struct file *file, const char __user *buf,
 			    size_t nbytes, loff_t *ppos)
 {
 	struct lpfc_debug *debug = file->private_data;
 	struct lpfc_vport *vport = (struct lpfc_vport *)debug->i_private;
 	struct lpfc_hba   *phba = vport->phba;
-	struct lpfc_sli4_hdw_queue *qp;
+	struct lpfc_hdwq_stat *c_stat;
 	char mybuf[64];
 	char *pbuf;
-	int i, j;
+	int i;
 
 	if (nbytes > 64)
 		nbytes = 64;
@@ -2874,41 +3239,39 @@ lpfc_debugfs_cpucheck_write(struct file *file, const char __user *buf,
 
 	if ((strncmp(pbuf, "on", sizeof("on") - 1) == 0)) {
 		if (phba->nvmet_support)
-			phba->cpucheck_on |= LPFC_CHECK_NVMET_IO;
+			phba->hdwqstat_on |= LPFC_CHECK_NVMET_IO;
 		else
-			phba->cpucheck_on |= (LPFC_CHECK_NVME_IO |
+			phba->hdwqstat_on |= (LPFC_CHECK_NVME_IO |
 				LPFC_CHECK_SCSI_IO);
 		return strlen(pbuf);
 	} else if ((strncmp(pbuf, "nvme_on", sizeof("nvme_on") - 1) == 0)) {
 		if (phba->nvmet_support)
-			phba->cpucheck_on |= LPFC_CHECK_NVMET_IO;
+			phba->hdwqstat_on |= LPFC_CHECK_NVMET_IO;
 		else
-			phba->cpucheck_on |= LPFC_CHECK_NVME_IO;
+			phba->hdwqstat_on |= LPFC_CHECK_NVME_IO;
 		return strlen(pbuf);
 	} else if ((strncmp(pbuf, "scsi_on", sizeof("scsi_on") - 1) == 0)) {
-		phba->cpucheck_on |= LPFC_CHECK_SCSI_IO;
+		if (!phba->nvmet_support)
+			phba->hdwqstat_on |= LPFC_CHECK_SCSI_IO;
 		return strlen(pbuf);
-	} else if ((strncmp(pbuf, "rcv",
-		   sizeof("rcv") - 1) == 0)) {
-		if (phba->nvmet_support)
-			phba->cpucheck_on |= LPFC_CHECK_NVMET_RCV;
-		else
-			return -EINVAL;
+	} else if ((strncmp(pbuf, "nvme_off", sizeof("nvme_off") - 1) == 0)) {
+		phba->hdwqstat_on &= ~(LPFC_CHECK_NVME_IO |
+				       LPFC_CHECK_NVMET_IO);
+		return strlen(pbuf);
+	} else if ((strncmp(pbuf, "scsi_off", sizeof("scsi_off") - 1) == 0)) {
+		phba->hdwqstat_on &= ~LPFC_CHECK_SCSI_IO;
 		return strlen(pbuf);
 	} else if ((strncmp(pbuf, "off",
 		   sizeof("off") - 1) == 0)) {
-		phba->cpucheck_on = LPFC_CHECK_OFF;
+		phba->hdwqstat_on = LPFC_CHECK_OFF;
 		return strlen(pbuf);
 	} else if ((strncmp(pbuf, "zero",
 		   sizeof("zero") - 1) == 0)) {
-		for (i = 0; i < phba->cfg_hdw_queue; i++) {
-			qp = &phba->sli4_hba.hdwq[i];
-
-			for (j = 0; j < LPFC_CHECK_CPU_CNT; j++) {
-				qp->cpucheck_rcv_io[j] = 0;
-				qp->cpucheck_xmt_io[j] = 0;
-				qp->cpucheck_cmpl_io[j] = 0;
-			}
+		for_each_present_cpu(i) {
+			c_stat = per_cpu_ptr(phba->sli4_hba.c_stat, i);
+			c_stat->xmt_io = 0;
+			c_stat->cmpl_io = 0;
+			c_stat->rcv_io = 0;
 		}
 		return strlen(pbuf);
 	}
@@ -3129,17 +3492,17 @@ lpfc_idiag_pcicfg_read(struct file *file, char __user *buf, size_t nbytes,
 	switch (count) {
 	case SIZE_U8: /* byte (8 bits) */
 		pci_read_config_byte(pdev, where, &u8val);
-		len += scnprintf(pbuffer+len, LPFC_PCI_CFG_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_PCI_CFG_SIZE - len,
 				"%03x: %02x\n", where, u8val);
 		break;
 	case SIZE_U16: /* word (16 bits) */
 		pci_read_config_word(pdev, where, &u16val);
-		len += scnprintf(pbuffer+len, LPFC_PCI_CFG_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_PCI_CFG_SIZE - len,
 				"%03x: %04x\n", where, u16val);
 		break;
 	case SIZE_U32: /* double word (32 bits) */
 		pci_read_config_dword(pdev, where, &u32val);
-		len += scnprintf(pbuffer+len, LPFC_PCI_CFG_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_PCI_CFG_SIZE - len,
 				"%03x: %08x\n", where, u32val);
 		break;
 	case LPFC_PCI_CFG_BROWSE: /* browse all */
@@ -3159,25 +3522,25 @@ pcicfg_browse:
 	offset = offset_label;
 
 	/* Read PCI config space */
-	len += scnprintf(pbuffer+len, LPFC_PCI_CFG_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_PCI_CFG_SIZE - len,
 			"%03x: ", offset_label);
 	while (index > 0) {
 		pci_read_config_dword(pdev, offset, &u32val);
-		len += scnprintf(pbuffer+len, LPFC_PCI_CFG_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_PCI_CFG_SIZE - len,
 				"%08x ", u32val);
 		offset += sizeof(uint32_t);
 		if (offset >= LPFC_PCI_CFG_SIZE) {
-			len += scnprintf(pbuffer+len,
-					LPFC_PCI_CFG_SIZE-len, "\n");
+			len += scnprintf(pbuffer + len,
+					LPFC_PCI_CFG_SIZE - len, "\n");
 			break;
 		}
 		index -= sizeof(uint32_t);
 		if (!index)
-			len += scnprintf(pbuffer+len, LPFC_PCI_CFG_SIZE-len,
+			len += scnprintf(pbuffer + len, LPFC_PCI_CFG_SIZE - len,
 					"\n");
 		else if (!(index % (8 * sizeof(uint32_t)))) {
 			offset_label += (8 * sizeof(uint32_t));
-			len += scnprintf(pbuffer+len, LPFC_PCI_CFG_SIZE-len,
+			len += scnprintf(pbuffer + len, LPFC_PCI_CFG_SIZE - len,
 					"\n%03x: ", offset_label);
 		}
 	}
@@ -3448,7 +3811,7 @@ lpfc_idiag_baracc_read(struct file *file, char __user *buf, size_t nbytes,
 	if (acc_range == SINGLE_WORD) {
 		offset_run = offset;
 		u32val = readl(mem_mapped_bar + offset_run);
-		len += scnprintf(pbuffer+len, LPFC_PCI_BAR_RD_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_PCI_BAR_RD_BUF_SIZE - len,
 				"%05x: %08x\n", offset_run, u32val);
 	} else
 		goto baracc_browse;
@@ -3462,36 +3825,36 @@ baracc_browse:
 	offset_run = offset_label;
 
 	/* Read PCI bar memory mapped space */
-	len += scnprintf(pbuffer+len, LPFC_PCI_BAR_RD_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_PCI_BAR_RD_BUF_SIZE - len,
 			"%05x: ", offset_label);
 	index = LPFC_PCI_BAR_RD_SIZE;
 	while (index > 0) {
 		u32val = readl(mem_mapped_bar + offset_run);
-		len += scnprintf(pbuffer+len, LPFC_PCI_BAR_RD_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_PCI_BAR_RD_BUF_SIZE - len,
 				"%08x ", u32val);
 		offset_run += sizeof(uint32_t);
 		if (acc_range == LPFC_PCI_BAR_BROWSE) {
 			if (offset_run >= bar_size) {
-				len += scnprintf(pbuffer+len,
-					LPFC_PCI_BAR_RD_BUF_SIZE-len, "\n");
+				len += scnprintf(pbuffer + len,
+					LPFC_PCI_BAR_RD_BUF_SIZE - len, "\n");
 				break;
 			}
 		} else {
 			if (offset_run >= offset +
 			    (acc_range * sizeof(uint32_t))) {
-				len += scnprintf(pbuffer+len,
-					LPFC_PCI_BAR_RD_BUF_SIZE-len, "\n");
+				len += scnprintf(pbuffer + len,
+					LPFC_PCI_BAR_RD_BUF_SIZE - len, "\n");
 				break;
 			}
 		}
 		index -= sizeof(uint32_t);
 		if (!index)
-			len += scnprintf(pbuffer+len,
-					LPFC_PCI_BAR_RD_BUF_SIZE-len, "\n");
+			len += scnprintf(pbuffer + len,
+					LPFC_PCI_BAR_RD_BUF_SIZE - len, "\n");
 		else if (!(index % (8 * sizeof(uint32_t)))) {
 			offset_label += (8 * sizeof(uint32_t));
-			len += scnprintf(pbuffer+len,
-					LPFC_PCI_BAR_RD_BUF_SIZE-len,
+			len += scnprintf(pbuffer + len,
+					LPFC_PCI_BAR_RD_BUF_SIZE - len,
 					"\n%05x: ", offset_label);
 		}
 	}
@@ -3675,7 +4038,7 @@ __lpfc_idiag_print_wq(struct lpfc_queue *qp, char *wqtype,
 			qp->queue_id, qp->entry_count,
 			qp->entry_size, qp->host_index,
 			qp->hba_index, qp->notify_interval);
-	len +=  scnprintf(pbuffer + len,
+	len += scnprintf(pbuffer + len,
 			LPFC_QUE_INFO_GET_BUF_SIZE - len, "\n");
 	return len;
 }
@@ -3719,8 +4082,7 @@ __lpfc_idiag_print_cq(struct lpfc_queue *qp, char *cqtype,
 			qp->entry_size, qp->host_index,
 			qp->notify_interval, qp->max_proc_limit);
 
-	len +=  scnprintf(pbuffer + len, LPFC_QUE_INFO_GET_BUF_SIZE - len,
-			"\n");
+	len += scnprintf(pbuffer + len, LPFC_QUE_INFO_GET_BUF_SIZE - len, "\n");
 
 	return len;
 }
@@ -3817,8 +4179,7 @@ __lpfc_idiag_print_eq(struct lpfc_queue *qp, char *eqtype,
 			qp->queue_id, qp->entry_count, qp->entry_size,
 			qp->host_index, qp->notify_interval,
 			qp->max_proc_limit, qp->chann);
-	len +=  scnprintf(pbuffer + len, LPFC_QUE_INFO_GET_BUF_SIZE - len,
-			"\n");
+	len += scnprintf(pbuffer + len, LPFC_QUE_INFO_GET_BUF_SIZE - len, "\n");
 
 	return len;
 }
@@ -3872,9 +4233,9 @@ lpfc_idiag_queinfo_read(struct file *file, char __user *buf, size_t nbytes,
 			phba->lpfc_idiag_last_eq = 0;
 
 		len += scnprintf(pbuffer + len,
-				 LPFC_QUE_INFO_GET_BUF_SIZE - len,
-				 "HDWQ %d out of %d HBA HDWQs\n",
-				 x, phba->cfg_hdw_queue);
+					LPFC_QUE_INFO_GET_BUF_SIZE - len,
+					"HDWQ %d out of %d HBA HDWQs\n",
+					x, phba->cfg_hdw_queue);
 
 		/* Fast-path EQ */
 		qp = phba->sli4_hba.hdwq[x].hba_eq;
@@ -3956,7 +4317,7 @@ lpfc_idiag_queinfo_read(struct file *file, char __user *buf, size_t nbytes,
 	return simple_read_from_buffer(buf, nbytes, ppos, pbuffer, len);
 
 too_big:
-	len +=  scnprintf(pbuffer + len,
+	len += scnprintf(pbuffer + len,
 		LPFC_QUE_INFO_GET_BUF_SIZE - len, "Truncated ...\n");
 out:
 	spin_unlock_irq(&phba->hbalock);
@@ -4012,22 +4373,22 @@ lpfc_idiag_queacc_read_qe(char *pbuffer, int len, struct lpfc_queue *pque,
 		return 0;
 
 	esize = pque->entry_size;
-	len += scnprintf(pbuffer+len, LPFC_QUE_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_QUE_ACC_BUF_SIZE - len,
 			"QE-INDEX[%04d]:\n", index);
 
 	offset = 0;
 	pentry = lpfc_sli4_qe(pque, index);
 	while (esize > 0) {
-		len += scnprintf(pbuffer+len, LPFC_QUE_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_QUE_ACC_BUF_SIZE - len,
 				"%08x ", *pentry);
 		pentry++;
 		offset += sizeof(uint32_t);
 		esize -= sizeof(uint32_t);
 		if (esize > 0 && !(offset % (4 * sizeof(uint32_t))))
-			len += scnprintf(pbuffer+len,
-					LPFC_QUE_ACC_BUF_SIZE-len, "\n");
+			len += scnprintf(pbuffer + len,
+					LPFC_QUE_ACC_BUF_SIZE - len, "\n");
 	}
-	len += scnprintf(pbuffer+len, LPFC_QUE_ACC_BUF_SIZE-len, "\n");
+	len += scnprintf(pbuffer + len, LPFC_QUE_ACC_BUF_SIZE - len, "\n");
 
 	return len;
 }
@@ -4208,17 +4569,6 @@ lpfc_idiag_queacc_write(struct file *file, const char __user *buf,
 			idiag.ptr_private = phba->sli4_hba.els_cq;
 			goto pass_check;
 		}
-		/* NVME LS complete queue */
-		if (phba->sli4_hba.nvmels_cq &&
-		    phba->sli4_hba.nvmels_cq->queue_id == queid) {
-			/* Sanity check */
-			rc = lpfc_idiag_que_param_check(
-					phba->sli4_hba.nvmels_cq, index, count);
-			if (rc)
-				goto error_out;
-			idiag.ptr_private = phba->sli4_hba.nvmels_cq;
-			goto pass_check;
-		}
 		/* FCP complete queue */
 		if (phba->sli4_hba.hdwq) {
 			for (qidx = 0; qidx < phba->cfg_hdw_queue;
@@ -4263,17 +4613,6 @@ lpfc_idiag_queacc_write(struct file *file, const char __user *buf,
 			idiag.ptr_private = phba->sli4_hba.els_wq;
 			goto pass_check;
 		}
-		/* NVME LS work queue */
-		if (phba->sli4_hba.nvmels_wq &&
-		    phba->sli4_hba.nvmels_wq->queue_id == queid) {
-			/* Sanity check */
-			rc = lpfc_idiag_que_param_check(
-					phba->sli4_hba.nvmels_wq, index, count);
-			if (rc)
-				goto error_out;
-			idiag.ptr_private = phba->sli4_hba.nvmels_wq;
-			goto pass_check;
-		}
 
 		if (phba->sli4_hba.hdwq) {
 			/* FCP/SCSI work queue */
@@ -4290,7 +4629,6 @@ lpfc_idiag_queacc_write(struct file *file, const char __user *buf,
 				}
 			}
 		}
-
 		goto error_out;
 		break;
 	case LPFC_IDIAG_RQ:
@@ -4378,7 +4716,7 @@ lpfc_idiag_drbacc_read_reg(struct lpfc_hba *phba, char *pbuffer,
 
 	switch (drbregid) {
 	case LPFC_DRB_EQ:
-		len += scnprintf(pbuffer + len, LPFC_DRB_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_DRB_ACC_BUF_SIZE - len,
 				"EQ-DRB-REG: 0x%08x\n",
 				readl(phba->sli4_hba.EQDBregaddr));
 		break;
@@ -4388,17 +4726,17 @@ lpfc_idiag_drbacc_read_reg(struct lpfc_hba *phba, char *pbuffer,
 				readl(phba->sli4_hba.CQDBregaddr));
 		break;
 	case LPFC_DRB_MQ:
-		len += scnprintf(pbuffer+len, LPFC_DRB_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_DRB_ACC_BUF_SIZE - len,
 				"MQ-DRB-REG:   0x%08x\n",
 				readl(phba->sli4_hba.MQDBregaddr));
 		break;
 	case LPFC_DRB_WQ:
-		len += scnprintf(pbuffer+len, LPFC_DRB_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_DRB_ACC_BUF_SIZE - len,
 				"WQ-DRB-REG:   0x%08x\n",
 				readl(phba->sli4_hba.WQDBregaddr));
 		break;
 	case LPFC_DRB_RQ:
-		len += scnprintf(pbuffer+len, LPFC_DRB_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_DRB_ACC_BUF_SIZE - len,
 				"RQ-DRB-REG:   0x%08x\n",
 				readl(phba->sli4_hba.RQDBregaddr));
 		break;
@@ -4588,37 +4926,37 @@ lpfc_idiag_ctlacc_read_reg(struct lpfc_hba *phba, char *pbuffer,
 
 	switch (ctlregid) {
 	case LPFC_CTL_PORT_SEM:
-		len += scnprintf(pbuffer+len, LPFC_CTL_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_CTL_ACC_BUF_SIZE - len,
 				"Port SemReg:   0x%08x\n",
 				readl(phba->sli4_hba.conf_regs_memmap_p +
 				      LPFC_CTL_PORT_SEM_OFFSET));
 		break;
 	case LPFC_CTL_PORT_STA:
-		len += scnprintf(pbuffer+len, LPFC_CTL_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_CTL_ACC_BUF_SIZE - len,
 				"Port StaReg:   0x%08x\n",
 				readl(phba->sli4_hba.conf_regs_memmap_p +
 				      LPFC_CTL_PORT_STA_OFFSET));
 		break;
 	case LPFC_CTL_PORT_CTL:
-		len += scnprintf(pbuffer+len, LPFC_CTL_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_CTL_ACC_BUF_SIZE - len,
 				"Port CtlReg:   0x%08x\n",
 				readl(phba->sli4_hba.conf_regs_memmap_p +
 				      LPFC_CTL_PORT_CTL_OFFSET));
 		break;
 	case LPFC_CTL_PORT_ER1:
-		len += scnprintf(pbuffer+len, LPFC_CTL_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_CTL_ACC_BUF_SIZE - len,
 				"Port Er1Reg:   0x%08x\n",
 				readl(phba->sli4_hba.conf_regs_memmap_p +
 				      LPFC_CTL_PORT_ER1_OFFSET));
 		break;
 	case LPFC_CTL_PORT_ER2:
-		len += scnprintf(pbuffer+len, LPFC_CTL_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_CTL_ACC_BUF_SIZE - len,
 				"Port Er2Reg:   0x%08x\n",
 				readl(phba->sli4_hba.conf_regs_memmap_p +
 				      LPFC_CTL_PORT_ER2_OFFSET));
 		break;
 	case LPFC_CTL_PDEV_CTL:
-		len += scnprintf(pbuffer+len, LPFC_CTL_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_CTL_ACC_BUF_SIZE - len,
 				"PDev CtlReg:   0x%08x\n",
 				readl(phba->sli4_hba.conf_regs_memmap_p +
 				      LPFC_CTL_PDEV_CTL_OFFSET));
@@ -4811,13 +5149,13 @@ lpfc_idiag_mbxacc_get_setup(struct lpfc_hba *phba, char *pbuffer)
 	mbx_dump_cnt = idiag.cmd.data[IDIAG_MBXACC_DPCNT_INDX];
 	mbx_word_cnt = idiag.cmd.data[IDIAG_MBXACC_WDCNT_INDX];
 
-	len += scnprintf(pbuffer+len, LPFC_MBX_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_MBX_ACC_BUF_SIZE - len,
 			"mbx_dump_map: 0x%08x\n", mbx_dump_map);
-	len += scnprintf(pbuffer+len, LPFC_MBX_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_MBX_ACC_BUF_SIZE - len,
 			"mbx_dump_cnt: %04d\n", mbx_dump_cnt);
-	len += scnprintf(pbuffer+len, LPFC_MBX_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_MBX_ACC_BUF_SIZE - len,
 			"mbx_word_cnt: %04d\n", mbx_word_cnt);
-	len += scnprintf(pbuffer+len, LPFC_MBX_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_MBX_ACC_BUF_SIZE - len,
 			"mbx_mbox_cmd: 0x%02x\n", mbx_mbox_cmd);
 
 	return len;
@@ -4966,35 +5304,35 @@ lpfc_idiag_extacc_avail_get(struct lpfc_hba *phba, char *pbuffer, int len)
 {
 	uint16_t ext_cnt, ext_size;
 
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"\nAvailable Extents Information:\n");
 
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"\tPort Available VPI extents: ");
 	lpfc_sli4_get_avail_extnt_rsrc(phba, LPFC_RSC_TYPE_FCOE_VPI,
 				       &ext_cnt, &ext_size);
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"Count %3d, Size %3d\n", ext_cnt, ext_size);
 
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"\tPort Available VFI extents: ");
 	lpfc_sli4_get_avail_extnt_rsrc(phba, LPFC_RSC_TYPE_FCOE_VFI,
 				       &ext_cnt, &ext_size);
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"Count %3d, Size %3d\n", ext_cnt, ext_size);
 
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"\tPort Available RPI extents: ");
 	lpfc_sli4_get_avail_extnt_rsrc(phba, LPFC_RSC_TYPE_FCOE_RPI,
 				       &ext_cnt, &ext_size);
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"Count %3d, Size %3d\n", ext_cnt, ext_size);
 
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"\tPort Available XRI extents: ");
 	lpfc_sli4_get_avail_extnt_rsrc(phba, LPFC_RSC_TYPE_FCOE_XRI,
 				       &ext_cnt, &ext_size);
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"Count %3d, Size %3d\n", ext_cnt, ext_size);
 
 	return len;
@@ -5018,55 +5356,55 @@ lpfc_idiag_extacc_alloc_get(struct lpfc_hba *phba, char *pbuffer, int len)
 	uint16_t ext_cnt, ext_size;
 	int rc;
 
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"\nAllocated Extents Information:\n");
 
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"\tHost Allocated VPI extents: ");
 	rc = lpfc_sli4_get_allocated_extnts(phba, LPFC_RSC_TYPE_FCOE_VPI,
 					    &ext_cnt, &ext_size);
 	if (!rc)
-		len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 				"Port %d Extent %3d, Size %3d\n",
 				phba->brd_no, ext_cnt, ext_size);
 	else
-		len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 				"N/A\n");
 
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"\tHost Allocated VFI extents: ");
 	rc = lpfc_sli4_get_allocated_extnts(phba, LPFC_RSC_TYPE_FCOE_VFI,
 					    &ext_cnt, &ext_size);
 	if (!rc)
-		len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 				"Port %d Extent %3d, Size %3d\n",
 				phba->brd_no, ext_cnt, ext_size);
 	else
-		len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 				"N/A\n");
 
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"\tHost Allocated RPI extents: ");
 	rc = lpfc_sli4_get_allocated_extnts(phba, LPFC_RSC_TYPE_FCOE_RPI,
 					    &ext_cnt, &ext_size);
 	if (!rc)
-		len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 				"Port %d Extent %3d, Size %3d\n",
 				phba->brd_no, ext_cnt, ext_size);
 	else
-		len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 				"N/A\n");
 
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"\tHost Allocated XRI extents: ");
 	rc = lpfc_sli4_get_allocated_extnts(phba, LPFC_RSC_TYPE_FCOE_XRI,
 					    &ext_cnt, &ext_size);
 	if (!rc)
-		len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 				"Port %d Extent %3d, Size %3d\n",
 				phba->brd_no, ext_cnt, ext_size);
 	else
-		len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 				"N/A\n");
 
 	return len;
@@ -5090,49 +5428,49 @@ lpfc_idiag_extacc_drivr_get(struct lpfc_hba *phba, char *pbuffer, int len)
 	struct lpfc_rsrc_blks *rsrc_blks;
 	int index;
 
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"\nDriver Extents Information:\n");
 
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"\tVPI extents:\n");
 	index = 0;
 	list_for_each_entry(rsrc_blks, &phba->lpfc_vpi_blk_list, list) {
-		len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 				"\t\tBlock %3d: Start %4d, Count %4d\n",
 				index, rsrc_blks->rsrc_start,
 				rsrc_blks->rsrc_size);
 		index++;
 	}
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"\tVFI extents:\n");
 	index = 0;
 	list_for_each_entry(rsrc_blks, &phba->sli4_hba.lpfc_vfi_blk_list,
 			    list) {
-		len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 				"\t\tBlock %3d: Start %4d, Count %4d\n",
 				index, rsrc_blks->rsrc_start,
 				rsrc_blks->rsrc_size);
 		index++;
 	}
 
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"\tRPI extents:\n");
 	index = 0;
 	list_for_each_entry(rsrc_blks, &phba->sli4_hba.lpfc_rpi_blk_list,
 			    list) {
-		len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 				"\t\tBlock %3d: Start %4d, Count %4d\n",
 				index, rsrc_blks->rsrc_start,
 				rsrc_blks->rsrc_size);
 		index++;
 	}
 
-	len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+	len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 			"\tXRI extents:\n");
 	index = 0;
 	list_for_each_entry(rsrc_blks, &phba->sli4_hba.lpfc_xri_blk_list,
 			    list) {
-		len += scnprintf(pbuffer+len, LPFC_EXT_ACC_BUF_SIZE-len,
+		len += scnprintf(pbuffer + len, LPFC_EXT_ACC_BUF_SIZE - len,
 				"\t\tBlock %3d: Start %4d, Count %4d\n",
 				index, rsrc_blks->rsrc_start,
 				rsrc_blks->rsrc_size);
@@ -5237,6 +5575,180 @@ lpfc_idiag_extacc_read(struct file *file, char __user *buf, size_t nbytes,
 	return simple_read_from_buffer(buf, nbytes, ppos, pbuffer, len);
 }
 
+static int
+lpfc_cgn_buffer_open(struct inode *inode, struct file *file)
+{
+	struct lpfc_debug *debug;
+	int rc = -ENOMEM;
+
+	debug = kmalloc(sizeof(*debug), GFP_KERNEL);
+	if (!debug)
+		goto out;
+
+	debug->buffer = vmalloc(LPFC_CGN_BUF_SIZE);
+	if (!debug->buffer) {
+		kfree(debug);
+		goto out;
+	}
+
+	debug->i_private = inode->i_private;
+	file->private_data = debug;
+
+	rc = 0;
+out:
+	return rc;
+}
+
+static ssize_t
+lpfc_cgn_buffer_read(struct file *file, char __user *buf, size_t nbytes,
+		     loff_t *ppos)
+{
+	struct lpfc_debug *debug = file->private_data;
+	struct lpfc_hba *phba = (struct lpfc_hba *)debug->i_private;
+	char *buffer = debug->buffer;
+	uint32_t *ptr;
+	int cnt, len = 0;
+
+	if (!phba->sli4_hba.pc_sli4_params.E2E_attr || !phba->cgn_i) {
+		len += scnprintf(buffer + len, LPFC_CGN_BUF_SIZE - len,
+				 "E2E Congestion Mgmt is not supported\n");
+		goto out;
+	}
+	ptr = (uint32_t *)phba->cgn_i->virt;
+	len += scnprintf(buffer + len, LPFC_CGN_BUF_SIZE - len,
+			 "Congestion Buffer Header\n");
+	/* Dump the first 32 bytes */
+	cnt = 32;
+	len += scnprintf(buffer + len, LPFC_CGN_BUF_SIZE - len,
+			 "000: %08x %08x %08x %08x %08x %08x %08x %08x\n",
+			 *ptr, *(ptr + 1), *(ptr + 2), *(ptr + 3),
+			 *(ptr + 4), *(ptr + 5), *(ptr + 6), *(ptr + 7));
+	ptr += 8;
+	len += scnprintf(buffer + len, LPFC_CGN_BUF_SIZE - len,
+			 "Congestion Buffer Data\n");
+	while (cnt < sizeof(struct lpfc_cgn_info)) {
+		if (len > (LPFC_CGN_BUF_SIZE - LPFC_DEBUG_OUT_LINE_SZ)) {
+			len += scnprintf(buffer + len, LPFC_CGN_BUF_SIZE - len,
+					 "Truncated . . .\n");
+			break;
+		}
+		len += scnprintf(buffer + len, LPFC_CGN_BUF_SIZE - len,
+				 "%03x: %08x %08x %08x %08x "
+				 "%08x %08x %08x %08x\n",
+				 cnt, *ptr, *(ptr + 1), *(ptr + 2),
+				 *(ptr + 3), *(ptr + 4), *(ptr + 5),
+				 *(ptr + 6), *(ptr + 7));
+		cnt += 32;
+		ptr += 8;
+	}
+out:
+	return simple_read_from_buffer(buf, nbytes, ppos, buffer, len);
+}
+
+int
+lpfc_cgn_buffer_release(struct inode *inode, struct file *file)
+{
+	struct lpfc_debug *debug = file->private_data;
+
+	vfree(debug->buffer);
+	kfree(debug);
+
+	return 0;
+}
+
+static int
+lpfc_rx_monitor_open(struct inode *inode, struct file *file)
+{
+	struct lpfc_rx_monitor_debug *debug;
+	int rc = -ENOMEM;
+
+	debug = kmalloc(sizeof(*debug), GFP_KERNEL);
+	if (!debug)
+		goto out;
+
+	debug->buffer = vmalloc(MAX_DEBUGFS_RX_TABLE_SIZE);
+	if (!debug->buffer) {
+		kfree(debug);
+		goto out;
+	}
+
+	debug->i_private = inode->i_private;
+	file->private_data = debug;
+
+	rc = 0;
+out:
+	return rc;
+}
+
+static ssize_t
+lpfc_rx_monitor_read(struct file *file, char __user *buf, size_t nbytes,
+		     loff_t *ppos)
+{
+	struct lpfc_rx_monitor_debug *debug = file->private_data;
+	struct lpfc_hba *phba = (struct lpfc_hba *)debug->i_private;
+	char *buffer = debug->buffer;
+	struct rxtable_entry *entry;
+	int i, len = 0, head, tail, last, start;
+
+	head = atomic_read(&phba->rxtable_idx_head);
+	while (head == LPFC_RXMONITOR_TABLE_IN_USE) {
+		/* Table is getting updated */
+		msleep(10);
+		head = atomic_read(&phba->rxtable_idx_head);
+	}
+
+	tail = atomic_xchg(&phba->rxtable_idx_tail, head);
+	if (head == tail) {
+		len += scnprintf(buffer + len, MAX_DEBUGFS_RX_TABLE_SIZE - len,
+				"Rxtable is empty\n");
+		goto out;
+	}
+	last = (head > tail) ?  head : LPFC_MAX_RXMONITOR_ENTRY;
+	start = tail;
+
+	len += scnprintf(buffer + len, MAX_DEBUGFS_RX_TABLE_SIZE - len,
+			"        MaxBPI\t Total Data Cmd  Total Data Cmpl"
+			"   Latency(us)    Avg IO Size\tMax IO Size   IO cnt"
+			" Info BWutil(ms)\n");
+get_table:
+	for (i = start; i < last; i++) {
+		entry = &phba->rxtable[i];
+		len += scnprintf(buffer + len, MAX_DEBUGFS_RX_TABLE_SIZE - len,
+				"%3d:%12lld  %12lld\t%12lld\t"
+				"%8lldus\t%8lld\t%10lld "
+				"%8d   %2d %2d(%2d)\n",
+				i, entry->max_bytes_per_interval,
+				entry->total_bytes,
+				entry->rcv_bytes,
+				entry->avg_io_latency,
+				entry->avg_io_size,
+				entry->max_read_cnt,
+				entry->io_cnt,
+				entry->cmf_info,
+				entry->timer_utilization,
+				entry->timer_interval);
+	}
+
+	if (head != last) {
+		start = 0;
+		last = head;
+		goto get_table;
+	}
+out:
+	return simple_read_from_buffer(buf, nbytes, ppos, buffer, len);
+}
+
+int
+lpfc_rx_monitor_release(struct inode *inode, struct file *file)
+{
+	struct lpfc_rx_monitor_debug *debug = file->private_data;
+
+	vfree(debug->buffer);
+	kfree(debug);
+
+	return 0;
+}
+
 #undef lpfc_debugfs_op_disc_trc
 static const struct file_operations lpfc_debugfs_op_disc_trc = {
 	.owner =        THIS_MODULE,
@@ -5250,6 +5762,15 @@ static const struct file_operations lpfc_debugfs_op_disc_trc = {
 static const struct file_operations lpfc_debugfs_op_nodelist = {
 	.owner =        THIS_MODULE,
 	.open =         lpfc_debugfs_nodelist_open,
+	.llseek =       lpfc_debugfs_lseek,
+	.read =         lpfc_debugfs_read,
+	.release =      lpfc_debugfs_release,
+};
+
+#undef lpfc_debugfs_op_ediflist
+static const struct file_operations lpfc_debugfs_op_ediflist = {
+	.owner =        THIS_MODULE,
+	.open =         lpfc_debugfs_ediflist_open,
 	.llseek =       lpfc_debugfs_lseek,
 	.read =         lpfc_debugfs_read,
 	.release =      lpfc_debugfs_release,
@@ -5324,13 +5845,13 @@ static const struct file_operations lpfc_debugfs_op_scsistat = {
 	.release =      lpfc_debugfs_release,
 };
 
-#undef lpfc_debugfs_op_nvmektime
-static const struct file_operations lpfc_debugfs_op_nvmektime = {
+#undef lpfc_debugfs_op_ioktime
+static const struct file_operations lpfc_debugfs_op_ioktime = {
 	.owner =        THIS_MODULE,
-	.open =         lpfc_debugfs_nvmektime_open,
+	.open =         lpfc_debugfs_ioktime_open,
 	.llseek =       lpfc_debugfs_lseek,
 	.read =         lpfc_debugfs_read,
-	.write =	lpfc_debugfs_nvmektime_write,
+	.write =	lpfc_debugfs_ioktime_write,
 	.release =      lpfc_debugfs_release,
 };
 
@@ -5344,20 +5865,20 @@ static const struct file_operations lpfc_debugfs_op_nvmeio_trc = {
 	.release =      lpfc_debugfs_release,
 };
 
-#undef lpfc_debugfs_op_cpucheck
-static const struct file_operations lpfc_debugfs_op_cpucheck = {
+#undef lpfc_debugfs_op_hdwqstat
+static const struct file_operations lpfc_debugfs_op_hdwqstat = {
 	.owner =        THIS_MODULE,
-	.open =         lpfc_debugfs_cpucheck_open,
+	.open =         lpfc_debugfs_hdwqstat_open,
 	.llseek =       lpfc_debugfs_lseek,
 	.read =         lpfc_debugfs_read,
-	.write =	lpfc_debugfs_cpucheck_write,
+	.write =	lpfc_debugfs_hdwqstat_write,
 	.release =      lpfc_debugfs_release,
 };
 
 #undef lpfc_debugfs_op_dif_err
 static const struct file_operations lpfc_debugfs_op_dif_err = {
 	.owner =	THIS_MODULE,
-	.open =		simple_open,
+	.open =		lpfc_debugfs_dif_err_open,
 	.llseek =	lpfc_debugfs_lseek,
 	.read =		lpfc_debugfs_dif_err_read,
 	.write =	lpfc_debugfs_dif_err_write,
@@ -5457,6 +5978,32 @@ static const struct file_operations lpfc_idiag_op_extAcc = {
 	.release =      lpfc_idiag_cmd_release,
 };
 
+#undef lpfc_cgn_buffer_op
+static const struct file_operations lpfc_cgn_buffer_op = {
+	.owner =        THIS_MODULE,
+	.open =         lpfc_cgn_buffer_open,
+	.llseek =       lpfc_debugfs_lseek,
+	.read =         lpfc_cgn_buffer_read,
+	.release =      lpfc_cgn_buffer_release,
+};
+
+#undef lpfc_rx_monitor_op
+static const struct file_operations lpfc_rx_monitor_op = {
+	.owner =        THIS_MODULE,
+	.open =         lpfc_rx_monitor_open,
+	.llseek =       lpfc_debugfs_lseek,
+	.read =         lpfc_rx_monitor_read,
+	.release =      lpfc_rx_monitor_release,
+};
+
+#undef lpfc_debugfs_ras_log
+static const struct file_operations lpfc_debugfs_ras_log = {
+	.owner =        THIS_MODULE,
+	.open =         lpfc_debugfs_ras_log_open,
+	.llseek =       lpfc_debugfs_lseek,
+	.read =         lpfc_debugfs_read,
+	.release =      lpfc_debugfs_ras_log_release,
+};
 #endif
 
 /* lpfc_idiag_mbxacc_dump_bsg_mbox - idiag debugfs dump bsg mailbox command
@@ -5538,11 +6085,12 @@ lpfc_idiag_mbxacc_dump_bsg_mbox(struct lpfc_hba *phba, enum nemb_type nemb_tp,
 				if (i != 0)
 					pr_err("%s\n", line_buf);
 				len = 0;
-				len += scnprintf(line_buf+len,
-						LPFC_MBX_ACC_LBUF_SZ-len,
+				len += scnprintf(line_buf + len,
+						LPFC_MBX_ACC_LBUF_SZ - len,
 						"%03d: ", i);
 			}
-			len += scnprintf(line_buf+len, LPFC_MBX_ACC_LBUF_SZ-len,
+			len += scnprintf(line_buf + len,
+					LPFC_MBX_ACC_LBUF_SZ - len,
 					"%08x ", (uint32_t)*pword);
 			pword++;
 		}
@@ -5605,11 +6153,12 @@ lpfc_idiag_mbxacc_dump_issue_mbox(struct lpfc_hba *phba, MAILBOX_t *pmbox)
 					pr_err("%s\n", line_buf);
 				len = 0;
 				memset(line_buf, 0, LPFC_MBX_ACC_LBUF_SZ);
-				len += scnprintf(line_buf+len,
-						LPFC_MBX_ACC_LBUF_SZ-len,
+				len += scnprintf(line_buf + len,
+						LPFC_MBX_ACC_LBUF_SZ - len,
 						"%03d: ", i);
 			}
-			len += scnprintf(line_buf+len, LPFC_MBX_ACC_LBUF_SZ-len,
+			len += scnprintf(line_buf + len,
+					LPFC_MBX_ACC_LBUF_SZ - len,
 					"%08x ",
 					((uint32_t)*pword) & 0xffffffff);
 			pword++;
@@ -5628,19 +6177,19 @@ lpfc_idiag_mbxacc_dump_issue_mbox(struct lpfc_hba *phba, MAILBOX_t *pmbox)
 					pr_err("%s\n", line_buf);
 				len = 0;
 				memset(line_buf, 0, LPFC_MBX_ACC_LBUF_SZ);
-				len += scnprintf(line_buf+len,
-						LPFC_MBX_ACC_LBUF_SZ-len,
+				len += scnprintf(line_buf + len,
+						LPFC_MBX_ACC_LBUF_SZ - len,
 						"%03d: ", i);
 			}
 			for (j = 0; j < 4; j++) {
-				len += scnprintf(line_buf+len,
-						LPFC_MBX_ACC_LBUF_SZ-len,
+				len += scnprintf(line_buf + len,
+						LPFC_MBX_ACC_LBUF_SZ - len,
 						"%02x",
 						((uint8_t)*pbyte) & 0xff);
 				pbyte++;
 			}
-			len += scnprintf(line_buf+len,
-					LPFC_MBX_ACC_LBUF_SZ-len, " ");
+			len += scnprintf(line_buf + len,
+					LPFC_MBX_ACC_LBUF_SZ - len, " ");
 		}
 		if ((i - 1) % 8)
 			pr_err("%s\n", line_buf);
@@ -5681,6 +6230,11 @@ lpfc_debugfs_initialize(struct lpfc_vport *vport)
 	if (!lpfc_debugfs_root) {
 		lpfc_debugfs_root = debugfs_create_dir("lpfc", NULL);
 		atomic_set(&lpfc_debugfs_hba_count, 0);
+		if (!lpfc_debugfs_root) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					 "0408 Cannot create debugfs root\n");
+			goto debug_failed;
+		}
 	}
 	if (!lpfc_debugfs_start_time)
 		lpfc_debugfs_start_time = jiffies;
@@ -5691,6 +6245,11 @@ lpfc_debugfs_initialize(struct lpfc_vport *vport)
 		pport_setup = true;
 		phba->hba_debugfs_root =
 			debugfs_create_dir(name, lpfc_debugfs_root);
+		if (!phba->hba_debugfs_root) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					 "0412 Cannot create debugfs hba\n");
+			goto debug_failed;
+		}
 		atomic_inc(&lpfc_debugfs_hba_count);
 		atomic_set(&phba->debugfs_vport_count, 0);
 
@@ -5707,12 +6266,56 @@ lpfc_debugfs_initialize(struct lpfc_vport *vport)
 			goto debug_failed;
 		}
 
+		/* E2E Congestion Info Buffer */
+		snprintf(name, sizeof(name), "cgn_buffer");
+		phba->debug_cgn_buffer =
+			debugfs_create_file(name, S_IFREG | S_IRUGO | S_IWUSR,
+					    phba->hba_debugfs_root,
+					    phba, &lpfc_cgn_buffer_op);
+		if (!phba->debug_cgn_buffer) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					 "6527 Cannot create debugfs"
+					 " cgn_buffer\n");
+			goto debug_failed;
+		}
+
+		/* RX Monitor */
+		snprintf(name, sizeof(name), "rx_monitor");
+		phba->debug_rx_monitor =
+			debugfs_create_file(name, S_IFREG | S_IRUGO | S_IWUSR,
+					    phba->hba_debugfs_root,
+					    phba, &lpfc_rx_monitor_op);
+		if (!phba->debug_rx_monitor) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					 "6528 Cannot create debugfs"
+					 " rx_monitor\n");
+			goto debug_failed;
+		}
+
+		/* RAS log */
+		snprintf(name, sizeof(name), "ras_log");
+		phba->debug_ras_log =
+			debugfs_create_file(name, 0644,
+					    phba->hba_debugfs_root,
+					    phba, &lpfc_debugfs_ras_log);
+		if (!phba->debug_ras_log) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					 "6148 Cannot create debugfs"
+					 " ras_log\n");
+			goto debug_failed;
+		}
+
 		/* Setup hbqinfo */
 		snprintf(name, sizeof(name), "hbqinfo");
 		phba->debug_hbqinfo =
 			debugfs_create_file(name, S_IFREG | 0644,
 					    phba->hba_debugfs_root,
 					    phba, &lpfc_debugfs_op_hbqinfo);
+		if (!phba->debug_hbqinfo) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					 "0411 Cant create debugfs hbqinfo\n");
+			goto debug_failed;
+		}
 
 #ifdef LPFC_HDWQ_LOCK_STAT
 		/* Setup lockstat */
@@ -5736,6 +6339,12 @@ lpfc_debugfs_initialize(struct lpfc_vport *vport)
 					S_IFREG|S_IRUGO|S_IWUSR,
 					phba->hba_debugfs_root,
 					phba, &lpfc_debugfs_op_dumpHBASlim);
+			if (!phba->debug_dumpHBASlim) {
+				lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+						 "0413 Cannot create debugfs "
+						"dumpHBASlim\n");
+				goto debug_failed;
+			}
 		} else
 			phba->debug_dumpHBASlim = NULL;
 
@@ -5747,6 +6356,12 @@ lpfc_debugfs_initialize(struct lpfc_vport *vport)
 					S_IFREG|S_IRUGO|S_IWUSR,
 					phba->hba_debugfs_root,
 					phba, &lpfc_debugfs_op_dumpHostSlim);
+			if (!phba->debug_dumpHostSlim) {
+				lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+						 "0414 Cannot create debugfs "
+						 "dumpHostSlim\n");
+				goto debug_failed;
+			}
 		} else
 			phba->debug_dumpHostSlim = NULL;
 
@@ -5756,6 +6371,11 @@ lpfc_debugfs_initialize(struct lpfc_vport *vport)
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 			phba->hba_debugfs_root,
 			phba, &lpfc_debugfs_op_dif_err);
+		if (!phba->debug_InjErrLBA) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+				"0807 Cannot create debugfs InjErrLBA\n");
+			goto debug_failed;
+		}
 		phba->lpfc_injerr_lba = LPFC_INJERR_LBA_OFF;
 
 		snprintf(name, sizeof(name), "InjErrNPortID");
@@ -5763,48 +6383,88 @@ lpfc_debugfs_initialize(struct lpfc_vport *vport)
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 			phba->hba_debugfs_root,
 			phba, &lpfc_debugfs_op_dif_err);
+		if (!phba->debug_InjErrNPortID) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+				"0809 Cannot create debugfs InjErrNPortID\n");
+			goto debug_failed;
+		}
 
 		snprintf(name, sizeof(name), "InjErrWWPN");
 		phba->debug_InjErrWWPN =
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 			phba->hba_debugfs_root,
 			phba, &lpfc_debugfs_op_dif_err);
+		if (!phba->debug_InjErrWWPN) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+				"0810 Cannot create debugfs InjErrWWPN\n");
+			goto debug_failed;
+		}
 
 		snprintf(name, sizeof(name), "writeGuardInjErr");
 		phba->debug_writeGuard =
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 			phba->hba_debugfs_root,
 			phba, &lpfc_debugfs_op_dif_err);
+		if (!phba->debug_writeGuard) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+				"0802 Cannot create debugfs writeGuard\n");
+			goto debug_failed;
+		}
 
 		snprintf(name, sizeof(name), "writeAppInjErr");
 		phba->debug_writeApp =
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 			phba->hba_debugfs_root,
 			phba, &lpfc_debugfs_op_dif_err);
+		if (!phba->debug_writeApp) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+				"0803 Cannot create debugfs writeApp\n");
+			goto debug_failed;
+		}
 
 		snprintf(name, sizeof(name), "writeRefInjErr");
 		phba->debug_writeRef =
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 			phba->hba_debugfs_root,
 			phba, &lpfc_debugfs_op_dif_err);
+		if (!phba->debug_writeRef) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+				"0804 Cannot create debugfs writeRef\n");
+			goto debug_failed;
+		}
 
 		snprintf(name, sizeof(name), "readGuardInjErr");
 		phba->debug_readGuard =
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 			phba->hba_debugfs_root,
 			phba, &lpfc_debugfs_op_dif_err);
+		if (!phba->debug_readGuard) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+				"0808 Cannot create debugfs readGuard\n");
+			goto debug_failed;
+		}
 
 		snprintf(name, sizeof(name), "readAppInjErr");
 		phba->debug_readApp =
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 			phba->hba_debugfs_root,
 			phba, &lpfc_debugfs_op_dif_err);
+		if (!phba->debug_readApp) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+				"0805 Cannot create debugfs readApp\n");
+			goto debug_failed;
+		}
 
 		snprintf(name, sizeof(name), "readRefInjErr");
 		phba->debug_readRef =
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 			phba->hba_debugfs_root,
 			phba, &lpfc_debugfs_op_dif_err);
+		if (!phba->debug_readRef) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+				"0806 Cannot create debugfs readApp\n");
+			goto debug_failed;
+		}
 
 		/* Setup slow ring trace */
 		if (lpfc_debugfs_max_slow_ring_trc) {
@@ -5828,6 +6488,12 @@ lpfc_debugfs_initialize(struct lpfc_vport *vport)
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 				 phba->hba_debugfs_root,
 				 phba, &lpfc_debugfs_op_slow_ring_trc);
+		if (!phba->debug_slow_ring_trc) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					 "0415 Cannot create debugfs "
+					 "slow_ring_trace\n");
+			goto debug_failed;
+		}
 		if (!phba->slow_ring_trc) {
 			phba->slow_ring_trc = kmalloc(
 				(sizeof(struct lpfc_debugfs_trc) *
@@ -5845,11 +6511,17 @@ lpfc_debugfs_initialize(struct lpfc_vport *vport)
 				lpfc_debugfs_max_slow_ring_trc));
 		}
 
+#ifdef BUILD_NVME
 		snprintf(name, sizeof(name), "nvmeio_trc");
 		phba->debug_nvmeio_trc =
 			debugfs_create_file(name, 0644,
 					    phba->hba_debugfs_root,
 					    phba, &lpfc_debugfs_op_nvmeio_trc);
+		if (!phba->debug_nvmeio_trc) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					 "0574 No create debugfs nvmeio_trc\n");
+			goto debug_failed;
+		}
 
 		atomic_set(&phba->nvmeio_trc_cnt, 0);
 		if (lpfc_debugfs_max_nvmeio_trc) {
@@ -5871,7 +6543,7 @@ lpfc_debugfs_initialize(struct lpfc_vport *vport)
 			phba->nvmeio_trc_size = lpfc_debugfs_max_nvmeio_trc;
 
 			/* Allocate trace buffer and initialize */
-			phba->nvmeio_trc = kzalloc(
+			phba->nvmeio_trc = kmalloc(
 				(sizeof(struct lpfc_debugfs_nvmeio_trc) *
 				phba->nvmeio_trc_size), GFP_KERNEL);
 
@@ -5881,6 +6553,9 @@ lpfc_debugfs_initialize(struct lpfc_vport *vport)
 						"nvmeio_trc buffer\n");
 				goto nvmeio_off;
 			}
+			memset(phba->nvmeio_trc, 0,
+			       (sizeof(struct lpfc_debugfs_nvmeio_trc) *
+			       phba->nvmeio_trc_size));
 			phba->nvmeio_trc_on = 1;
 			phba->nvmeio_trc_output_idx = 0;
 			phba->nvmeio_trc = NULL;
@@ -5891,12 +6566,18 @@ nvmeio_off:
 			phba->nvmeio_trc_output_idx = 0;
 			phba->nvmeio_trc = NULL;
 		}
+#endif
 	}
 
 	snprintf(name, sizeof(name), "vport%d", vport->vpi);
 	if (!vport->vport_debugfs_root) {
 		vport->vport_debugfs_root =
 			debugfs_create_dir(name, phba->hba_debugfs_root);
+		if (!vport->vport_debugfs_root) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					 "0417 Can't create debugfs\n");
+			goto debug_failed;
+		}
 		atomic_inc(&phba->debugfs_vport_count);
 	}
 
@@ -5933,17 +6614,43 @@ nvmeio_off:
 		debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 				 vport->vport_debugfs_root,
 				 vport, &lpfc_debugfs_op_disc_trc);
+	if (!vport->debug_disc_trc) {
+		lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+				 "0419 Cannot create debugfs "
+				 "discovery_trace\n");
+		goto debug_failed;
+	}
 	snprintf(name, sizeof(name), "nodelist");
 	vport->debug_nodelist =
 		debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 				 vport->vport_debugfs_root,
 				 vport, &lpfc_debugfs_op_nodelist);
+	if (!vport->debug_nodelist) {
+		lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+				 "2985 Can't create debugfs nodelist\n");
+		goto debug_failed;
+	}
+	snprintf(name, sizeof(name), "ediflist");
+	vport->debug_ediflist =
+		debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
+				 vport->vport_debugfs_root,
+				 vport, &lpfc_debugfs_op_ediflist);
+	if (!vport->debug_ediflist) {
+		lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+				 "2987 Can't create debugfs ediflist\n");
+		goto debug_failed;
+	}
 
 	snprintf(name, sizeof(name), "nvmestat");
 	vport->debug_nvmestat =
 		debugfs_create_file(name, 0644,
 				    vport->vport_debugfs_root,
 				    vport, &lpfc_debugfs_op_nvmestat);
+	if (!vport->debug_nvmestat) {
+		lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+				 "0811 Cannot create debugfs nvmestat\n");
+		goto debug_failed;
+	}
 
 	snprintf(name, sizeof(name), "scsistat");
 	vport->debug_scsistat =
@@ -5956,17 +6663,27 @@ nvmeio_off:
 		goto debug_failed;
 	}
 
-	snprintf(name, sizeof(name), "nvmektime");
-	vport->debug_nvmektime =
+	snprintf(name, sizeof(name), "ioktime");
+	vport->debug_ioktime =
 		debugfs_create_file(name, 0644,
 				    vport->vport_debugfs_root,
-				    vport, &lpfc_debugfs_op_nvmektime);
+				    vport, &lpfc_debugfs_op_ioktime);
+	if (!vport->debug_ioktime) {
+		lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+				 "0815 Cannot create debugfs ioktime\n");
+		goto debug_failed;
+	}
 
-	snprintf(name, sizeof(name), "cpucheck");
-	vport->debug_cpucheck =
+	snprintf(name, sizeof(name), "hdwqstat");
+	vport->debug_hdwqstat =
 		debugfs_create_file(name, 0644,
 				    vport->vport_debugfs_root,
-				    vport, &lpfc_debugfs_op_cpucheck);
+				    vport, &lpfc_debugfs_op_hdwqstat);
+	if (!vport->debug_hdwqstat) {
+		lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+				 "0819 Cannot create debugfs hdwqstat\n");
+		goto debug_failed;
+	}
 
 	/*
 	 * The following section is for additional directories/files for the
@@ -5986,6 +6703,11 @@ nvmeio_off:
 	if (!phba->idiag_root) {
 		phba->idiag_root =
 			debugfs_create_dir(name, phba->hba_debugfs_root);
+		if (!phba->idiag_root) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					 "2922 Can't create idiag debugfs\n");
+			goto debug_failed;
+		}
 		/* Initialize iDiag data structure */
 		memset(&idiag, 0, sizeof(idiag));
 	}
@@ -5996,6 +6718,11 @@ nvmeio_off:
 		phba->idiag_pci_cfg =
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 				phba->idiag_root, phba, &lpfc_idiag_op_pciCfg);
+		if (!phba->idiag_pci_cfg) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					 "2923 Can't create idiag debugfs\n");
+			goto debug_failed;
+		}
 		idiag.offset.last_rd = 0;
 	}
 
@@ -6005,6 +6732,11 @@ nvmeio_off:
 		phba->idiag_bar_acc =
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 				phba->idiag_root, phba, &lpfc_idiag_op_barAcc);
+		if (!phba->idiag_bar_acc) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					"3056 Can't create idiag debugfs\n");
+			goto debug_failed;
+		}
 		idiag.offset.last_rd = 0;
 	}
 
@@ -6014,6 +6746,11 @@ nvmeio_off:
 		phba->idiag_que_info =
 			debugfs_create_file(name, S_IFREG|S_IRUGO,
 			phba->idiag_root, phba, &lpfc_idiag_op_queInfo);
+		if (!phba->idiag_que_info) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					 "2924 Can't create idiag debugfs\n");
+			goto debug_failed;
+		}
 	}
 
 	/* iDiag access PCI function queue */
@@ -6022,6 +6759,11 @@ nvmeio_off:
 		phba->idiag_que_acc =
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 				phba->idiag_root, phba, &lpfc_idiag_op_queAcc);
+		if (!phba->idiag_que_acc) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					 "2926 Can't create idiag debugfs\n");
+			goto debug_failed;
+		}
 	}
 
 	/* iDiag access PCI function doorbell registers */
@@ -6030,6 +6772,11 @@ nvmeio_off:
 		phba->idiag_drb_acc =
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 				phba->idiag_root, phba, &lpfc_idiag_op_drbAcc);
+		if (!phba->idiag_drb_acc) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					 "2927 Can't create idiag debugfs\n");
+			goto debug_failed;
+		}
 	}
 
 	/* iDiag access PCI function control registers */
@@ -6038,6 +6785,11 @@ nvmeio_off:
 		phba->idiag_ctl_acc =
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 				phba->idiag_root, phba, &lpfc_idiag_op_ctlAcc);
+		if (!phba->idiag_ctl_acc) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					 "2981 Can't create idiag debugfs\n");
+			goto debug_failed;
+		}
 	}
 
 	/* iDiag access mbox commands */
@@ -6046,6 +6798,11 @@ nvmeio_off:
 		phba->idiag_mbx_acc =
 			debugfs_create_file(name, S_IFREG|S_IRUGO|S_IWUSR,
 				phba->idiag_root, phba, &lpfc_idiag_op_mbxAcc);
+		if (!phba->idiag_mbx_acc) {
+			lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+					"2980 Can't create idiag debugfs\n");
+			goto debug_failed;
+		}
 	}
 
 	/* iDiag extents access commands */
@@ -6057,6 +6814,12 @@ nvmeio_off:
 						    S_IFREG|S_IRUGO|S_IWUSR,
 						    phba->idiag_root, phba,
 						    &lpfc_idiag_op_extAcc);
+			if (!phba->idiag_ext_acc) {
+				lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+						"2986 Cant create "
+						"idiag debugfs\n");
+				goto debug_failed;
+			}
 		}
 	}
 
@@ -6082,8 +6845,13 @@ lpfc_debugfs_terminate(struct lpfc_vport *vport)
 #ifdef CONFIG_SCSI_LPFC_DEBUG_FS
 	struct lpfc_hba   *phba = vport->phba;
 
-	kfree(vport->disc_trc);
-	vport->disc_trc = NULL;
+	if (vport->disc_trc) {
+		kfree(vport->disc_trc);
+		vport->disc_trc = NULL;
+	}
+
+	debugfs_remove(vport->debug_ediflist); /* ediflist */
+	vport->debug_ediflist = NULL;
 
 	debugfs_remove(vport->debug_disc_trc); /* discovery_trace */
 	vport->debug_disc_trc = NULL;
@@ -6097,11 +6865,11 @@ lpfc_debugfs_terminate(struct lpfc_vport *vport)
 	debugfs_remove(vport->debug_scsistat); /* scsistat */
 	vport->debug_scsistat = NULL;
 
-	debugfs_remove(vport->debug_nvmektime); /* nvmektime */
-	vport->debug_nvmektime = NULL;
+	debugfs_remove(vport->debug_ioktime); /* ioktime */
+	vport->debug_ioktime = NULL;
 
-	debugfs_remove(vport->debug_cpucheck); /* cpucheck */
-	vport->debug_cpucheck = NULL;
+	debugfs_remove(vport->debug_hdwqstat); /* hdwqstat */
+	vport->debug_hdwqstat = NULL;
 
 	if (vport->vport_debugfs_root) {
 		debugfs_remove(vport->vport_debugfs_root); /* vportX */
@@ -6116,6 +6884,15 @@ lpfc_debugfs_terminate(struct lpfc_vport *vport)
 
 		debugfs_remove(phba->debug_hbqinfo); /* hbqinfo */
 		phba->debug_hbqinfo = NULL;
+
+		debugfs_remove(phba->debug_cgn_buffer);
+		phba->debug_cgn_buffer = NULL;
+
+		debugfs_remove(phba->debug_rx_monitor);
+		phba->debug_rx_monitor = NULL;
+
+		debugfs_remove(phba->debug_ras_log);
+		phba->debug_ras_log = NULL;
 
 #ifdef LPFC_HDWQ_LOCK_STAT
 		debugfs_remove(phba->debug_lockstat); /* lockstat */
@@ -6154,8 +6931,10 @@ lpfc_debugfs_terminate(struct lpfc_vport *vport)
 		debugfs_remove(phba->debug_readRef); /* readRef */
 		phba->debug_readRef = NULL;
 
-		kfree(phba->slow_ring_trc);
-		phba->slow_ring_trc = NULL;
+		if (phba->slow_ring_trc) {
+			kfree(phba->slow_ring_trc);
+			phba->slow_ring_trc = NULL;
+		}
 
 		/* slow_ring_trace */
 		debugfs_remove(phba->debug_slow_ring_trc);

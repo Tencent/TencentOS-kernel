@@ -1,0 +1,1624 @@
+Changes from 20131002 to 20131014
+
+	* Changed version number to 8.3.7.34
+	* Fixed not processing task management IOCB response status
+	  (149471)
+	* Fixed spinlock hang (149776)
+	* Fixed regression in the fcp_icmnd64 changes (149473)
+	* Fixed invalid Total_Data_Placed value received for els and ct
+	  command responses (149471)
+	* Fixed invalid fcp_rsp lenght for FCP_ICMND (149473)
+
+Changes from 20130919 to 20131002
+
+	* Changed version number to 8.3.7.33
+	* Fixed invalid mailbox timeouts (146132)
+	* Fixed spinlock inversion problem (148339)
+
+Changes from 20130822 to 20130919
+
+	* Changed version number to 8.3.7.32
+	* Fixed support of kernels that no longer support the
+	  initialization function macros
+	* Fix crash after xri limit is reached (145907)
+	* Fixed issue of task management commands having a fixed timeout
+	* Incorporated upstream patch "lseek(fd, n, SEEK_END) does *not* go
+	  to eof - n" into lpfc driver
+	* Fixed inconsistent spin lock useage (146476)
+	* Fix driver's abort loop functionality to skip IOs already getting
+	  aborted
+	* Fixed failure to allocate SCSI buffer on PPC64 platform for SLI4
+	  devices (146362)
+	* Fix WARN_ON when driver unloads (146328)
+	* Fix crash on driver load due to cpu affinity logic (144668)
+	* Avoided making pci bar ioremap call during dual-chute WQ/RQ pci
+	  bar selection (146139)
+
+Changes from 20130814 to 20130822
+
+	* Changed version number to 8.3.7.31
+	* Fixed driver iocbq structure's iocb_flag field running out of
+	  space (145867)
+	* Fixed system crash on driver load due to using cpu affinity
+	  without proper setup (144668)
+
+Changes from 20130801 to 20130814
+
+	* Changed version number to 8.3.7.30
+	* Fixed logging format of setting driver sysfs attributes hard to
+	  interpret (145397)
+	* Fixed back to back RSCNs discovery failure (140905)
+	* Fixed race condition between BSG I/O dispatch and timeout
+	  handling (142743)
+	* Fixed function mode field defined too small for not recognizing
+	  dual-chute mode (145031)
+	* Updated Copyright dates - reconsile with upstream
+	* Removed obsolete fcp_eq_count and fcp_wq_count driver attributes
+
+Changes from 20130725 to 20130801
+
+	* Changed version number to 8.3.7.29
+	* Removed data counting (residual fcfi_parm) in the case of 
+	  misbehaving target (143476)
+	* Fixed mailbox memory leak (144016)
+
+Changes from 20130712 to 20130725
+
+	* Changed version number to 8.3.7.28
+	* Fix ramdom errors using first burst (143435)
+
+Changes from 20130703 to 20130712
+
+	* Changed version number to 8.3.7.27
+	* Fixed not able to log informational messages at early stage of
+	  driver init time (142741)
+	* Fixed using unsafe linked list macro for walking and deleting
+	  linked list (139545)
+	* Fix Initiator FirstBurst behavior (142153)
+	* Fixed the format of some log message fields (142334)
+
+Changes from 20130627 to 20130703
+
+	* Changed version number to 8.3.7.26
+	* Fix Multipath hang for TURs with large timeouts (141052)
+	* Fixed regression driver build issue introduced by fix for incorrect
+          FCP Priority value.
+	* Fix driver's FirstBurst capability (142153)
+	* Fix for incorrect FCP Priority value detected on wire (142120)
+
+Changes from 20130617 to 20130627
+
+	* Changed version number to 8.3.7.25
+	* Fixed not able to perform PCI function reset when board was not
+	  in online mode (141906)
+	* Fixed failure in setting SLI3 board mode for performing certain
+	  OCM commands (138124)
+	* Fixed SLI3 failing FCP write on check-condition no-sense with
+	  residual zero (141400)
+	* Fixed support for 128 byte WQEs (141687)
+	* Fixed driver's setting of reserved bits in mailbox commands (125843)
+	* Fixed max value of lpfc_lun_queue_depth (141043)
+	* Fixed Receive Queue varied frame size handling (136867)
+
+Changes from 20130613 to 20130617
+
+	* Changed version number to 8.3.7.24
+	* Fixed TUR not aborted by timeout (141052)
+
+Changes from 20130603 to 20130613
+
+	* Changed version number to 8.3.7.23
+	* Fix to allow OCM to correctly display Service Processor and ULP FW
+	  names on PPC (111718)
+	* Updated copyright dates
+
+Changes from 20130523 to 20130603
+
+	* Changed version number to 8.3.7.22
+	* Fixed freeing of iocb when internal loopback times out (139995)
+	* Fixed crash when loopback is executed for sli4 adapters (139990)
+	* Reversed patches of SLI host handling FCF modified event to the
+	  in-use FCF (122752)
+
+Changes from 20130508 to 20130523
+
+	* Changed version number to 8.3.7.21
+	* Fixed issue mailbox wait routine failed to issue dump memory mbox
+	  command (137589)
+	* Merged from upstream: Fixed typos in kernel messages (136212)
+	* Fixed system panic due to unsafe walking and deleting linked list
+	  (139425)
+	* Fixed Makefile build issues introduced by support of a new OS kernel
+	* Fixed FCoE connection list record junk vlan identifier
+	  stored/used/displayed (125900)
+	* Clarified the behavior of the lpfc_max_luns module parameter
+	  (139188)
+	* Fix to allow OCM to report FEC status (137545)
+	* Fixed a missing return code in a logging message (138577)
+	* Fixed some logging message fields (138577)
+
+Changes from 20130425 to 20130508
+
+	* Changed version number to 8.3.7.20
+	* Fixed list corruption when lpfc_drain_tx runs (138180)
+	* Fixed devloss timeout race condition caused null pointer
+	  reference system crash (135839)
+	* Fixed SCSI target bus reset handlers not return error status due
+	  to port timeout (135051)
+	* Fixed TUR not aborted by adding 2 seconds to mid-layer timeout
+	  (124245)
+	* Fixed starting reference tag when calculating BG error (138001)
+	* Fixed inconsistent list removal causes crash (133672)
+
+Changes from 20130409 to 20130425
+
+	* Changed version number to 8.3.7.19
+	* Fixed system panic during handling unsolicited receive buffer
+	  error condition (137513)
+	* Fix BlockGuard error checking (124904)
+	* Fix driver build with di kernel (137148)
+	* Fixed crash during FCoE failover testing (137039)
+	* Fix lpfc_used_cpu to be more dynamic (136988)
+
+Changes from 20130327 to 20130409
+
+	* Changed version number to 8.3.7.17
+	* Fixed driver handling of CLEAR_LA with NPIV enabled causing SID=0
+	  frames out (106135)
+	* Fixed lpfc build when wmb() is defined as mb()
+	* Reduced tmo value set to FLOGI WQE for quick recovery from FLOGI
+	  sequence timeout (126169)
+	* Provided support for message logging when FLOGI completes with clean
+	  address bit set to zero (136258)
+	* Fixed driver parameter lpfc_fcp_cpu_map = 0 (135548)
+	* Fixed build failures with irq_set_affinity_hint (135548)
+	* Fixed driver vector mapping to CPU affinity (135548)
+	* Fixed iocb flags not being reset for scsi commands (135965)
+
+Changes from 20130318 to 20130327
+
+	* Changed version number to 8.3.7.16
+	* Fixed system panic during EEH recovery due to midlayer acting on
+	  outstanding I/O (134408)
+	* Fixed not returning FAILED status when SCSI invoking host reset
+	  handler failed (135051)
+	* Fixed bad book keeping in posting els sgls to port (135051)
+	* Fixed deadlock between hbalock and nlp_lock use (135524)
+	* Fixed BlockGuard to take advantage of rdprotect/wrprotect info
+	  when available (124904)
+
+Changes from 20130304 to 20130318
+
+	* Changed version number to 8.3.7.15
+	* Reduced spinlock contention on SCSI buffer list (134075)
+
+Changes from 20130221 to 20130304
+
+	* Changed version number to 8.3.7.14
+	* Fixed crash when processing bsg's sg list with high memory pages
+	  (126524)
+
+Changes from 20130207 to 20130221
+
+	* Changed version number to 8.3.7.13
+	* Fix lpfc_fcp_look_ahead module parameter
+	* Fix driver issues with SCSI Host reset (126376)
+	* Provided support for logging doorbell information in dual-chute
+	  WQ and RQ setup (126388)
+	* Fixed driver load issues on kernels that have disabled certain
+	  T10-DIF APIs (126197)
+	* Fix driver issues with large s/g lists for BlockGuard (125839)
+	* Fix driver issues with large lpfc_sg_seg_cnt values (125839)
+
+Changes from 20130206 to 20130207
+
+	* Changed version number to 8.3.7.12
+	* Fixed pt2pt and loop discovery problems on topology changes
+	  (124392)
+	* Remove driver dependency on HZ (125653)
+
+Changes from 20130131 to 20130206
+
+	* Changed version number to 8.3.7.11
+	* Fixed a race condition between SLI host and port failed FCF
+	  rediscovery (125527)
+	* Fixed BlockGuard error reporting (124904)
+	* Fixed VPI allocation issues after firmware dump is performed
+	  (124422)
+
+Changes from 20130116 to 20130131
+
+	* Changed version number to 8.3.7.10
+	* Fixed potential mis-interpretation of READ_TOPOLOGY reserved
+	  fields (106135)
+	* Fix default value for lpfc_enable_rrq (124850)
+	* Fixed circular locking dependency and inconsistent lock state
+	  issues (124659)
+	* Fixed PT2PT bring up problem for FC SLI4 (124480)
+
+Changes from 20130111 to 20130116
+
+	* Changed version number to 8.3.7.9
+	* Fixed OXID reuse issue (CR 124270)
+	* Fixed asynchronous FCF modified event to in-use FCF failure to
+	  trigger recovery (CR 122752)
+
+Changes from 20121214 to 20130111
+
+	* Changed version number to 8.3.7.8
+	* Fix potential NULL pointer dereference in lpfc_sli4_rq_put()
+	* Fixed deadlock condition in FCF round robin handling (123778)
+	* Fixed bsg timeout handling issues that would result in crashes
+	  (123696)
+	* Fixed NMI watch dog panic's when resetting the hba (123383)
+	* Fixed degraded performance after cable pulls (123431)
+	* Provided support for change_queue_type method in
+	  scsi_host_template (111959)
+
+Changes from 20121127 to 20121214
+
+	* Changed version number to 8.3.7.7
+	* Fixed infinite loop in lpfc_sli4_fcf_rr_next_index_get (112709)
+	* Fixed system crash due to SLI Port provisioning of invalid
+	  resource count (113184)
+
+Changes from 20121026 to 20121127
+
+	* Changed version number to 8.3.7.6
+	* Fixed potential memory corruption bug
+	* Provide support for FCoE protocol dual-chute (ULP) operation
+	  (110792)
+	* Fixed processing stale ndlp state when the node is marked for
+	  deferred removal (111669)
+	* Fixed no-context ABTS received on unsolicited receive queue
+	  failed with BA_RJT (111529)
+	* Removed use of NOP mailboxes for interrupt verification in
+	  pci_probe_one_s4 (112375)
+	* Fixed exhausted retry for plogi to nameserver (109854)
+	* Fixed not properly handle ELS_REC received on the unsolicited
+	  receive queue (111528)
+	* Provided support for change_queue_type method in
+	  scsi_host_template (111959)
+	* Correct mask error for ct retry check
+	* Correct buffer length overrun for error messages
+
+Changes from 20121008 to 20121026
+
+	* Changed version number to 8.3.7.5
+	* Reconcile spelling issues and whitespace fix with upstream
+	* Fixed setting sequential delivery bit in a service class that is
+	  not valid (30847)
+	* Fix the value of DIF field in WQE (111168)
+
+Changes from 20120913 to 20121008
+
+	* Changed version number to 8.3.7.4
+	* Fixed a bug when receiving Target Resets during bus reset function with FCP2 devices
+	* Fixed build issues from missing version.h include
+	* Fixed boot from san failure when SLI4 FC device presented on the
+	  same PCI bus (107869)
+	* Fixed whitespace regression.
+	* Reconcile whitespace issues and includes with upstream
+	* Fixed not reporting logical link speed to SCSI midlayer when QoS
+	  not on (109014)
+
+Changes from 20120910 to 20120913
+
+	* Changed version number to 8.3.7.3
+	* Fix performance problem in pt2pt mode (108953)
+	* Fixed SCSI host create showing wrong link speed on SLI3 HBA ports
+	  (93969)
+
+Changes from 20120801 to 20120910
+
+	* Changed version number to 8.3.7.2
+	* Corrected text for misconfigured port messages (108240)
+	* Fixed not checking solicition in progress bit when verifying FCF
+	  record for use (108550)
+	* Fixed kernel warning on spinlock usage on some distributions
+	  (108430)
+	* Fixed PRLI not being retried if a LS_RJT with a reason (93956)
+	* Fixed SLES11-SP2 taking up to 60 second longer to boot with SLI4
+	  board installed (33385)
+	* Fix FCP2 Retries for non-r/w commands (108188)
+	* Fixed Linux generic firmware download on SLI4 devices with longer
+	  module names (108080)
+	* Expand I/O channel support for large systems
+	* Fixed SLI4 running heavy IO with function reset on PPC induced
+	  PCI bus EEH error (81900)
+	* Fix incorrect comment in T10 DIF attributes
+	* Fixed checking BMBX register for RDY bit before writing the first
+	  address in (107229)
+	* Fix imax to dmult conversion for eq_create (107074)
+	* Fix null pointer error for piocbq
+	* Corrected handling of jumps to mempool_free to fix potential memory leak
+	* Fixed leaking memory from pci dma pool (106836)
+
+Changes from 20120725 to 20120801
+
+	* Changed version number to 8.3.7.1
+	* Cast uint64_t variables to unsigned long long to fix compile
+	  warnings
+	* Fix long division for 32 bit environments (106454)
+	* Fixed unnecessary SCSI device reset escalation due to LLD
+	  handling of I/O abort (106432)
+	* Fix lpfc_use_msi=0 for INTX (106448)
+	* Logged XRI of the SCSI command to be aborted on abort handler
+	  timeout (29251)
+	* Fix bug with driver logging too many fcp underrun messages
+	  (106279)
+
+Changes from 20120723 to 20120725
+
+	* Changed version number to 8.3.7.0
+	* Fix number of IO channels to match CPUs
+	* Fix duplicate functionality between idiag/queInfo and
+	  dumpSLIqinfo
+	* Remove LINUX_VERSION_CODE ifdefs
+	* Change default value of lpfc_fcp_imax
+	* Change name of fcp_eq_count module parameter to fcp_io_channel
+	* Fixed queInfo to include queue stats
+	* Add lpfc_fcp_look_ahead module parameter
+	* Fix checking SLI rev lpfc_fcp_imax_store
+	* Make WQ distribution algorithm a module parameter
+	* Change naming convention for SLI4 Interrupt vector
+	* Change fcp_imax to be HBA centric
+	* Utilize all MSI-X vectors for FCP IO
+	* Remove lockless entry from scsi template
+	* Fix ABTS recovery to be FC spec compliant (75373)
+
+Changes from 20120716 to 20120723
+
+	* Changed version number to 8.3.5.82
+	* Fix BlockGuard lpfc_printf_vlog messages (103707)
+	* Fix parameter field in CQE to mask for LOCAL_REJECT status
+	  (93992)
+	* Fix Resource and Capacity Descriptors to support SLI-4
+	  interface change (96637)
+
+Changes from 20120629 to 20120716
+
+	* Changed version number to 8.3.5.81
+	* Fixed incomplete list of SLI4 commands with extended 300 second
+	  timeout value (96156)
+	* Fix switching ports on Fabric causing additional fc_host rport
+	  entries (95843)
+
+Changes from 20120621 to 20120629
+
+	* Changed version number to 8.3.5.80
+	* Fix discovery bug when swapping cables (95526)
+	* Revert unecessary code change (95526)
+	* Fixed kernel panic after scsi_eh escalation by checking the
+	  proper return status (CR 129611)
+	* Fix conflicts in log message numbers
+
+Changes from 20120611 to 20120621
+
+	* Changed version number to 8.3.5.79
+	* Fix driver not checking data transfered on write commands (CR
+	  127391)
+	* Fix bug with message 2520 appearing in the messages file (CR
+	  132548)
+	* Fix bug with rrq_pool not being destroyed during driver removal
+	  (CR 132386)
+
+Changes from 20120525 to 20120611
+
+	* Changed version number to 8.3.5.78
+	* Fix Driver not attaching to OCe14000 adapters
+	* Fix bug with driver not setting the diag set valid bit for
+	  loopback testing (CR 130864)
+	* Fix bug with driver does not reporting misconfigured ports for
+	  GM-LP-R (CR 131589)
+
+Changes from 20120524 to 20120525
+
+	* Changed version number to 8.3.5.77
+	* Fix System Panic During IO Test using Medusa tool (CR 129611)
+
+Changes from 20120511 to 20120524
+
+	* Changed version number to 8.3.5.76
+	* Fix fcp_imax module parameter to dynamically change FCP EQ delay
+	  multiplier
+	* Fix successful aborts returning incorrect status (CR 131626)
+	* Fixed system held-up when performing resource provision through
+	  same PCI function (CR 131421)
+	* Fix system hang due to bad protection module parameters (CR
+	  130769)
+
+Changes from 20120503 to 20120511
+
+	* Changed version number to 8.3.5.75
+	* Fixed debug helper routine failed to dump CQ and EQ entries in
+	  non-MSI-X mode (CR 130735)
+
+Changes from 20120427 to 20120503
+
+	* Changed version number to 8.3.5.74
+	* Fixed system crash due to not providing SCSI error-handling host
+	  reset handler (CR 130121)
+	* Fix bug with driver using the wrong xritag when sending an els
+	  echo (CR 130019)
+
+Changes from 20120413 to 20120427
+
+	* Changed version number to 8.3.5.73
+	* Debug helper utility routines for dumping various SLI4 queues (CR
+	  130735)
+	* Fix unsol abts xri lookup (CR 129215)
+	* Fixed issues with LPe16000 to LPe16000 discovery (CR 130446).
+	* Reregister VPI for SLI3 after cable moved to new Saturn port (CR
+	  129438)
+	* Fix driver crash during back-to-back ramp events (CR 128489)
+
+Changes from 20120403 to 20120413
+
+	* Changed version number to 8.3.5.72
+	* Fix log message 2597 displayed when no error is detected (CR
+	  129185)
+	* Update Makefile and lpfc_attr.c to build for OL UEK R2 kernel
+	* Fixed FCP LOG for easier Finisar trace correlation (CR 130098)
+	* Fix kernel panic when going into to sleep state (CR 127161)
+
+Changes from 20120316 to 20120403
+
+	* Changed version number to 8.3.5.71
+	* Fix error message displayed even when not an error (CR 129683)
+	* Fix Read Link status data (CR 129681)
+	* Fixed system panic due to midlayer abort and driver complete race
+	  on SCSI cmd (CR 128422)
+	* Fix unable to create vports on FCoE SLI4 adapter (CR 129170)
+	* Fix the case where an array controller does not apply FCP
+	  priority rules (CR 129626)
+	* Fix initiator sending flogi after acking flogi from target (CR
+	  128501)
+
+Changes from 20120302 to 20120316
+
+	* Changed version number to 8.3.5.70
+	* Fix bug with driver not supporting the get controller attributes
+	  command (CR 129259)
+	* Added support for handling SLI4-port XRI resource-provisioning
+	  profile change (CR 127354)
+	* Add new BUILD_* variable to properly build for new UEK kernels,
+	  rename old ones
+
+Changes from 20120217 to 20120302
+
+	* Changed version number to 8.3.5.69
+	* Synch up with upstream driver sources.
+	* Upstream patch sync
+	* Change default DA_ID support from disabled to enabled (CR 126653)
+	* Fix bug with driver unload leaving a scsi host for a vport around
+	  (CR 128762)
+	* Update copyright date for files modified in 2012
+	* Fix bug with mailbox handling of REG_VFI and cable pull (CR
+	  127762)
+	* Enhance T10 DIF debugfs error injection (CR 123966)
+
+Changes from 20120210 to 20120217
+
+	* Changed version number to 8.3.5.68
+	* Fix compilation errors on some kernels due to debugfs
+	  variable definitions.
+
+Changes from 20120130 to 20120210
+
+	* Changed version number to 8.3.5.67
+	* Used PCI configure space read to flush PCI function reset
+	  register write (CR 128101)
+	* Update copyright date for files modified in 2012
+	* Fixed system panic when extents enabled with large number of
+	  small blocks (CR 128010)
+	* Fixed system panic during EEH recovery (CR 127062)
+	* Fix resource leak when acc fails for received plogi (CR 127847)
+
+Changes from 20120118 to 20120130
+
+	* Changed version number to 8.3.5.66
+	* Fix SLI4 driver module load and unload test in a loop crashes
+	  the system (CR 126397)
+	* Fix missing CVL event causing round-robin FCF failover process
+	  to stop (CR 123367)
+	* Fix deadlock during adapter offline request (CR 127217)
+	* Fix same RPI registered multiple times after HBA reset (CR
+	  127176)
+
+Changes from 20120113 to 20120118
+
+	* Changed version number to 8.3.5.65
+	* Fix driver handling of XRI Aborted CQE response (CR 127345)
+	* Fixed port and system failure in handling SLI4 FC port function
+	  reset (CR 126551)
+	* Fix bug with driver not sending a LOGO with vport delete (CR
+	  126625)
+
+Changes from 20120106 to 20120113
+
+	* Changed version number to 8.3.5.64
+	* Make BA_ACC work on a fully qualified exchange (CR 126289)
+	* Fix for SLI4 Port delivery for BLS ABORT ACC (CR 126289)
+	* Fix KERNEL allocation while lock held
+	* Incorrect usage of bghm for BlockGuard errors (CR 127022)
+	* Fix warning on i386 system (CR 132966)
+	* Fix ndlp nodelist not empty wait timeout during driver
+	  unloading (CR 127052)
+	* Fix mailbox and vpi memory leaks (CR 126818)
+
+Changes from 20111223 to 20120106
+
+	* Changed version number to 8.3.5.63
+	* Create character device to take a reference on the driver (CR
+	  126082)
+	* Fix for FDISC failures after firmware reset or link bounce (CR
+	  126779)
+	* Enhance debugfs for injecting T10 DIF errors (CR 123966)
+	* Fix SLI4 BlockGuard behavior when protection data is generated by
+	  HBA (CR 121980)
+
+Changes from 20111216 to 20111223
+
+	* Changed version number to 8.3.5.62
+	* Fix for driver using duplicate RPIs after 16Gb/s adapter
+	  port reset (CR 126723)
+	* Fix discovery problem when in pt2pt (CR 126887)
+	* Fixed failure in handling large CQ/EQ identifiers in an IOV
+	  environment (CR 126856)
+	* Fix Locking code raises IRQ twice
+	* Fix driver not returning when bad ndlp found in abts error event
+	  handling (CR 126209)
+	* Added more driver logs in area of SLI4 port error attention and
+	  reset recovery (CR 126813)
+
+Changes from 20111208 to 20111216
+
+	* Changed version number to 8.3.5.61
+	* Fix bug with driver returning the wrong ndlp (CR 125743)
+	* Sync up with actual upstream lpfc driver code
+	* Added SLI4 16Gb FC Adapter support for T10 DIF / BlockGuard
+          (CR 121980)
+	* Merge from upstream: scsi: Fix up files implicitly depending on
+	  module.h inclusion
+	* Fix driver behavior when receiving an ADISC (CR 126654)
+	* Fixed unbounded firmware revision string from port caused the
+	  system panic (CR 126560)
+	* Fix bug with driver processing dump command type 4 using 16Gb FC
+	  Adapter (CR 126406)
+	* Fix driver does not reset port when reset is needed during
+	  fw_dump (CR 125807)
+
+Changes from 20111205 to 20111208
+
+	* Changed version number to 8.3.5.60
+	* Fix ELS FDISC failing with local reject / invalid RPI (CR 126350)
+	* Changed SLI4 FC port internal loopback from outer serdes to inner
+	  internal (CR 126409)
+	* Fix REG_RPI fails on SLI4 HBA putting NPort into NPR state (CR
+	  126230)
+	* Fix bug with driver processing an els command using 16Gb FC
+	  Adapter (CR 126345)
+
+Changes from 20111201 to 20111205
+
+	* Changed version number to 8.3.5.59
+	* Fix NMI seen due to CQE starvation (CR 126149)
+	* Fixed SLI4 FC port obtained link type and number dependent on
+	  link connection (CR 126264)
+	* Fixed SLI4 FC port internal loopback without SFP and external
+	  link/loopback plug (CR 125843)
+	* Fix driver incorrectly building fcpCdb during scsi command prep
+	  (CR 126209)
+
+Changes from 20111118 to 20111201
+
+	* Changed version number to 8.3.5.58
+	* Fixed FCP EQ memory check prevent initialize to single interrupt
+	  vector case (CR 125832)
+	* Fixed SLI4 16Gbit FC port internal and external diagnostic
+	  loopback tests (CR 125843)
+	* Fixed system panic during  EEH recovery on SLI4 FC port (CR
+	  125832)
+	* Fix FLOGI fails with invalid RPI (0x04) after connecting to a
+	  arbitrated loop (CR 126094)
+	* Fix ELS SCR failing with local reject / invalid RPI (CR 126070)
+	* Fix SLI4 port failures after firmware reset or dump (CR 125888)
+	* Fix port reset log messages indicate error when no error is seen
+	  (CR 125989)
+	* Fixed an issue where HBQ buffers are uninitialized in the
+	  base driver (CR 125663)
+	* Fixed missing shost lock protection on setting/clearing bit in
+	  vport->fc_flag (CR 126002)
+	* Fixed missing hbalock protection on setting/clearing bit in
+	  phba->link_flag (CR 125994)
+	* Fixed illegal state transition during driver unload (CR 124191)
+	* Fixed system crash on SLI4 FC port looopback diagnostic test with
+	  large buffers (CR 124951)
+	* Fixed a potential error path that might try to free DMA memory
+	  not allocated (CR 125766)
+	* Fixed SLI4 FC port Internal and External loopback diagnostic
+	  tests (CR 124951)
+
+Changes from 20111114 to 20111118
+
+	* Changed version number to 8.3.5.57
+	* Fix a crash while deleting 256 vports (CR 124996)
+	* Fix vport never finished discovery if switch runs out of
+	  resources (CR 124996)
+	* Fix kernel build warnings (CR 125622)
+	* Fix kernel panic when putting board in offline state twice (CR
+	  125572)
+	* Fix memory leak when running hba resets to SLI-4 board (CR
+	  125124)
+
+Changes from 20111110 to 20111114
+
+	* Changed version number to 8.3.5.56
+	* Fix driver message 3092 and 3116 to KERN_WARNING (CR 124768)
+	* Fix PCI read failure looks like a over temperature event (CR
+	  125403)
+	* Fixed driver event reporting to mgmt on error attention due to
+	  forced dump (CR 122986)
+	* Fix not displaying firmware rev for BE UCNA boards (CR 125369)
+	* Fixed ABTS failure logic not rediscovering targets (CR 124578)
+	* Fix bug with driver not byte swapping extended mailbox data (CR
+	  125081)
+
+Changes from 20111103 to 20111110
+
+	* Changed version number to 8.3.5.55
+	* Fix premature ndlp cleanup after second target LOGO (CR 123924)
+	* Fix Link pull causes I/O failures (CR 124668)
+	* Add loop support for sli4 fc (CR 124721)
+
+Changes from 20111017 to 20111103
+
+	* Changed version number to 8.3.5.54
+	* Fixed OCM failing COMN_READ_OBJECT and COMN_WRITE_OBJECT mailbox
+	  pass-through (CR 124771)
+	* No longer read fcoe parameters if board is not fcoe (CR 124731)
+	* Fix bug with driver passing a wrong count value (CR 122550)
+	* Added restore state and error log when sysfs board_mode attribute
+	  access failed (CR 124158)
+	* Fixed a typo in two of the log messages just introduced (CR
+	  124466)
+	* Added support for SLI4_CONFIG non-embedded
+	  COMN_GET_CNTL_ADDL_ATTR pass-through (CR 124466)
+	* Added support for SLI4 FC port persistent linkdown through config
+	  region 23 (CR 124534)
+	* Fix for ABTS.  Do not free original IOCB whenever ABTS fails (CR
+	  115829)
+	* Fixed Linux driver inconsistency in reporting FC host port-state
+	  through OCM (CR 120018)
+	* Return an error if the mbox sysfs is called (CR 124210)
+	* Fix firmware upgrade attempt on unsupported adapter (CR 124406)
+	* Fix incomplete message number 2889 (CR 124385)
+	* Fix system crash when Lancer fails to initialize (CR 124390)
+
+Changes from 20111007 to 20111017
+
+	* Changed version number to 8.3.5.53
+	* Merged non-functional updates from the upstream driver sources.
+	* Fix virtual fabrics bit set in FLOGI incorrectly (CR 124339)
+	* Fix bug with driver not returning extended mailbox data (CR
+	  122523)
+	* Fix unsupported link speed accepted by SLI4 port (CR 124185
+	  124122)
+	* Incremented minor management version to reflect additional
+	  "protocol" sysfs attribute (CR 124102)
+	* Modify WQ handling to use entry_repost (CR 123981)
+	* Moved link type definitions to apply to all driver streams
+	  (CR 124102)
+	* Added a sysfs attribute "protocol" to report SLI4 port link
+	  protocol type (CR 124102)
+	* Added SLI4 INTF_TYPE and SLI_FAMILY as sub-field to the fwrev
+	  sysfs attribute (CR 124103)
+
+Changes from 20110927 to 20111007
+
+	* Changed version number to 8.3.5.52
+	* Added structure to support T10 DIF in SLI4 (CR 121980)
+	* Fix performance slowed due to too many register accesses (CR
+	  123981)
+	* Fixed a warning when converting from simple_strtoul to
+	  strict_strtoul
+	* Add Initial code to inject T10 DIF errors (CR 123966)
+	* Fixed a possible driver crash when cfg_fcp_eq_count is zero (CR
+	  123879)
+	* Fixed non-embedded COMMON_GET_CNTL_ATTR mbox command failed with
+	  status 0x4 (CR 123792)
+
+Changes from 20110915 to 20110927
+
+	* Changed version number to 8.3.5.51
+	* Fixed null pointer dereference after clearing FCP policy rules
+	  (CR 123378)
+	* Changed the way of SLI4 device detecting physical port name (CR
+	  122006)
+	* Fixed FCP policy exchange management rule parsing (CR 123362)
+	* Add new check to lpfc_decode_firmware_rev to handle releases that
+	  have an 'X' (CR 122167)
+	* Fixed RPI leaks in ELS protocol handling (CR 123150)
+	* Fix kernel crash during boot with SLI4 card installed (CR 122270)
+	* Fixed NPIV FDISC failure on SLI4 if-type 2 ports (CR 122788)
+	* Fixed driver failed to follow IP reset procedure in SLI4 error
+	  attention handler (CR 122932 123052)
+
+Changes from 20110906 to 20110915
+
+	* Changed version number to 8.3.5.50
+	* Fixed warnings with OEL5 and OEL6 kernel builds (CR 122844)
+	* Fix sysfs lists fabric name for port that has been disconnected
+	  from fabric (CR 93875 122918)
+	* Add FCP policy exchange management (CR 122912)
+	* Changed the timeout to 300 seconds for SLI_CONFIG (0x9B) mailbox
+	  command (CR 122650)
+	* Fixed fcp underrun reporting
+
+Changes from 20110825 to 20110906
+
+	* Changed version number to 8.3.5.49
+	* Fixed a driver handling IP reset issue when PCI read return error
+	  (CR 121797)
+	* Fixed casting problem in calculating tx_words statistics
+	* Added proper error code return for libdfc calling API to make
+	  proper decisions
+	* Fix sli4 mailbox status code. Management software has
+	  dependencies
+
+Changes from 20110819 to 20110825
+
+	* Changed version number to 8.3.5.48
+	* Fix compiler warning due to uninitialized local variable
+
+Changes from 20110711 to 20110819
+
+	* Changed version number to 8.3.5.47
+	* Fix bus reset handler fails with bad failure code (CR 121856)
+	* Made proper error code return for libdfc calling API to make
+	  proper decisions
+	* Made error log include PCI BAR bitmap from kernel when enable PCI
+	  device failed
+	* Fixed sysfs API mismatch for building against SLES11 SP2 beta
+	  kernel
+	* Fixed scsi midlayer queuecommand API mismatch for SLES11 SP2 beta
+	  kernel
+	* Fixed ctlreg write bug not checking key string and limiting bytes
+	  to write (CR 121771)
+	* Fix default adapter name for the OCe15100
+	* Fixed incomplete scsi messages displayed
+	* Fix cable pull failure on interface type 2 SLI-4 adapters
+	* Fix enable_bg config parameter for SLI4
+	* Fixed not able to perform firmware reset through sysfs board_mode
+	  attribute (CR 121468)
+	* Fixed not recovering SLI port in handling error attention with RN
+	  bit set
+	* Fixed two crash cases when unsolicted ELS ECHO_CMD is received
+	* Fix direct connect does not come up for SLI4 FC ports
+	* Fixed long wait when firmware reset to a SLI port without
+	  required privilege
+	* Fix request firmware support for little endian systems
+	* Fix driver firmware update to match new firmware image format
+	* Fixed SLI4 device firmware reset with SR-IOV virtual functions
+	* Fix SLI4 CT handling for sequences > 4K
+	* Fixed handling of unsolicited frames for vports
+	* Fixed handling of CVL for vports
+	* Fixed crash when aborting els IOs
+	* Fix up CT and oxid/rxid for unsol rcv frames
+	* Fixed mailbox double free panic
+	* Added fcf priority record selection for fcf failover
+	* Fixed compiler warning for putting large amount of memory on
+	  stack
+
+Changes from 20110606 to 20110711
+
+	* Changed version number to 8.3.5.46
+	* Fixed driver build not building in debugfs even if kernel
+	  CONFIG_DEBUG_FS=y is set
+	* Fix issue where the FC/FCoE Async Receive CQE did not scale for
+	  16G FC adapters
+	* FLOGI payload has Multiple N_port_ID set when lpfc_enable_npiv
+	  clear (CR 119918)
+	* Removed unused argument passed to the lpfc_bsg_diag_mode_enter
+	  routine
+	* Fixed new ASIC device-mgmt BSG pass-through failed multi-buffer
+	  fw download (CR 120183)
+	* Add sysfs logging when writeable parameters are changed (CR
+	  120132)
+	* Used PCI config space capability for sysfs get PF supported SR-
+	  IOV number of VFs
+	* Added wait for SLI port status register for readyness following
+	  firmware reset
+	* iDiag added SLI4 device PCI BAR memory mapped reigster access
+	  methods (CR 114450)
+	* Consolidated duplicating macro definitions
+	* Fixed failure to enable PCIe AER prevent driver initialize and
+	  attach to device (CR 119658)
+	* Modified log messages for T10-PI processing
+	* iDiag fixed mailbox capture and dump overlapping bitmap macro
+	  definition
+
+Changes from 20110519 to 20110606
+
+	* Changed version number to 8.3.5.44_x1
+	* iDiag extended debugfs setting up inline mailbox capture and dump
+	  capability
+	* Fix bug in BlockGuard error path handling
+	* Fix EEH recovery so state is saved after every PCI reset for SLI4
+	* Fix FC Port swap on SLI3 adapters (CR 118947)
+	* Fixed Virtual link loss during Face plate failover test (CR
+	  118954)
+	* Relaxed the driver enforcement of extended mailbox command with
+	  2KB limitation (CR 118899)
+	* Fix vpi initialization in lpfc_init_vfi
+	* Turn on MSI-X by default
+	* Resolved T10-PI implementation issues
+	* Fixed failure to show 16 Gbit from FC host supported_speeds sysfs
+	  entry (CR 118863)
+	* Added setting specific pf_number in GET_PROFILE_CONFIG to get
+	  maximum virtfn (CR 118717)
+	* Added driver capability of resetting new ASIC firmware and device
+	  from sysfs entry (CR 118735)
+	* Add firmware upgrade code to driver
+	* Added capability of inducing New ASIC firmware dump obj file to
+	  flash filesystem (CR 118716)
+	* Added 100ms delay before driver action following IF_TYPE_2
+	  function reset
+	* Added Linux driver SR-IOV management support for both SLI3 and
+	  SLI4 devices
+	* Fragment ELS and SCSI SGE lists based on Extent regions
+	* Remove GET_ALLOCATED extent count response work-around (CR
+	  117595)
+	* Fixed potential missed SLI4 device initialization failure
+	  conditions
+	* Fixed build warning on SLES11-SP1
+	* Fixed Back to back Flogis sent without a logo (CR 118272)
+	* Add model names for new hardware
+	* Fix bug with lpfc driver not updating the wwnn and wwpn after a
+	  name change (CR 117517)
+	* New WWNs written successfully
+	* WWNs restored successfully
+	* Set the maximum SGE size to 0x80000000 when HBA does not have any
+	  restriction
+	* Added New ASIC device link diagonstic test and link diagnostic
+	  loopback test support (CR 117009)
+	* Fixed mix-and-match backward compability with the new ASIC
+	  device management (CR 117009)
+	* Fix SLI3 and non-NPIV crashes with new extent code
+	* Fixed BSG failure in handing pass-through mailbox with multiple
+	  external buffers (CR 117009)
+	* Fix CT command never completing on Big Endian system
+	* Refactor lpfc_sli4_alloc_extent some more
+	* Restore SLI4_PARAMETER mailbox can fail as nonerror functionality
+	* Do not post RPI Headers to SLI4 port that support extents
+	* Fixed a race condition where the driver may invalidate an
+	  RPI of an incoming PLOGI before responding to it (CR 117746)
+	* Refactor code in lpfc_sli4_alloc_extent
+	* Restore removed branch
+	* Fix port capabilities and get parameters mailbox calls
+	* Fix SLI2 crashes with new extent code
+	* Fixed EEH failure on PPC-P7 due to the platform required PCI
+	  fundamental reset (CR 116845)
+	* Fixed incorrect size set into the sysfs binary file access
+	  interface (CR 116845)
+	* Brought debugfs accessing New ASIC extents information into the
+	  iDiag framework
+	* Fix mailbox processing to not overwrite mailbox status codes
+	* Changed enumerate members starting from none zero value (CR
+	  117009)
+	* Remove driver workaround for COMMON_ALLOC_RESOURCE_EXTENTS
+	  endianess issue
+	* Fix lpfc_printf_log message numbers
+	* Implement debugfs support for resource extents
+	* iDiag method for read write bitset bitclear access to new ASIC
+	  control registers (CR 114450)
+	* Call correct mailbox cleanup routine after extents are allocated
+	* Implement extent block list member cleanup and free memory
+	  resources
+	* Fix memory leak in extent block lists
+	* Modified variables for XRIs to be unsigned variable
+
+Changes from 20110412 to 20110415
+
+	* Changed version number to 8.3.5.41_x1
+	* Fix crash in rpi clean when driver load fails
+	* iDiag method for dumping mailbox command from SLI4 issue
+	  mailbox command routine (CR 114450)
+	* Implement support for nonembedded Extent mailbox IOCTLs.
+	* Update package README files to reflect first Phase4 kernel
+	  and architecture support.
+	* Fixed race condition between driver multi-buffer seesion
+	  reset and bsg job done.
+	* Fix Port Error detected during POST.
+	* Added protection on new ASIC specific mbox cmd passed to
+	  other ASIC interface type.
+	* Added protection on non-embedded mailbox command for number
+	  of external buffers.
+	* Implement extent block list member cleanup and free memory
+	  resources.
+	* Fix memory leak in extent block lists.
+	* Modified variables for XRIs to be unsigned variable.
+	* Fix crash in rpi clean when driver load fails.
+	* Fixed race condition between driver multi-buffer seesion
+	  reset and bsg job done (CR 116491)
+
+Changes from 20110329 to 20110412
+
+	* Changed version number to 8.3.5.41
+	* Fixed mask size for the wq_id mask
+	* Fixed mailbox command completion invoke BSG job_done while
+	  holding spinlock (CR 117009)
+	* Fixed double byte swap on received RRQ
+	* Fixed no BSG data transfer size protection in mailbox command
+	  pass-through path (CR 117007)
+	* Make adjustments for systems with Page Size Larger than 4k
+	* Fixed new ASIC mbox queue id collision with work queue id in
+	  debugfs queue access (CR 116937)
+	* Fixed bug in BSG pass-through mailbox size check to non-embedded
+	  external buffer
+
+Changes from 20110315 to 20110329
+
+	* Changed version number to 8.3.5.40
+	* Fixed ISO C90 build error
+	* Fix FCFI incorrect on received unsolicited frames (CR 115710)
+	* Add LOG_ELS message to NPIV LOGO
+	* Fixed Vports not sending FDISC after lips (CR 116365)
+	* Fix bug with lpfc driver causing a system crash during driver
+	  unload (CR 116071)
+	* Added user-kernel shared sli-config mailbox header for new ASIC
+	  device management
+
+Changes from 20110314 to 20110315
+
+	* Changed version number to 8.3.5.39
+	* Added iDiag driver support for debugfs SLI4 device doorbell
+	  register access methods (CR 114450)
+	* Fixed driver sending FLOGI to a disconnected FCF (CR 115785)
+	* Fix RQ_CREATE version 1 fails (CR 115564)
+	* Fix FCFI incorrect on received unsolicited frames (CR 115710)
+	* Added iDiag driver support for debugfs SLI4 device display
+          host/port index in decimal (CR 114450)
+	* Do not limit RPI Count to a minimum of 64
+	* Do not override CT field in issue_els_flogi for SLI4 IF type 2
+	* Add Temporary RPI field to the ELS request WQE
+	* Allow SLI4 with FCOE_MODE not set for new SLI4 FC adapters
+	* Restrict driver to look at BAR2 or BAR4 only for if_type 0
+	* Added iDiag driver support for debugfs SLI4 device queue entry
+	  access methods (CR 114450)
+
+Changes from 20110301 to 20110314
+
+        * Changed version number to 8.3.5.38
+	* Update copyright date for all changed files
+	* Merge from upstream: block target when port queuing
+	  limit is hit
+	* Merge from upstream: force retry in queuecommand when port is
+	  transitioning
+	* Fix bug with incorrect BLS Response to BLS Abort (CR 114886)
+
+Changes from 20110215 to 20110301
+
+	* Changed version number to 8.3.5.37
+	* Fixed crash when mailbox commands timeout through BSG (CR
+	  115249)
+	* Modified existing driver code to handle PCI Link drop detection
+	  failure (CR 110174)
+	* Fixed issue when BDEs cross 4K boundary
+	* Fixed an issue where OneConnect UCNA on PPC architecture was
+	  unable to login into Fabric
+	* Fix debugfs build error caused by undefined macro
+	* Add selective reset jump table entry
+
+Changes from 20110131 to 20110215
+
+	* Changed version number to 8.3.5.36
+	* Add new Queue create Mailbox versions for new ASIC
+	* Place LPFC driver module parameters to
+	  /sys/module/<driver_name>/parameters (CR 26210 114646)
+	* Performance Hints support
+	* Add new driver interfaces for encryption products (CR 114577)
+	* iDiag driver support debugfs queue information get (CR 114450)
+	* iDiag driver support debugfs PCI config space register bits
+	  set/clear methods (CR 114450)
+	* iDiag driver support debugfs framework and read/write PCI config
+	  space registers (CR 114450)
+
+Changes from 20110118 to 20110131
+
+	* Changed version number to 8.3.5.35
+	* Defined the right macro in the GNUmakefile for enabling lpfc
+	  driver debugfs
+	* Fix rrq cleanup for vport delete (CR 113341)
+	* Configuration parameter lpfc_suppress_link_up is ignored for
+	  SLI-4
+	* LOGO completion routine must invalidate both RPI and D_ID (CR
+	  113738)
+	* Do not take lock when clearing rrq active (CR 113252)
+	* Save IRQ level when taking host_lock in findnode_did
+	* Fixed hang in lpfc_get_scsi_buf_s4 (CR 113960)
+	* Fix xri lookup for received rrq
+	* Fixed missed setting of RRQ active for target aborted IOs
+	* Modified lpfc_delay_discovery implementation
+
+Changes from 20110107 to 20110118
+
+	* Changed version number to 8.3.5.34
+	* Fixed fdisc sent with invalid VPI (CR 111517)
+	* Print something out if the link_speed is not supported by this
+	  adapter (CR 86577)
+	* Fixed  UE error reported by OneConnect UCNA BE2 hba with
+	  f/w 2.702.542.0 during reboot (CR 113607)
+
+Changes from 20101222 to 20110107
+
+	* Changed version number to 8.3.5.33
+	* Added support for clean address bit (CR 113373)
+	* Fixed XRI reuse issue (CR 111518)
+
+Changes from 20101216 to 20101222
+
+	* Changed version number to 8.3.5.32
+	* Unreg login when PLOGI received from logged in port (CR 113197)
+	* Fixed crashes for NULL vport dereference (CR 112630)
+
+Changes from 20101214 to 20101216
+
+	* Changed version number to 8.3.5.31
+	* Fix for kmalloc failures in lpfc_workq_post_event (CR 112404)
+	* Adjust payload_length and request_length for sli4_config mailbox
+	  commands
+
+Changes from 20101129 to 20101214
+
+	* Changed version number to 8.3.5.30
+	* Turned parity and serr bits back on after performing sli4 board
+	  reset PCI access
+	* Use VPI for ALL ELS commands and allocate RPIs at node creation
+	* Correct bit-definitions in SLI4 data structures
+
+Changes from 20101118 to 20101129
+
+	* Changed version number to 8.3.5.29
+	* Implement new SLI4 initialization procedures based on if_type
+	* Implement the FC and SLI async event handlers
+	* Fixed management command context setting
+	* Fixed panic in the __lpfc_sli_get_sglq
+
+Changes from 20101111 to 20101118
+
+	* Changed version number to 8.3.5.28
+	* Set heartbeat timer off by default
+	* Added support for ELS RRQ command (CR 110683)
+	* Init VFI and VPI for the physical port (Lancer SLI4 FC Support)
+
+Changes from 20101103 to 20101111
+
+	* Changed version number to 8.3.5.27
+	* Fixed a NULL pointer dereference duing memory allocation failure
+	  (CR 111997)
+	* Modified the return status of unsupport ELS commands
+	* Implement READ_TOPOLOGY mailbox command and add new speed definition
+	* Implement doorbell register changes for new hardware support
+	* Fix bug with remote SLI4 firmware download data not being
+	  transmitted (CR 110883)
+	* Implement the new SLI 4 SLI_INTF register definitions
+	* Added PCI ID definitions for new hardware support
+	* Fix for failure to log into FDMI_DID after link bounce (CR
+	  110885)
+	* Updated driver to handle CVL after Nameserver PLOGI timeouts (CR
+	  111516)
+	* Prep for fc host dev loss tmo support
+	* Cleanup mailbox commands in mboxq_cmpl when CVL is received (CR
+	  111515)
+	* Add new SLI4 WQE support
+
+Changes from 20101006 to 20101103
+
+	* Changed version number to 8.3.5.26
+	* Prevent lock_irqsave from being called twice in a row
+	* Fix locking issue for security mailbox commands
+	* Fix regression error for handling SLI4 unsolicted ELS. Read
+	  Timeout Value (RTV) (CR 110683)
+	* Properly handle devloss timeout during various phases of FIP
+	  engine state transactions (CR 109955)
+	* Abort all I/Os and wait XRI exchange busy complete before
+	  function reset ioctl in SLI4 driver unload (CR 110980)
+	* Fix regression error for handling ECHO response support
+	  (CR 110683)
+	* Fix regression error for handling SLI4 unsolicted ELS. Read
+	  Link Error Status Block (RLS) (CR 110683)
+	* Fix internal loopback causing kernel panic (CR 110438)
+	* Fixed crashes for NULL pnode dereference (CR 111422)
+
+Changes from 20100928 to 20101006
+
+	* Changed version number to 8.3.5.25
+	* Fixed a race condition that can cause driver to send FDISC to
+	  un-initialized VPI (CR 111250)
+	* Fix mailbox handling for UNREG_RPI_ALL case (CR 111249)
+
+Changes from 20100910 to 20100928
+
+	* Changed version number to 8.3.5.24
+	* Used PCI function reset ioctl mbox command to clean up CNA during
+	  driver unload (CR 110521)
+	* Fixed crashes for BUG_ONs hit in the lpfc_abort_handler (CR
+	  110994)
+	* Fail I/O when adapter detects a lost frame and target reports a
+	  check condition (CR 110825)
+	* Fixed abort WQEs for FIP frames
+
+Changes from 20100901 to 20100910
+
+	* Changed version number to 8.3.5.23
+	* Added unreg all rpi mailbox command before unreg vpi
+	* Make all error values negative (CR 99986)
+	* Clean up duplicate code in lpfc_els_retry
+	* Fixed circular spinlock dependency between low-level driver and
+	  SCSI midlayer (CR 110305)
+
+Changes from 20100824 to 20100901
+
+	* Changed version number to 8.3.5.22
+	* Fixed FC-AL bit set issue in FLOGI rejected by FC swich in NPV
+	  setup (CR 110237)
+	* Fixed cases of skipping possible roundrobin failover of multiple
+	  eligible FCFs (CR 110048)
+	* Fixed driver not able to unregister unused FCF upon devloss
+	  timeout to all nodes (CR 109954)
+	* Fix bug with external loopback testing not becoming ready (CR
+	  109853)
+	* Fixed heartbeat timeout during controller pause test
+
+Changes from 20100811 to 20100824
+
+	* Changed version number to 8.3.5.21
+	* Added support for OneSecure firmware download authentication and
+	  SLI authentication (CR 106981)
+	* Add support for bsg MBX_SLI4_CONFIG (CR 107295)
+	* Remove owner field from attribute initialization
+	* Replaced some spin_lock_irqsave with spin_lock_irq
+	* Fixed lpfc_initial_flogi not returning failure in one failure
+	  condition
+	* Fixed stray state update in case a new FCF matched in-use FCF
+	* Treated firmware matching FCF property with different index as
+	  error condition
+
+Changes from 20100730 to 20100811
+
+	* Changed version number to 8.3.5.20
+	* Move Unload flag earlier in vport delete (CR 103830)
+	* Fix for IOCB leak on FDISC completion (CR 106902)
+	* Start looking at the return code for fc_block_scsi_eh
+	* Call the lpfc_drain_txq only for SLI4 hba (CR 105946)
+
+Changes from 20100721 to 20100730
+
+	* Changed version number to 8.3.5.19
+	* Remove whitespace at end of line
+	* Change log message 0318 from an error to a warning as it is not
+	  an error
+	* Add Security Crypto support to CONFIG_PORT mailbox command
+	* Switch call from memcpy_toio to __write32_copy to prevent
+	  unaligned 64 bit copy
+	* Fix nodelist not empty message on console after rmmod (CR 105401)
+	* Fix failure to roundrobin on all available FCFs when FLOGI to
+	  in-use FCF rejected by switch (CR 105402)
+	* Fixed heartbeat timeout during fabric reconfiguration
+
+Changes from 20100709 to 20100721
+
+	* Changed version number to 8.3.5.18
+	* Fixed failure to recover from back-to-back Clear Virtual Link
+	  with a single FCF (CR 104974)
+	* Clear VFI_REGISTERED flag when UNREG_VFI completes
+	* Ignore the failure of REG_VPI mailbox with UPD bit set on older
+	  set on older OneConnect firmware (CR 104912)
+	* Use active ndlp for ct response after cable swap (CR 104032)
+	* Properly set ndlp after cable swap (CR 104706)
+	* Add support for UPD bit of REG_VPI mailbox command (CR
+	  104912)
+	* Properly send ct response data with sli4 (CR 103765)
+
+Changes from 20100707 to 20100709
+
+	* Changed version number to 8.3.5.17
+	* Fix endian conversion for BlockGuard in IOCB response
+	* Fix driver discovery issue where driver is unable to
+	  discover a target after Eveready back link bounce test (CR
+	  104654)
+
+Changes from 20100625 to 20100707
+
+	* Changed version number to 8.3.5.16
+	* Fixed BlockGuard endian conversion problem for supporting PowerPC
+	  EEH
+	* Fixed VLAN ID 0xFFF set to reg_fcfi mailbox command on FCF empty
+	  FCF VLAN bitmap (CR 104503)
+
+Changes from 20100608 to 20100625
+
+	* Changed version number to 8.3.5.15
+	* Fix race condition causing FLOGI issued from dual processes
+	  (CR 104288)
+	* Fix bug with ct response data not being sent with sli4 (CR
+	  103765)
+	* Fix RoundRobin FCF failover due to mis-interpretation of kernel
+	  find_next_bit (CR 103435)
+	* Enhance round-robin FCF failover algorithm to re-start on new
+	  FCF async event
+	* Clear Ignore Reg Login Flag when purging mailbox queue (CR
+	  104131)
+	* Fix for ELS commands stuck on txq (CR 103535)
+	* Add target queuedepth module parameter
+	* Fix bug with unsolicited CT event command not setting a flag (CR
+	  103648)
+
+Changes from 20100511 to 20100608
+
+	* Changed version number to 8.3.5.14
+	* Fix LPFC_READ_REV mailbox command for BE
+	* Added driver Advanced Error Reporting (AER) support for SLI4
+	  devices
+	* Fixed FCF discovery failure after swapping FCoE port on
+	  Brocade8000 FCoE switch (CR 102947)
+	* Fix RPI leak after a VFC shut/noshut storm (CR 102507)
+	* Allow enabling MSI-X interrupt with fewer vectors than requested
+	  on SLI4 device
+	* Removed NOOP condition checking logic
+	* Prevent point to point discovery on a FCoE UCNA (CR 102844)
+	* Prevent unregistring of unused FCF when FLOGI is pending (CR
+	  102642)
+	* Restrict scsi buffer allocation (CR 102643)
+	* Fixed accounting of allocated SCSI buffers when post sgl fail (CR
+	  102644)
+
+Changes from 20100504 to 20100511
+
+	* Changed version number to 8.3.5.13
+	* Remove module ref counting for active bsg requests
+	* Add PCI-ID for Gb PCIe Shared I/O Fibre Channel Adapter
+	* Only send ADISCs to Targets (CR 101933)
+	* Fix memory leak (CR 102354)
+	* Add support for SLER errors
+	* Fix SLI4 RPI leaks (CR 102369)
+	* Change default FCF max receive size (CR 102087)
+	* Remove unused Interrupt Notification Block Code
+	* Fix lpfc_sli_issue_wait call to put iocb on txcmpq that should
+	  have been removed
+	* Fixed Illegal State Transition (CR 10202)
+	* Additional check-in for high vport fix (CR 99636)
+
+Changes from 20100429 to 20100504
+
+	* Changed version number to 8.3.5.12
+	* Check whether index is within bounds before testing vport
+	* Change positive error return into negative
+	* Fixed Illegal State Transition after devloss tmo (CR 102025)
+	* Fixed Illegal State Transition (CR 10202)
+	* Fixed heartbeat timeout failure (CR 10142)
+
+Changes from 20100427 to 20100429
+
+	* Changed version number to 8.3.5.11
+	* Fix bug with dma maps on nested scsi objects (CR 101174, 101425)
+
+Changes from 20100407 to 20100427
+
+	* Changed version number to 8.3.5.10
+	* Add module ref counting to prevent module removal with active bsg
+	  requests (CR 101863)
+	* Fix swapping target's FC ports caused I/O failure due to target
+	  rejecting PLOGI (CR 100464)
+	* Reduce hba_queue_depth of SLI4 HBAs to account for XRIs reserved
+	  for ELS commands
+	* Fixed hang on hba resets (CR 100032)
+
+Changes from 20100311 to 20100407
+
+	* Changed version number to 8.3.5.9
+	* Fix for lpfc_get_hba_info to return correct value for max vpi
+	  count
+	* Fix misspelled variable name in BSG interface API
+	* Add missing management support for MBX_READ_EVENT_LOG
+	* Check if mailbox command succeeded before copying data
+	* Make sure driver sets the "FCP Initiator" flag for remote
+	  initiator ports (CR 100554)
+	* Add checks for lpfc_mbuf_alloc failure and sli4 dump zero bde
+	  size
+	* Reset HBA when UNREG_VPI fail with busy status (CR 100218)
+	* Prevent failure of unreg_vpi mailbox command (CR 100219)
+	* Add additional warning message and refuse a mailbox command if
+	  mgmt is blocked
+	* Add support for missing BSG mailbox commands dump, update cfg
+	  and event log status
+	* Fix management regression bug with BSG BIU mailbox command not
+	  copying application data
+	* Fixed hang on link transitions (CR 99675)
+	* Change mailbox commands to use SLI4 mailbox size instead of
+	  PAGE_SIZE
+	* Fix UE and other issues seen after HBA resets with I/O (CR 97910)
+	* Fix crash with els reject data being formed (CR 99991)
+	* Rework the logical link speed (CR 99148 99149)
+	* Add ratov and edtov to the reg_vfi
+	* Enable required NPIV by default
+	* Fix crash while doing IO to a hornet
+	* Fix functionality regression for new PDE syle for BlockGuard
+	* Prevent log message 1801 during vport delete
+	* Fix functionality regression logical link speed event (CR 99148
+	  99149)
+	* Fix hang on ia64 systems
+
+Changes from 20100226 to 20100311
+
+	* Changed version number to 8.3.5.7
+	* Fix bug with copy in extended data to the extended buffer
+	* Add support for extended mailbox commands
+	* Enable NPIV by default
+	* Separate logging New FCF Found and FCF Parameter Modified
+	  messages
+	* Fix devloss timeout running Hazard with AER error injection every
+	  30-60 seconds (CR 97468)
+	* Fix driver issue where the driver is unable to discover the
+	  paths of luns on physical port of legacy adapter after uplink
+	  failover on VC-FC module (CR 99120)
+	* Fix sli4 params read
+	* Add support for PCI loopback testing
+	* Made the FCF related informational log message only logged to
+	  FCoE devices
+	* Made fast FCF failover randomly choose from eligible FCF records
+	  with equal probability
+	* Fix Big Endian sli4 support
+
+Changes from 20100212 to 20100226
+
+	* Changed version number to 8.3.5.6
+	* Added round robin FCF failover on initial or FCF rediscovery
+	  FLOGI failure
+	* Fixed issue where the driver was unable to discover the paths of
+	  vport luns on HBAs after uplink failover (CR 99070)
+	* Changed magic numbers to manifests for suppress_link_up param
+	* Remove unused variable from lpfc_nodev_tmo_show
+	* Added CEE bridge chip management support
+	* LPSe12002-ML1-E EmulexSecure Fibre Channel Adapter changes for
+	  the encryption IOCB special handling
+	* Add logging messages for critical errors (CR 98726)
+	* Fixed not clearing LPFC_DRIVER_ABORTED bit in aborted FCP
+	  cmdiocb->iocb_flag
+	* Removed fast FCF failover fabric name matching to allow failover
+	  to any fit FCF
+	* Fixed SGL leak when XB bit is set (CR 98736)
+	* Added fast FCF failover in response to FCF DEAD event on current
+	  FCF record
+	* Made driver SLI4 reporting ulpWord[4] status on aborted iocb same
+	  as SLI3 (CR 98963)
+	* Fixed memory allocation failure in the read_sparam mailbox
+	  handling (CR 98738)
+	* Fixed memory allocation issue in lpfc_config_port_post (CR 98739)
+	* Fixed vport discovery failure after CVL handling
+	* Fixed NULL pointer dereference when kernel is out of memory (CR
+	  98587)
+
+Changes from 20100202 to 20100212
+
+	* Changed version number to 8.3.5.5
+	* Relax Event Queue field checking to allow non-zero minor codes
+	* Complete fix for vport->fc_flag set outside of shost host_lock
+	* Implement the PORT_CAPABITIES mailbox command
+	* Use asynchronous mailbox command for requesting FCF recovery
+	* LPSe12002-ML1-E EmulexSecure Fibre Channel Adapter changes for
+	  delayed link up and fix a missing jump table initialization
+	* Fixed tab indent problem from previous commit
+	* Corrected comment to reflect lpfc_suppress_link_up instead of
+	  lpfc_init_link
+	* Add Fast FCF failover support
+	* Change sysfs parameter macros to be uint instead of int (CR
+	  98283)
+	* Add support for new SLI features
+	* Added init_vpi mailbox command before re-registering VPI
+	* Add support for PCI BAR region 0 if BAR0 is a 64 bit register
+	* Call pci_save_state() after pci_restore_state() call to cope with
+	  kernel change
+
+Changes from 20100112 to 20100202
+
+	* Changed version number to 8.3.5.4
+	* Remove DHCHAP support
+	  r7328)
+	* Fix bug with bsg issue mbox not handling a busy mailbox status
+	* Submit abort WQE to same work queue as the command WQE
+	* Add missing function comments, fix comment errors
+	* Add missing functionality LPFC_BSG_VENDOR_GET_MGMT_REV
+	* Add missing functionality LPFC_BSG_VENDOR_MBOX
+	* Add timeout handler for EVT jobs, goes with r7236
+	* Add missing functionality LPFC_BSG_VENDOR_DIAG_MODE,
+	  LPFC_BSG_VENDOR_DIAG_TEST
+	* Fix bug with mgmt response restting cmdiocbq for checkin r7235
+	* Add missing functionality LPFC_BSG_VENDOR_SEND_MGMT_RESP
+	* Modify FC_BSG_RPT_ELS to operate asynchronously
+	* Fix bug with kzmalloc being called with ct_ev_lock held
+	* Falcon changes for IOCB command define values
+	* Modify LPFC_BSG_VENDOR_SET_CT_EVENT adding driver private data
+	* Modify FC_BSG_RPT_CT to operate asynchronously and handle a
+	  timeout condition
+	* Update code infrastructure to add support for missing SGIO
+	  functionality
+	* Do not check class specific parameters for FLOGI (CR 97788)
+
+Changes from 20091221 to 20100112
+
+	* Changed version number to 8.3.5.3
+	* Merge change from upstream scsi-misc-2.6 git tree to move blocking
+	  scsi_eh code from FC LLDs to SCSI FC transport class.
+	* Clean up ELS commands when unregistering unused ELS commands (CR
+	  97048)
+	* Fix an issue in SLI4 when aborted els cmd's xri (SGL) was released
+	  before HBA's abort XRI event (CR 97288)
+	* Support for Nport ID change after Clear Virtual Link (CR 97188)
+	* Fixed unsolicited CT command response on SLI4
+	* Add QOS Link Speed info (CR 96665)
+
+Changes from 20091023 to 20091221
+
+	* Changed version number to 8.3.5.2
+	* Fix Dead FCF not triggering discovery of other FCF (CR 97048
+	  97049)
+	* Fix vport->fc_flag set outside of lock caused I/O failure
+	  during pci-func reset (CR 96975)
+	* Fix driver tries to process failed read fcf record
+	* Fixed hbq buff adds to receive queue
+	* Fixed hbq buff only for sli4
+	* Fix multi-frame sequence response frames go to wrong DID (CR
+	  96915)
+	* Fixed fc header seq_count checks (CR 97010)
+	* Fixed adapter reset and offline/online stress test failing with
+	  I/O errors (CR 92904)
+	* Fix vport fails to register VPI after devloss timeout (CR 96740)
+	* Blocked all SCSI I/O requests from midlayer until target
+	  rediscovery during EEH (CR 95889)
+	* Fix PCI device vendor for EmulexSecure HBA
+	* Fixed in-band remote firmware download (CR 96090)
+	* Made OneCommand CNA set up and use single FCP EQ only under
+	  INTx interrupt mode (CR 96645)
+	* Fix vport not logging out when being deleted (CR 96339)
+	* Add new READ_FCF_RECORD failure code
+	* Remove temporary OneConnect CNA PCI Device IDs
+	* Fixed panic when unmapping luns (CR 94833)
+	* Added handling of ELS request for Reinstate Recovery Qualifier
+	  (RRQ)
+	* Phase out use of ONLINE registers
+	* Made ABTS WQE go to the same WQ as the WQE to be aborted (CR
+	  96110)
+	* Add new READ_FCF_RECORD failure code
+	* Fixed Dead FCoE port after creating vports (CR 95449)
+	* Fix crash driver when fcauthd is started (CR 95584)
+	* Fix hbq pointer corruption (CR 95313)
+	* Fixed: panic during pci-hot-plug testing (CR 95246)
+	* Fix reg_vfi and reg_vpi routines to use little endian wwn
+	* Change default TC BE3 driver identification string to
+	  include model number
+	* Migrate LUN queue depth ramp up code to scsi mid-layer
+	* Fix for lost MSI interrupt (CR 95404)
+	* Fix vport keep-alive does not contain the correct WWN
+	* Ported the fix on reporting of max_vpi to uppper layer
+	* Added PCI read after EQarm doorbell PCI write in INTx mode to
+	  flush PCI pipeline
+	* Fix driver unable to discover targets after FCF DEAD
+
+Changes from 8.3.5 to 20091023
+
+	* Changed version number to 8.3.5.1
+	* Fixed: lpfc_unreg_vfi failure after devloss timeout. Fixed RPI
+	  bit leak (CR 94542)
+	* Fix crash due to list corruption while unloading driver (CR
+	  94889)
+	* Fix Zeroed frame on wire after FLOGI (CR 94950)
+	* Fix Vport does not rediscover after FCF goes away
+	* Fixed the call from lpfc_new_scsi_buf_s3 to use
+	  lpfc_release_scsi_buf_s3
+	* Fix memory leak found in lpfc_sli4_read_rev
+	* Fixed total_scsi_bufs counting
+	* Fix CVL received on Port 1 not processed by driver
+	* Fixed locking issue
+	* Added PCI ID for LPSe12002-ML1-E EmulexSecure Fibre Channel Adapter
+	* Add DHCHAP support
+	* Stop and abort all I/Os on HBA for AER uncorrectable non-fatal
+	  error handling
+	* Made AER sysfs entry point return "Operation not permitted" to
+	  OneConnect HBAs
+	* Removed the use of the locally defined FC transport layer related
+	  macros
+	* SLI4_FIXED: Fixed Check for aborted els command
+	* Fix bug with missing new line characters in log messages (CR
+	  94092)
+	* Fix bug with probe_one routines not putting the Scsi_Host back
+	  upon error (CR 94088)
+	* Fixed discovery failure during quick link bounce
+	* Add support for Clear Virtual Link
+	* Handling unsolicited CT exchange sequence abort (lower level
+	  driver part)
+	* Fix switch name not used in the FCF record for FCoE HBAs
+	* SLI4: Enabled SLI4 HBA UE error polling error-condition action
+	  code
+	* Fix Vports unable to be created on Port2 Tigershark HBA (CR
+	  90670)
+	* Implemented persistent port disable functionality
+	* Rewrite lpfc_sli4_scmd_to_wqidx_distr() to handle counter
+	  rollover cleanly
+	* Added new state in link_state sysfs attribute for persistent link
+	  down
+	* Fix for firmware dump failure (CR 90533)
+	* Use PCI config space register to determine SLI rev of the HBA
+	* Fixed mailbox timeout during HBA reset
+	* Modified resume_rpi mailbox data structure according to new spec
+	* Remove always true conditional in lpfc_sli_read_serdes_param()
+	* SLI4: Do not issue mailbox command when LPFC_HBA_ERROR with
+	  MBX_POLL mode
+	* Fix accumulated total length not being filled in on SLI4
+	  unsolicited IOCBs
+	* Fixed SLI3 inband remote mamagement (CR 91042)
+	* Fix FCoE Paramers in region 23 not being read correctly
+	* Wait for HBA POST completion before checking Online and UE
+	  registers (SLI4)
+	* Fixed static vport creation on SLI4 HBAs
+	* Fixed vport create not to send init_vpi before REG_VFI
+	* Remove cast when using pci_read_config_dword() to access
+	  LPFC_SLIREV_CONF_WORD
+	* Fix use of first_iocbq pointer before checking for NULL
+
+Changes from 8.3.4 to 8.3.5
+ 
+	* Update driver version to 8.3.5
+	* Fixed panic during HBA reset.
+	* Fixed FCoE event tag passed in resume_rpi.
+	* Fix out of order ELS commands
+	* Fix UNREG_VPI failure on extended link pull
+	* Fixed crash while processing unsolicited FC frames.
+	* Clear retry count in the delayed ELS handler
+	* Fixed discovery failure during VLAN and quick link bounce.
+	* Fix mask size for CT field in WQE
+	* Fix VPI base not used when unregistering VPI on port 1.
+	* Fix UNREG_VPI mailbox command to unreg the correct VPI
+	* Fixed Check for aborted els command
+	* Fix error when trying to load driver with wrong firmware on FCoE HBA.
+	* Fix bug with probe_one routines not putting the Scsi_Host back upon
+	  error
+	* Add support for Clear Virtual Link Async Events
+	* Add support for unsolicited CT exchange sequence abort
+	* Add 0x0714 OCeXXXXX PCI ID
+	* Fix crash when "error" is echoed to board_mode sysfs parameter
+	* Fix FCoE Parameter parsing in regions 23
+	* Fix driver crash when creating vport with large number of targets on
+	  SLI4
+	* Fix bug with npiv message being logged when it is not supported by
+	  the adapter
+	* Fix a potential dereferencing mailbox structure after free bug
+	* Fix firmware crash after vport create with high target count
+	* Error out requests to set board_mode to warm restart via sysfs on
+	  SLI4 HBAs
+	* Fix a memory corruption issue during GID_FT IO prep
+	* Fix failed to allocate XRI message is not a critical failure
+	* Update and fix formatting in some log messages
+	* Removed the use of the locally defined FC transport layer related
+	  macros
+	* Check the rsplen in lpfc_handle_fcp_err function before using rsplen
+	* Add AER support.
+	* Fixed Panic/Hang when using polling mode for fcp commands
+	* Added support for Read_rev mbox bits indicating FIP mode of HBA
+	* Optimize performance of slow-path handling of els responses
+	* Add code to cleanup orphaned unsolicited receive sequences
+	* Fixed Devloss timeout when multiple initiators are in same zone
+
+Changes from 8.3.3 to 8.3.4
+	* Update driver version to 8.3.4
+	* Remove spaces before newlines in several log messages
+	* Add bsg (SGIOv4) support for ELS/CT support
+	* NPIV vport fixes
+	* Fix a pair of FCoE issues
+	* Various SLI3 fixes
+	* Consistently Implement persistent port disable
+	* Various SLI4 fixes
+
+

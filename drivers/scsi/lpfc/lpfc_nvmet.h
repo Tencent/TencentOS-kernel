@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2019 Broadcom. All Rights Reserved. The term *
+ * Copyright (C) 2017-2021 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.     *
  * Copyright (C) 2004-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -21,7 +21,9 @@
  * included with this package.                                     *
  ********************************************************************/
 
-#define LPFC_NVMET_DEFAULT_SEGS		(64 + 1)	/* 256K IOs */
+#define LPFC_NVMET_MIN_SEGS		16
+#define LPFC_NVMET_DEFAULT_SEGS		64	/* 256K IOs */
+#define LPFC_NVMET_MAX_SEGS		510
 #define LPFC_NVMET_RQE_MIN_POST		128
 #define LPFC_NVMET_RQE_DEF_POST		512
 #define LPFC_NVMET_RQE_DEF_COUNT	2048
@@ -90,31 +92,22 @@ struct lpfc_nvmet_tgtport {
 	atomic_t defer_wqfull;
 };
 
-struct lpfc_nvmet_ctx_info {
-	struct list_head nvmet_ctx_list;
-	spinlock_t	nvmet_ctx_list_lock; /* lock per CPU */
-	struct lpfc_nvmet_ctx_info *nvmet_ctx_next_cpu;
-	struct lpfc_nvmet_ctx_info *nvmet_ctx_start_cpu;
-	uint16_t	nvmet_ctx_list_cnt;
-	char pad[16];  /* pad to a cache-line */
-};
-
-/* This retrieves the context info associated with the specified cpu / mrq */
-#define lpfc_get_ctx_list(phba, cpu, mrq)  \
-	(phba->sli4_hba.nvmet_ctx_info + ((cpu * phba->cfg_nvmet_mrq) + mrq))
-
 struct lpfc_nvmet_rcv_ctx {
+#if defined(BUILD_NVME) && (IS_ENABLED(CONFIG_NVME_FC))
 	union {
+#if defined(BUILD_NVME_PLUS)
+		struct nvmefc_ls_rsp ls_req;
+#else
 		struct nvmefc_tgt_ls_req ls_req;
+#endif
 		struct nvmefc_tgt_fcp_req fcp_req;
 	} ctx;
+#endif
 	struct list_head list;
 	struct lpfc_hba *phba;
 	struct lpfc_iocbq *wqeq;
 	struct lpfc_iocbq *abort_wqeq;
-	dma_addr_t txrdy_phys;
 	spinlock_t ctxlock; /* protect flag access */
-	uint32_t *txrdy;
 	uint32_t sid;
 	uint32_t offset;
 	uint16_t oxid;
@@ -158,3 +151,17 @@ struct lpfc_nvmet_rcv_ctx {
 	uint64_t ts_status_nvme;
 #endif
 };
+
+struct lpfc_nvmet_ctx_info {
+	struct list_head nvmet_ctx_list;
+	spinlock_t	nvmet_ctx_list_lock; /* lock per CPU */
+	struct lpfc_nvmet_ctx_info *nvmet_ctx_next_cpu;
+	struct lpfc_nvmet_ctx_info *nvmet_ctx_start_cpu;
+	uint16_t	nvmet_ctx_list_cnt;
+	char pad[16];  /* pad to a cache-line */
+};
+
+/* This retrieves the context info associated with the specified cpu / mrq */
+#define lpfc_get_ctx_list(phba, cpu, mrq)  \
+	(phba->sli4_hba.nvmet_ctx_info + ((cpu * phba->cfg_nvmet_mrq) + mrq))
+

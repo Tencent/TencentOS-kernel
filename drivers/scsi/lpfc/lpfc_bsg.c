@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2019 Broadcom. All Rights Reserved. The term *
+ * Copyright (C) 2017-2020 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.     *
  * Copyright (C) 2009-2015 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -26,7 +26,6 @@
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/list.h>
-#include <linux/bsg-lib.h>
 #include <linux/vmalloc.h>
 
 #include <scsi/scsi.h>
@@ -34,6 +33,9 @@
 #include <scsi/scsi_transport_fc.h>
 #include <scsi/scsi_bsg_fc.h>
 #include <scsi/fc/fc_fs.h>
+#ifndef NO_APEX
+#include <scsi/scsi_device.h>
+#endif
 
 #include "lpfc_hw4.h"
 #include "lpfc_hw.h"
@@ -49,6 +51,9 @@
 #include "lpfc_debugfs.h"
 #include "lpfc_vport.h"
 #include "lpfc_version.h"
+#ifndef BUILD_BRCMFCOE
+#include "lpfc_auth.h"
+#endif
 
 struct lpfc_bsg_event {
 	struct list_head node;
@@ -277,6 +282,328 @@ lpfc_bsg_copy_data(struct lpfc_dmabuf *dma_buffers,
 	list_splice(&temp_list, &dma_buffers->list);
 	return bytes_copied;
 }
+
+#ifndef NO_APEX
+/**
+ * lpfc_chk_param - memcmp two fields.
+ * @prta: uint8_t pointer.
+ * @prtb: uint8_t pointer.
+ * @size: size to compare.
+ * returns 1 if equal, 0 if not equal
+ **/
+static int
+lpfc_chk_params(uint8_t *ptra, uint8_t *ptrb, int size)
+{
+	return memcmp(ptra, ptrb, size) == 0;
+}
+
+/**
+ * lpfc_chk_wwpn - memcmp two port names.
+ * @prta: uint8_t pointer to portname.
+ * @prtb: uint8_t pointer to portname.
+ * @size: size to compare.
+ * returns 1 if equal, 0 if not equal
+ **/
+static int
+lpfc_chk_wwpn(uint8_t *ptra, uint8_t *ptrb, int size)
+{
+	return lpfc_chk_params(ptra, ptrb, size);
+}
+
+/**
+ * lpfc_chk_lun - memcmp two luns.
+ * @prta: uint8_t pointer to ist lun.
+ * @prtb: uint8_t pointer to 2nd lun.
+ * @size: size to compare.
+ * returns 1 if equal, 0 if not equal
+ **/
+static int
+lpfc_chk_lun(uint8_t *ptra, uint8_t *ptrb, int size)
+{
+	 return lpfc_chk_params(ptra, ptrb, size);
+}
+
+/**
+ * lpfc_conv_lun - convert fcp lun to scsi lun..
+ * @prta: uint8_t pointer to fcp lun.
+ * returns lun as an integer.
+ **/
+static int
+lpfc_conv_lun(uint8_t *fcp_lun)
+{
+	return scsilun_to_int((struct scsi_lun *)fcp_lun);
+}
+
+/**
+ * lpfc_set_ndlp_fcp_pri - set the fcp priority for the lun range.
+ * @vport: lpfc_vport pointer.
+ * @first_lunr: 1st lun.
+ * @last_lun: last lun in the range.
+ * @fcp_priority: fcp priority level
+ * This function sets the priority level for the effected lun range in
+ * the ndlps fcp_priority arrary.
+ **/
+static void
+lpfc_set_ndlp_fcp_pri(struct lpfc_vport *vport,
+		struct lpfc_nodelist *ndlp,
+		int first_lun, int last_lun,
+		uint8_t fcp_priority)
+{
+	int i = 0;
+	uint8_t pri = 0;
+	int lun_offset = 0;
+
+	for (i = first_lun; i <= last_lun; i++) {
+		if (i == 0)
+			lun_offset = 0;
+		else
+			lun_offset = i >> 1;
+		pri = ndlp->fcp_priority[lun_offset];
+		if (i & 1)
+			pri = ((pri & 0x0f) | (fcp_priority << 4));
+		else
+			pri = ((pri & 0xf0) | fcp_priority);
+		ndlp->fcp_priority[lun_offset] = pri;
+	}
+}
+
+/**
+ * lpfc_apply_fcp_priority_rule - set the fcp priority I/T nexus.
+ * @vport: lpfc_vport pointer.
+ * @rule: fcp_priority rule.
+ * This function walks the vports ndlp list and calls lpfc_set_ndlp_fcp_pri
+ * to apply the rule to the ndlp
+ **/
+static void
+lpfc_apply_fcp_priority_rule(struct lpfc_vport *vport,
+			struct lpfc_fcp_pri_rule *rule)
+{
+	int wild_src = 0;
+	int wild_tgt = 0;
+	int wild_first_lun = 0;
+	int wild_last_lun = 0;
+	uint64_t wild_card;
+	uint8_t *wild;
+	int first_lun = 0;
+	int last_lun = 0;
+	struct lpfc_nodelist *ndlp;
+
+	wild_card = (uint64_t) -1;
+	wild = (uint8_t *) &wild_card;
+	wild_src = lpfc_chk_wwpn(rule->src_wwpn, wild,
+			sizeof(rule->src_wwpn));
+	if (!wild_src && !lpfc_chk_wwpn(rule->src_wwpn,
+			(uint8_t *)&vport->fc_portname,
+				 sizeof(rule->src_wwpn)))
+		return; /* this rule does not apply to this vport */
+	wild_tgt = lpfc_chk_wwpn(rule->tgt_wwpn, wild,
+		 sizeof(rule->tgt_wwpn));
+	wild_first_lun = lpfc_chk_lun(rule->first_lun, wild,
+			 sizeof(rule->first_lun));
+	wild_last_lun = lpfc_chk_lun(rule->last_lun, wild,
+			 sizeof(rule->last_lun));
+	if (!wild_first_lun) {
+		first_lun = lpfc_conv_lun(rule->first_lun);
+		if (first_lun > vport->cfg_max_luns) {
+			lpfc_printf_vlog(vport, KERN_WARNING, LOG_FCP,
+				"3032 Bad 1st lun:%d in FCP rule\n",
+				first_lun);
+			return;
+		}
+	}
+
+	if (!wild_last_lun)
+		last_lun = lpfc_conv_lun(rule->first_lun);
+	else
+		last_lun = vport->cfg_max_luns;
+	if (last_lun > vport->cfg_max_luns)
+		last_lun = vport->cfg_max_luns;
+
+	if (!wild_tgt) {
+		ndlp = lpfc_findnode_wwpn(vport,
+			(struct lpfc_name *)rule->tgt_wwpn);
+		if ((!ndlp) || !(ndlp->nlp_type & NLP_FCP_TARGET))
+			return; /* The target has not been discovered yet */
+		lpfc_printf_vlog(vport, KERN_INFO, LOG_MISC,
+			"3072 Applying fcp_priority:%d to"
+			" I=%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x "
+			" T=%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x"
+			" luns:0x%x - 0x%x\n",
+			 rule->fcp_priority,
+			vport->fc_portname.u.wwn[0],
+			vport->fc_portname.u.wwn[1],
+			vport->fc_portname.u.wwn[2],
+			vport->fc_portname.u.wwn[3],
+			vport->fc_portname.u.wwn[4],
+			vport->fc_portname.u.wwn[5],
+			vport->fc_portname.u.wwn[6],
+			vport->fc_portname.u.wwn[7],
+			ndlp->nlp_portname.u.wwn[0],
+			ndlp->nlp_portname.u.wwn[1],
+			ndlp->nlp_portname.u.wwn[2],
+			ndlp->nlp_portname.u.wwn[3],
+			ndlp->nlp_portname.u.wwn[4],
+			ndlp->nlp_portname.u.wwn[5],
+			ndlp->nlp_portname.u.wwn[6],
+			ndlp->nlp_portname.u.wwn[7],
+			first_lun, last_lun);
+		lpfc_set_ndlp_fcp_pri(vport, ndlp, first_lun, last_lun,
+					rule->fcp_priority);
+	} else {
+		/* walk the vports list of ndlp's and set the priority. */
+		 list_for_each_entry(ndlp, &vport->fc_nodes, nlp_listp) {
+		if (!(ndlp->nlp_type & NLP_FCP_TARGET))
+				continue;
+			lpfc_printf_vlog(vport, KERN_INFO, LOG_MISC,
+				"3090 Applying fcp_priority:%d to"
+				" I=%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x "
+				" T=%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x"
+				" luns:0x%x - 0x%x\n",
+				rule->fcp_priority,
+				vport->fc_portname.u.wwn[0],
+				vport->fc_portname.u.wwn[1],
+				vport->fc_portname.u.wwn[2],
+				vport->fc_portname.u.wwn[3],
+				vport->fc_portname.u.wwn[4],
+				vport->fc_portname.u.wwn[5],
+				vport->fc_portname.u.wwn[6],
+				vport->fc_portname.u.wwn[7],
+				ndlp->nlp_portname.u.wwn[0],
+				ndlp->nlp_portname.u.wwn[1],
+				ndlp->nlp_portname.u.wwn[2],
+				ndlp->nlp_portname.u.wwn[3],
+				ndlp->nlp_portname.u.wwn[4],
+				ndlp->nlp_portname.u.wwn[5],
+				ndlp->nlp_portname.u.wwn[6],
+				ndlp->nlp_portname.u.wwn[7],
+				first_lun, last_lun);
+
+			lpfc_set_ndlp_fcp_pri(vport, ndlp, first_lun, last_lun,
+				rule->fcp_priority);
+		}
+	}
+	return;
+}
+
+/**
+ * lpfc_set_fcp_priority - set the fcp priority for each rule.
+ * @phba: lpfc_hba pointer.
+ * @rules: fcp_priority rules list.
+ * This function walks the rules list and attempts to apply them to every vport
+ * and ndlp.
+ **/
+static void
+lpfc_set_fcp_priority(struct lpfc_hba *phba, struct lpfc_fcp_pri_rules *rules)
+{
+	struct lpfc_vport **vports;
+	int i = 0;
+	int j = 0;
+	vports = lpfc_create_vport_work_array(phba);
+	if (vports) {
+		for (j = rules->number_of_entries - 1; j >= 0; j--) {
+			for (i = 0;
+				i <= phba->max_vports && vports[i] != NULL;
+					 i++) {
+				lpfc_apply_fcp_priority_rule(vports[i],
+					&rules->rule_entry[j]);
+			}
+		}
+		lpfc_destroy_vport_work_array(phba, vports);
+	}
+}
+
+/**
+ * lpfc_set_fcp_priority - set the fcp priority for each rule.
+ * @phba: lpfc_hba pointer.
+ * @rules: fcp_priority rules list.
+ * This function walks the rules list and attempts to apply them to every vport
+ * and ndlp.
+ **/
+void
+lpfc_set_ndlps_fcp_priority(struct lpfc_nodelist *ndlp)
+{
+	struct lpfc_vport *vport = ndlp->vport;
+	struct lpfc_hba *phba;
+	struct lpfc_fcp_pri_rules *rules;
+	int j = 0;
+	int istgt = 0;
+	int isinit = 0;
+	uint64_t wild_card;
+	uint8_t *wild;
+
+	if (!vport)
+		return;
+	phba = vport->phba;
+	if (!phba)
+		return;
+	if (!phba->fcp_priority_rules)
+		return;
+	rules = phba->fcp_priority_rules;
+	if (!rules)
+		return;
+	wild_card = (uint64_t) -1;
+	wild = (uint8_t *) &wild_card;
+	for (j = rules->number_of_entries - 1; j >= 0; j--) {
+		isinit = lpfc_chk_wwpn(rules->rule_entry[j].src_wwpn, wild,
+			sizeof(rules->rule_entry[j].src_wwpn));
+		if (!isinit)
+			isinit = lpfc_chk_wwpn(rules->rule_entry[j].src_wwpn,
+			(uint8_t *)&vport->fc_portname,
+				 sizeof(rules->rule_entry[j].src_wwpn));
+
+		istgt = lpfc_chk_wwpn(rules->rule_entry[j].tgt_wwpn, wild,
+			 sizeof(rules->rule_entry[j].tgt_wwpn));
+		if (!istgt)
+			istgt = lpfc_chk_wwpn(rules->rule_entry[j].tgt_wwpn,
+				(uint8_t *)&ndlp->nlp_portname,
+			sizeof(rules->rule_entry[j].tgt_wwpn));
+		if (istgt && isinit)
+			lpfc_apply_fcp_priority_rule(vport,
+				&rules->rule_entry[j]);
+	}
+}
+
+/**
+ * lpfc_clr_ndlps_pri - clear the fcp priority for each target.
+ * @vport: lpfc_vport pointer.
+ * This function walks the ndlp list and for this vport and clears
+ * all of the fcp_priority.
+ **/
+static void
+lpfc_clr_ndlps_pri(struct lpfc_vport *vport)
+{
+	struct lpfc_nodelist *ndlp;
+
+	/* walk the vports list of ndlp's and sent the priority. */
+	lpfc_printf_vlog(vport, KERN_ERR, LOG_INIT,
+			"3070 lpc_clr_ndlps_pri: fcp_priority sz = %d\n",
+			 (int)sizeof(ndlp->fcp_priority));
+	 list_for_each_entry(ndlp, &vport->fc_nodes, nlp_listp) {
+		memset(ndlp->fcp_priority, 0, sizeof(ndlp->fcp_priority));
+	}
+	return;
+}
+
+/**
+ * lpfc_clr_vports_fcp_priority - clear the fcp priority for each vport.
+ * @phba: lpfc_hba pointer.
+ * This function walks the list of vports and calls lpfc_clr_ndlps_pri.
+ **/
+static void
+lpfc_clr_vports_fcp_prority(struct lpfc_hba *phba)
+{
+	struct lpfc_vport **vports;
+	int i = 0;
+	vports = lpfc_create_vport_work_array(phba);
+	if (vports) {
+		for (i = 0; i <= phba->max_vports && vports[i] != NULL;
+					 i++) {
+			lpfc_clr_ndlps_pri(vports[i]);
+		}
+		lpfc_destroy_vport_work_array(phba, vports);
+	}
+}
+#endif
 
 /**
  * lpfc_bsg_send_mgmt_cmd_cmp - lpfc_bsg_send_mgmt_cmd's completion handler
@@ -641,6 +968,7 @@ lpfc_bsg_rport_els_cmp(struct lpfc_hba *phba,
 	}
 
 	lpfc_nlp_put(ndlp);
+	cmdiocbq->iocb_flag &= ~LPFC_IO_RAW;
 	lpfc_els_free_iocb(phba, cmdiocbq);
 	kfree(dd_data);
 
@@ -675,6 +1003,9 @@ lpfc_bsg_rport_els(struct bsg_job *job)
 	unsigned long flags;
 	uint32_t creg_val;
 	int rc = 0;
+	uint32_t did;
+	uint32_t *ptr;
+	uint32_t raw_data[2];
 
 	/* in case no data is transferred */
 	bsg_reply->reply_payload_rcv_len = 0;
@@ -698,11 +1029,46 @@ lpfc_bsg_rport_els(struct bsg_job *job)
 	}
 
 	elscmd = bsg_request->rqst_data.r_els.els_code;
-	cmdsize = job->request_payload.payload_len;
 
-	if (!lpfc_nlp_get(ndlp)) {
-		rc = -ENODEV;
-		goto free_dd_data;
+	/* Check for raw ELS data as opposed to a specific command */
+	if (elscmd == ELS_CMD_RAW) {
+		sg_copy_to_buffer(job->request_payload.sg_list,
+				  job->request_payload.sg_cnt,
+				  raw_data, sizeof(raw_data));
+
+		/* The first word indicates raw data, the second is the did */
+		did = raw_data[1];
+
+		/* Now find an appropriate ndlp */
+		if (did != ndlp->nlp_DID) {
+			ndlp = lpfc_findnode_did(vport, did);
+			if (!ndlp) {
+				ndlp = lpfc_nlp_init(vport, did);
+				if (!ndlp) {
+					rc = -ENODEV;
+					goto free_dd_data;
+				}
+				lpfc_enqueue_node(vport, ndlp);
+			} else if (!NLP_CHK_NODE_ACT(ndlp)) {
+				ndlp = lpfc_enable_node(vport, ndlp,
+							NLP_STE_UNUSED_NODE);
+				if (!ndlp) {
+					rc = -ENODEV;
+					goto free_dd_data;
+				}
+			}
+		}
+
+		/* The raw data that forms the ELS command starts at word 2 */
+		cmdsize = job->request_payload.payload_len -
+			(2 * sizeof(uint32_t));
+	} else {
+		did = ndlp->nlp_DID;
+		if (!lpfc_nlp_get(ndlp)) {
+			rc = -ENODEV;
+			goto free_dd_data;
+		}
+		cmdsize = job->request_payload.payload_len;
 	}
 
 	/* We will use the allocated dma buffers by prep els iocb for command
@@ -712,20 +1078,35 @@ lpfc_bsg_rport_els(struct bsg_job *job)
 	 */
 
 	cmdiocbq = lpfc_prep_els_iocb(vport, 1, cmdsize, 0, ndlp,
-				      ndlp->nlp_DID, elscmd);
+				      did, elscmd);
 	if (!cmdiocbq) {
 		rc = -EIO;
 		goto release_ndlp;
 	}
 
-	rpi = ndlp->nlp_rpi;
-
 	/* Transfer the request payload to allocated command dma buffer */
-
 	sg_copy_to_buffer(job->request_payload.sg_list,
 			  job->request_payload.sg_cnt,
 			  ((struct lpfc_dmabuf *)cmdiocbq->context2)->virt,
-			  cmdsize);
+			  job->request_payload.payload_len);
+
+	/* Check for raw ELS data as opposed to a specific command */
+	if (elscmd == ELS_CMD_RAW) {
+		cmdiocbq->iocb_flag |= LPFC_IO_RAW;
+
+		/* The raw data for the ELS command starts ar word 2,
+		 * so shift the entire payload back 2 words.
+		 */
+		ptr = (uint32_t *)
+			((struct lpfc_dmabuf *)cmdiocbq->context2)->virt;
+		while (cmdsize > 0) {
+			*ptr = *(ptr + 2);
+			ptr++;
+			cmdsize -= sizeof(uint32_t);
+		}
+	}
+
+	rpi = ndlp->nlp_rpi;
 
 	if (phba->sli_rev == LPFC_SLI_REV4)
 		cmdiocbq->iocb.ulpContext = phba->sli4_hba.rpi_ids[rpi];
@@ -939,28 +1320,9 @@ lpfc_bsg_ct_unsol_event(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 	INIT_LIST_HEAD(&head);
 	list_add_tail(&head, &piocbq->list);
 
-	if (piocbq->iocb.ulpBdeCount == 0 ||
-	    piocbq->iocb.un.cont64[0].tus.f.bdeSize == 0)
-		goto error_ct_unsol_exit;
-
-	if (phba->link_state == LPFC_HBA_ERROR ||
-		(!(phba->sli.sli_flag & LPFC_SLI_ACTIVE)))
-		goto error_ct_unsol_exit;
-
-	if (phba->sli3_options & LPFC_SLI3_HBQ_ENABLED)
-		dmabuf = bdeBuf1;
-	else {
-		dma_addr = getPaddr(piocbq->iocb.un.cont64[0].addrHigh,
-				    piocbq->iocb.un.cont64[0].addrLow);
-		dmabuf = lpfc_sli_ringpostbuf_get(phba, pring, dma_addr);
-	}
-	if (dmabuf == NULL)
-		goto error_ct_unsol_exit;
-	ct_req = (struct lpfc_sli_ct_request *)dmabuf->virt;
+	ct_req = (struct lpfc_sli_ct_request *)bdeBuf1->virt;
 	evt_req_id = ct_req->FsType;
 	cmd = ct_req->CommandResponse.bits.CmdRsp;
-	if (!(phba->sli3_options & LPFC_SLI3_HBQ_ENABLED))
-		lpfc_sli_ringpostbuf_put(phba, pring, dmabuf);
 
 	spin_lock_irqsave(&phba->ct_ev_lock, flags);
 	list_for_each_entry(evt, &phba->ct_ev_waiters, node) {
@@ -1617,6 +1979,231 @@ no_ctiocb:
 no_dd_data:
 	return rc;
 }
+
+#ifndef NO_APEX
+/**
+ * lpfc_bsg_set_fcp_priority - process a bsg vendor command
+ * @job: BSG_SET_FCP_PRIORITY fc_bsg_job
+ **/
+static int
+lpfc_bsg_set_fcp_priority(struct bsg_job *job)
+{
+	struct lpfc_vport *vport = shost_priv(fc_bsg_to_shost(job));
+	struct lpfc_hba *phba = vport->phba;
+	struct fc_bsg_request *bsg_request = job->request;
+	struct fc_bsg_reply *bsg_reply = job->reply;
+	struct set_lpfc_fcp_pri_rules *command;
+	int len;
+	int copied;
+	int rc = 0;
+	struct lpfc_fcp_pri_rules *myrule;
+
+
+	/* in case no data is transferred */
+	bsg_reply->reply_payload_rcv_len = 0;
+
+	/* check request len */
+	if (job->request_len <
+	    sizeof(struct fc_bsg_request) +
+			sizeof(struct set_lpfc_fcp_pri_rules)) {
+		lpfc_printf_log(phba, KERN_WARNING, LOG_LIBDFC,
+				"3078 Received GET_FCP_PRI request below "
+				"minimum size\n");
+		rc = -EINVAL;
+		goto set_fcp_priority_exit_1;
+	}
+
+	/* check reply len */
+	if (job->reply_len < sizeof(*bsg_reply)) {
+		lpfc_printf_log(phba, KERN_WARNING, LOG_LIBDFC,
+				"3079 Received GET_FCP_PRI reply below "
+				"minimum size\n");
+		rc = -EINVAL;
+		goto set_fcp_priority_exit_1;
+	}
+
+	/* point to the vendor command */
+	command = (struct set_lpfc_fcp_pri_rules *)
+		bsg_request->rqst_data.h_vendor.vendor_cmd;
+
+	/* app adding an extra beyond what we already have */
+	if (command->number_of_entries > LPFC_MAX_FCP_SET_RULES) {
+		lpfc_printf_log(phba, KERN_WARNING, LOG_LIBDFC,
+				"3074 Received GET_FCP_PRI reply below "
+				"minimum size\n");
+		rc = -EINVAL;
+		goto set_fcp_priority_exit_1;
+	}
+
+	/* get size of rules data, add one extra for adds */
+	len = (int)sizeof(struct lpfc_fcp_pri_rules) +
+		(command->number_of_entries *
+			 sizeof(struct lpfc_fcp_pri_rule));
+	myrule = kmalloc(len, GFP_KERNEL);
+	if (!myrule) {
+		rc = -ENOMEM;
+		lpfc_printf_log(phba, KERN_ERR, LOG_LIBDFC,
+			 "9009 No memory for rules \n");
+		goto set_fcp_priority_exit_1;
+	}
+	if (command->number_of_entries > 0) {
+		len = (int)sizeof(struct lpfc_fcp_pri_rules) +
+			(command->number_of_entries *
+			sizeof(struct lpfc_fcp_pri_rule));
+		copied = sg_copy_to_buffer(job->request_payload.sg_list,
+			job->request_payload.sg_cnt, myrule, len);
+		if (len != copied) {
+			lpfc_printf_log(phba, KERN_WARNING, LOG_LIBDFC,
+				"3075 Received GET_FCP_PRI reply below "
+				"minimum size\n");
+			rc = -EINVAL;
+			goto set_fcp_priority_exit_2;
+		}
+
+	} else
+		lpfc_printf_log(phba, KERN_ERR, LOG_LIBDFC,
+			"3069 Clearing  FCP rules\n");
+	if (phba->fcp_priority_rules) {
+		lpfc_clr_vports_fcp_prority(phba);
+		kfree(phba->fcp_priority_rules);
+		phba->fcp_priority_rules = NULL;
+	}
+	if (command->number_of_entries > 0) {
+		phba->fcp_priority_rules = myrule;
+		lpfc_set_fcp_priority(phba, myrule);
+	} else
+		kfree(myrule);
+
+	job->dd_data = NULL;
+	bsg_reply->result = 0;
+	bsg_job_done(job, bsg_reply->result,
+		       bsg_reply->reply_payload_rcv_len);
+	return 0;
+
+set_fcp_priority_exit_2:
+	kfree(myrule);
+set_fcp_priority_exit_1:
+	/* make error code available to userspace */
+	bsg_reply->result = rc;
+	job->dd_data = NULL;
+	return rc;
+}
+
+/**
+ * lpfc_bsg_get_fcp_priority - process a  bsg vendor command
+ * @job: BSG_GET_FCP_PRIORITY fc_bsg_job
+ **/
+static int
+lpfc_bsg_get_fcp_priority(struct bsg_job *job)
+{
+	struct lpfc_vport *vport = shost_priv(fc_bsg_to_shost(job));
+	struct lpfc_hba *phba = vport->phba;
+	struct fc_bsg_request *bsg_request = job->request;
+	struct fc_bsg_reply *bsg_reply = job->reply;
+	int rc = 0;
+	struct get_lpfc_fcp_pri_rules *command;
+	int len;
+	struct lpfc_fcp_pri_rules *myrule;
+
+	/* get size of dummy data */
+	len = (int)sizeof(struct lpfc_fcp_pri_rules);
+	myrule = kmalloc(len, GFP_KERNEL);
+	if (!myrule) {
+		rc = -ENOMEM;
+		lpfc_printf_log(phba, KERN_ERR, LOG_LIBDFC,
+			"3071 no memory for priority rules\n");
+		goto get_fcp_priority_exit1;
+	}
+	if (phba->fcp_priority_rules)
+		myrule->number_of_entries =
+			phba->fcp_priority_rules->number_of_entries;
+	else
+		myrule->number_of_entries = 0;
+
+	/* in case no data is transferred */
+	bsg_reply->reply_payload_rcv_len = 0;
+
+	/* check request len */
+	if (job->request_len <
+	    sizeof(struct fc_bsg_request) +
+			sizeof(struct get_lpfc_fcp_pri_rules)) {
+		lpfc_printf_log(phba, KERN_WARNING, LOG_LIBDFC,
+				"3073 Received GET_FCP_PRI request below "
+				"minimum size\n");
+		rc = -EINVAL;
+		goto get_fcp_priority_exit;
+	}
+
+	/* check reply len */
+	if (job->reply_len < sizeof(*bsg_reply) +
+				sizeof(struct get_lpfc_fcp_pri_rules_reply)) {
+		lpfc_printf_log(phba, KERN_WARNING, LOG_LIBDFC,
+				"3076 Received GET_FCP_PRI reply below "
+				"minimum size\n");
+		rc = -EINVAL;
+		goto get_fcp_priority_exit;
+	}
+
+	/* point to the vendor command */
+	command = (struct get_lpfc_fcp_pri_rules *)
+		bsg_request->rqst_data.h_vendor.vendor_cmd;
+
+	/* app wants more rules than we have */
+	if (phba->fcp_priority_rules && (command->number_of_entries >
+		phba->fcp_priority_rules->number_of_entries))
+		len = (int)sizeof(struct lpfc_fcp_pri_rules) +
+			(phba->fcp_priority_rules->number_of_entries *
+			sizeof(struct lpfc_fcp_pri_rule));
+	/* app wants some or all of our rules */
+	else if (phba->fcp_priority_rules && command->number_of_entries > 0)
+		len = (int)sizeof(struct lpfc_fcp_pri_rules) +
+			(command->number_of_entries *
+			sizeof(struct lpfc_fcp_pri_rule));
+	/* app is fishing for how many rules we have */
+	else
+		/* return just the count of rules */
+		len = (int)sizeof(struct lpfc_fcp_pri_rules);
+	if (len == (int)sizeof(struct lpfc_fcp_pri_rules)) {
+		bsg_reply->reply_payload_rcv_len =
+		sg_copy_from_buffer(job->request_payload.sg_list,
+			    job->request_payload.sg_cnt,
+			    myrule, len);
+	} else {
+		bsg_reply->reply_payload_rcv_len =
+		sg_copy_from_buffer(job->request_payload.sg_list,
+			    job->request_payload.sg_cnt,
+			    phba->fcp_priority_rules, len);
+	}
+
+	if (bsg_reply->reply_payload_rcv_len != len) {
+		lpfc_printf_log(phba, KERN_WARNING, LOG_LIBDFC,
+			"3077 Received GET_FCP_PRI reply below "
+			"minimum size data:%d %d %d %d %d\n",
+			bsg_reply->reply_payload_rcv_len,
+			len, command->number_of_entries,
+			job->request_payload.sg_cnt,
+			myrule->number_of_entries);
+		bsg_reply->reply_payload_rcv_len = 0;
+		rc = -EINVAL;
+		goto get_fcp_priority_exit;
+	}
+
+	kfree(myrule);
+	job->dd_data = NULL;
+	bsg_reply->result = rc;
+	bsg_job_done(job, bsg_reply->result,
+		       bsg_reply->reply_payload_rcv_len);
+	return 0;
+
+get_fcp_priority_exit:
+	kfree(myrule);
+get_fcp_priority_exit1:
+	/* make error code available to userspace */
+	bsg_reply->result = rc;
+	job->dd_data = NULL;
+	return rc;
+}
+#endif
 
 /**
  * lpfc_bsg_send_mgmt_rsp - process a SEND_MGMT_RESP bsg vendor command
@@ -2404,33 +2991,27 @@ lpfc_sli4_bsg_link_diag_test(struct bsg_job *job)
 	union lpfc_sli4_cfg_shdr *shdr;
 	uint32_t shdr_status, shdr_add_status;
 	struct diag_status *diag_status_reply;
-	int mbxstatus, rc = 0;
+	int mbxstatus, rc = -ENODEV, rc1 = 0;
 
 	shost = fc_bsg_to_shost(job);
-	if (!shost) {
-		rc = -ENODEV;
+	if (!shost)
 		goto job_error;
-	}
-	vport = shost_priv(shost);
-	if (!vport) {
-		rc = -ENODEV;
-		goto job_error;
-	}
-	phba = vport->phba;
-	if (!phba) {
-		rc = -ENODEV;
-		goto job_error;
-	}
 
-	if (phba->sli_rev < LPFC_SLI_REV4) {
-		rc = -ENODEV;
+	vport = shost_priv(shost);
+	if (!vport)
 		goto job_error;
-	}
+
+	phba = vport->phba;
+	if (!phba)
+		goto job_error;
+
+
+	if (phba->sli_rev < LPFC_SLI_REV4)
+		goto job_error;
+
 	if (bf_get(lpfc_sli_intf_if_type, &phba->sli4_hba.sli_intf) <
-	    LPFC_SLI_INTF_IF_TYPE_2) {
-		rc = -ENODEV;
+	    LPFC_SLI_INTF_IF_TYPE_2) 
 		goto job_error;
-	}
 
 	if (job->request_len < sizeof(struct fc_bsg_request) +
 	    sizeof(struct sli4_link_diag)) {
@@ -2457,16 +3038,20 @@ lpfc_sli4_bsg_link_diag_test(struct bsg_job *job)
 		goto job_error;
 
 	pmboxq = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
-	if (!pmboxq)
+	if (!pmboxq) {
+		rc = -ENOMEM;
 		goto link_diag_test_exit;
+	}
 
 	req_len = (sizeof(struct lpfc_mbx_set_link_diag_state) -
 		   sizeof(struct lpfc_sli4_cfg_mhdr));
 	alloc_len = lpfc_sli4_config(phba, pmboxq, LPFC_MBOX_SUBSYSTEM_FCOE,
 				     LPFC_MBOX_OPCODE_FCOE_LINK_DIAG_STATE,
 				     req_len, LPFC_SLI4_MBX_EMBED);
-	if (alloc_len != req_len)
+	if (alloc_len != req_len) {
+		rc = -ENOMEM;
 		goto link_diag_test_exit;
+	}
 
 	run_link_diag_test = &pmboxq->u.mqe.un.link_diag_test;
 	bf_set(lpfc_mbx_run_diag_test_link_num, &run_link_diag_test->u.req,
@@ -2498,13 +3083,12 @@ lpfc_sli4_bsg_link_diag_test(struct bsg_job *job)
 	diag_status_reply = (struct diag_status *)
 			    bsg_reply->reply_data.vendor_reply.vendor_rsp;
 
-	if (job->reply_len <
-	    sizeof(struct fc_bsg_request) + sizeof(struct diag_status)) {
+	if (job->reply_len < sizeof(*bsg_reply) + sizeof(*diag_status_reply)) {
 		lpfc_printf_log(phba, KERN_WARNING, LOG_LIBDFC,
 				"3012 Received Run link diag test reply "
 				"below minimum size (%d): reply_len:%d\n",
-				(int)(sizeof(struct fc_bsg_request) +
-				sizeof(struct diag_status)),
+				(int)(sizeof(*bsg_reply) +
+				sizeof(*diag_status_reply)),
 				job->reply_len);
 		rc = -EINVAL;
 		goto job_error;
@@ -2515,7 +3099,7 @@ lpfc_sli4_bsg_link_diag_test(struct bsg_job *job)
 	diag_status_reply->shdr_add_status = shdr_add_status;
 
 link_diag_test_exit:
-	rc = lpfc_sli4_bsg_set_link_diag_state(phba, 0);
+	rc1 = lpfc_sli4_bsg_set_link_diag_state(phba, 0);
 
 	if (pmboxq)
 		mempool_free(pmboxq, phba->mbox_mem_pool);
@@ -2524,6 +3108,8 @@ link_diag_test_exit:
 
 job_error:
 	/* make error code available to userspace */
+	if (rc1 && !rc)
+		rc = rc1;
 	bsg_reply->result = rc;
 	/* complete the job back to userspace if no error */
 	if (rc == 0)
@@ -2916,6 +3502,9 @@ diag_cmd_data_alloc(struct lpfc_hba *phba,
 
 		if (nocopydata) {
 			bpl->tus.f.bdeFlags = 0;
+			pci_dma_sync_single_for_device(phba->pcidev,
+				dmp->dma.phys, LPFC_BPL_SIZE, PCI_DMA_TODEVICE);
+
 		} else {
 			memset((uint8_t *)dmp->dma.virt, 0, cnt);
 			bpl->tus.f.bdeFlags = BUFF_TYPE_BDE_64I;
@@ -3099,8 +3688,8 @@ static int
 lpfc_bsg_diag_loopback_run(struct bsg_job *job)
 {
 	struct lpfc_vport *vport = shost_priv(fc_bsg_to_shost(job));
-	struct fc_bsg_reply *bsg_reply = job->reply;
 	struct lpfc_hba *phba = vport->phba;
+	struct fc_bsg_reply *bsg_reply = job->reply;
 	struct lpfc_bsg_event *evt;
 	struct event_data *evdat;
 	struct lpfc_sli *psli = &phba->sli;
@@ -3403,8 +3992,8 @@ static int
 lpfc_bsg_get_dfc_rev(struct bsg_job *job)
 {
 	struct lpfc_vport *vport = shost_priv(fc_bsg_to_shost(job));
-	struct fc_bsg_reply *bsg_reply = job->reply;
 	struct lpfc_hba *phba = vport->phba;
+	struct fc_bsg_reply *bsg_reply = job->reply;
 	struct get_mgmt_rev_reply *event_reply;
 	int rc = 0;
 
@@ -3420,8 +4009,7 @@ lpfc_bsg_get_dfc_rev(struct bsg_job *job)
 	event_reply = (struct get_mgmt_rev_reply *)
 		bsg_reply->reply_data.vendor_reply.vendor_rsp;
 
-	if (job->reply_len <
-	    sizeof(struct fc_bsg_request) + sizeof(struct get_mgmt_rev_reply)) {
+	if (job->reply_len < sizeof(*bsg_reply) + sizeof(*event_reply)) {
 		lpfc_printf_log(phba, KERN_WARNING, LOG_LIBDFC,
 				"2741 Received GET_DFC_REV reply below "
 				"minimum size\n");
@@ -3454,8 +4042,8 @@ static void
 lpfc_bsg_issue_mbox_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmboxq)
 {
 	struct bsg_job_data *dd_data;
-	struct fc_bsg_reply *bsg_reply;
 	struct bsg_job *job;
+	struct fc_bsg_reply *bsg_reply;
 	uint32_t size;
 	unsigned long flags;
 	uint8_t *pmb, *pmb_buf;
@@ -3691,7 +4279,7 @@ lpfc_bsg_issue_mbox_ext_handle_job(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmboxq)
 		bsg_reply->result = 0;
 
 		lpfc_printf_log(phba, KERN_INFO, LOG_LIBDFC,
-				"2937 SLI_CONFIG ext-buffer mailbox command "
+				"2937 SLI_CONFIG ext-buffer maibox command "
 				"(x%x/x%x) complete bsg job done, bsize:%d\n",
 				phba->mbox_ext_buf_ctx.nembType,
 				phba->mbox_ext_buf_ctx.mboxType, size);
@@ -3702,7 +4290,7 @@ lpfc_bsg_issue_mbox_ext_handle_job(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmboxq)
 					phba->mbox_ext_buf_ctx.mbx_dmabuf, 0);
 	} else {
 		lpfc_printf_log(phba, KERN_ERR, LOG_LIBDFC,
-				"2938 SLI_CONFIG ext-buffer mailbox "
+				"2938 SLI_CONFIG ext-buffer maibox "
 				"command (x%x/x%x) failure, rc:x%x\n",
 				phba->mbox_ext_buf_ctx.nembType,
 				phba->mbox_ext_buf_ctx.mboxType, rc);
@@ -3736,7 +4324,7 @@ lpfc_bsg_issue_read_mbox_ext_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmboxq)
 		pmboxq->u.mb.mbxStatus = MBXERR_ERROR;
 
 	lpfc_printf_log(phba, KERN_INFO, LOG_LIBDFC,
-			"2939 SLI_CONFIG ext-buffer rd mailbox command "
+			"2939 SLI_CONFIG ext-buffer rd maibox command "
 			"complete, ctxState:x%x, mbxStatus:x%x\n",
 			phba->mbox_ext_buf_ctx.state, pmboxq->u.mb.mbxStatus);
 
@@ -3752,6 +4340,7 @@ lpfc_bsg_issue_read_mbox_ext_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmboxq)
 		bsg_job_done(job, bsg_reply->result,
 			       bsg_reply->reply_payload_rcv_len);
 	}
+
 	return;
 }
 
@@ -3776,7 +4365,7 @@ lpfc_bsg_issue_write_mbox_ext_cmpl(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmboxq)
 		pmboxq->u.mb.mbxStatus = MBXERR_ERROR;
 
 	lpfc_printf_log(phba, KERN_INFO, LOG_LIBDFC,
-			"2940 SLI_CONFIG ext-buffer wr mailbox command "
+			"2940 SLI_CONFIG ext-buffer wr maibox command "
 			"complete, ctxState:x%x, mbxStatus:x%x\n",
 			phba->mbox_ext_buf_ctx.state, pmboxq->u.mb.mbxStatus);
 
@@ -4058,12 +4647,12 @@ lpfc_bsg_sli_cfg_read_cmd_ext(struct lpfc_hba *phba, struct bsg_job *job,
 	if ((rc == MBX_SUCCESS) || (rc == MBX_BUSY)) {
 		lpfc_printf_log(phba, KERN_INFO, LOG_LIBDFC,
 				"2947 Issued SLI_CONFIG ext-buffer "
-				"mailbox command, rc:x%x\n", rc);
+				"maibox command, rc:x%x\n", rc);
 		return SLI_CONFIG_HANDLED;
 	}
 	lpfc_printf_log(phba, KERN_ERR, LOG_LIBDFC,
 			"2948 Failed to issue SLI_CONFIG ext-buffer "
-			"mailbox command, rc:x%x\n", rc);
+			"maibox command, rc:x%x\n", rc);
 	rc = -EPIPE;
 
 job_error:
@@ -4217,12 +4806,12 @@ lpfc_bsg_sli_cfg_write_cmd_ext(struct lpfc_hba *phba, struct bsg_job *job,
 		if ((rc == MBX_SUCCESS) || (rc == MBX_BUSY)) {
 			lpfc_printf_log(phba, KERN_INFO, LOG_LIBDFC,
 					"2955 Issued SLI_CONFIG ext-buffer "
-					"mailbox command, rc:x%x\n", rc);
+					"maibox command, rc:x%x\n", rc);
 			return SLI_CONFIG_HANDLED;
 		}
 		lpfc_printf_log(phba, KERN_ERR, LOG_LIBDFC,
 				"2956 Failed to issue SLI_CONFIG ext-buffer "
-				"mailbox command, rc:x%x\n", rc);
+				"maibox command, rc:x%x\n", rc);
 		rc = -EPIPE;
 		goto job_error;
 	}
@@ -4306,6 +4895,7 @@ lpfc_bsg_handle_sli_cfg_mbox(struct lpfc_hba *phba, struct bsg_job *job,
 			case COMN_OPCODE_GET_CNTL_ADDL_ATTRIBUTES:
 			case COMN_OPCODE_GET_CNTL_ATTRIBUTES:
 			case COMN_OPCODE_GET_PROFILE_CONFIG:
+			case COMN_OPCODE_SET_FEATURES:
 				lpfc_printf_log(phba, KERN_INFO, LOG_LIBDFC,
 						"3106 Handled SLI_CONFIG "
 						"subsys_comn, opcode:x%x\n",
@@ -4489,6 +5079,12 @@ lpfc_bsg_write_ebuf_set(struct lpfc_hba *phba, struct bsg_job *job,
 	phba->mbox_ext_buf_ctx.seqNum++;
 	nemb_tp = phba->mbox_ext_buf_ctx.nembType;
 
+	dd_data = kmalloc(sizeof(struct bsg_job_data), GFP_KERNEL);
+	if (!dd_data) {
+		rc = -ENOMEM;
+		goto job_error;
+	}
+
 	pbuf = (uint8_t *)dmabuf->virt;
 	size = job->request_payload.payload_len;
 	sg_copy_to_buffer(job->request_payload.sg_list,
@@ -4525,13 +5121,6 @@ lpfc_bsg_write_ebuf_set(struct lpfc_hba *phba, struct bsg_job *job,
 				"2968 SLI_CONFIG ext-buffer wr all %d "
 				"ebuffers received\n",
 				phba->mbox_ext_buf_ctx.numBuf);
-
-		dd_data = kmalloc(sizeof(struct bsg_job_data), GFP_KERNEL);
-		if (!dd_data) {
-			rc = -ENOMEM;
-			goto job_error;
-		}
-
 		/* mailbox command structure for base driver */
 		pmboxq = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
 		if (!pmboxq) {
@@ -4563,12 +5152,12 @@ lpfc_bsg_write_ebuf_set(struct lpfc_hba *phba, struct bsg_job *job,
 		if ((rc == MBX_SUCCESS) || (rc == MBX_BUSY)) {
 			lpfc_printf_log(phba, KERN_INFO, LOG_LIBDFC,
 					"2969 Issued SLI_CONFIG ext-buffer "
-					"mailbox command, rc:x%x\n", rc);
+					"maibox command, rc:x%x\n", rc);
 			return SLI_CONFIG_HANDLED;
 		}
 		lpfc_printf_log(phba, KERN_ERR, LOG_LIBDFC,
 				"2970 Failed to issue SLI_CONFIG ext-buffer "
-				"mailbox command, rc:x%x\n", rc);
+				"maibox command, rc:x%x\n", rc);
 		rc = -EPIPE;
 		goto job_error;
 	}
@@ -4580,8 +5169,6 @@ lpfc_bsg_write_ebuf_set(struct lpfc_hba *phba, struct bsg_job *job,
 	return SLI_CONFIG_HANDLED;
 
 job_error:
-	if (pmboxq)
-		mempool_free(pmboxq, phba->mbox_mem_pool);
 	lpfc_bsg_dma_page_free(phba, dmabuf);
 	kfree(dd_data);
 
@@ -5017,9 +5604,9 @@ static int
 lpfc_bsg_mbox_cmd(struct bsg_job *job)
 {
 	struct lpfc_vport *vport = shost_priv(fc_bsg_to_shost(job));
+	struct lpfc_hba *phba = vport->phba;
 	struct fc_bsg_request *bsg_request = job->request;
 	struct fc_bsg_reply *bsg_reply = job->reply;
-	struct lpfc_hba *phba = vport->phba;
 	struct dfc_mbox_req *mbox_req;
 	int rc = 0;
 
@@ -5177,9 +5764,9 @@ static int
 lpfc_menlo_cmd(struct bsg_job *job)
 {
 	struct lpfc_vport *vport = shost_priv(fc_bsg_to_shost(job));
+	struct lpfc_hba *phba = vport->phba;
 	struct fc_bsg_request *bsg_request = job->request;
 	struct fc_bsg_reply *bsg_reply = job->reply;
-	struct lpfc_hba *phba = vport->phba;
 	struct lpfc_iocbq *cmdiocbq;
 	IOCB_t *cmd;
 	int rc = 0;
@@ -5203,8 +5790,8 @@ lpfc_menlo_cmd(struct bsg_job *job)
 		goto no_dd_data;
 	}
 
-	if (job->reply_len <
-	    sizeof(struct fc_bsg_request) + sizeof(struct menlo_response)) {
+	if (job->reply_len < sizeof(*bsg_reply) +
+				sizeof(struct menlo_response)) {
 		lpfc_printf_log(phba, KERN_WARNING, LOG_LIBDFC,
 				"2785 Received MENLO_CMD reply below "
 				"minimum size\n");
@@ -5340,8 +5927,7 @@ no_dd_data:
 static int
 lpfc_forced_link_speed(struct bsg_job *job)
 {
-	struct Scsi_Host *shost = fc_bsg_to_shost(job);
-	struct lpfc_vport *vport = shost_priv(shost);
+	struct lpfc_vport *vport = shost_priv(fc_bsg_to_shost(job));
 	struct lpfc_hba *phba = vport->phba;
 	struct fc_bsg_reply *bsg_reply = job->reply;
 	struct forced_link_speed_support_reply *forced_reply;
@@ -5360,9 +5946,7 @@ lpfc_forced_link_speed(struct bsg_job *job)
 	forced_reply = (struct forced_link_speed_support_reply *)
 		bsg_reply->reply_data.vendor_reply.vendor_rsp;
 
-	if (job->reply_len <
-	    sizeof(struct fc_bsg_request) +
-	    sizeof(struct forced_link_speed_support_reply)) {
+	if (job->reply_len < sizeof(*bsg_reply) + sizeof(*forced_reply)) {
 		lpfc_printf_log(phba, KERN_WARNING, LOG_LIBDFC,
 				"0049 Received FORCED_LINK_SPEED reply below "
 				"minimum size\n");
@@ -5380,6 +5964,811 @@ job_error:
 			       bsg_reply->reply_payload_rcv_len);
 	return rc;
 }
+
+#ifndef BUILD_BRCMFCOE
+/**
+ * lpfc_manage_auth_update_obj - Update the auth configuration in flash.
+ * @phba: Pointer to HBA context object.
+ * @buf - Pointer to the object name to be updated.
+ *
+ * This function reads the existing flash configuration and rewrites
+ * the object, saving the active configuration for the port.
+ **/
+static int
+lpfc_manage_auth_update_obj(struct lpfc_hba *phba, uint8_t *buf)
+{
+	struct list_head dma_buffer_list;
+	struct lpfc_dmabuf *dmabuf, *next;
+	struct lpfc_auth_cfg *dcfg = NULL;
+	struct lpfc_auth_cfg_entry *dcfg_p2 = NULL;
+	int i, bcnt;
+	uint32_t offset, temp_offset;
+	char *obj_name = (char *)buf;
+	int rc = 0;
+
+	/* create buffer list and allocate buffers */
+	bcnt = LPFC_AUTH_OBJECT_MAX_SIZE / SLI4_PAGE_SIZE;
+	INIT_LIST_HEAD(&dma_buffer_list);
+	for (i = 0; i < bcnt; i++) {
+		dmabuf = kzalloc(sizeof(*dmabuf), GFP_KERNEL);
+		if (!dmabuf) {
+			rc = -ENOMEM;
+			goto release_out;
+		}
+		dmabuf->virt = dma_alloc_coherent(&phba->pcidev->dev,
+						  SLI4_PAGE_SIZE,
+						  &dmabuf->phys,
+						  GFP_KERNEL);
+		if (!dmabuf->virt) {
+			kfree(dmabuf);
+			rc = -ENOMEM;
+			goto release_out;
+		}
+		list_add_tail(&dmabuf->list, &dma_buffer_list);
+	}
+
+	/* read capture the entire object */
+	offset = 0;
+	rc = lpfc_auth_rd_object(phba, &dma_buffer_list,
+				 LPFC_AUTH_OBJECT_MAX_SIZE, &offset, obj_name);
+	if (rc) {
+		lpfc_printf_log(phba, KERN_INFO, LOG_LIBDFC | LOG_AUTH,
+				"3108 Read Object failed, status:%x.\n", rc);
+		rc = LPFC_BSG_AUTH_STS_NOT_CONFIGURED;
+		goto release_out;
+	}
+
+	/* update with driver config for this port */
+	offset = phba->sli4_hba.lnk_info.lnk_no * SLI4_PAGE_SIZE * 2;
+	dcfg = lpfc_auth_get_active_cfg_ptr(phba);
+	dcfg_p2 = lpfc_auth_get_active_cfg_p2(phba);
+	if (!dcfg || !dcfg_p2)
+		return LPFC_BSG_AUTH_STS_NOT_CONFIGURED;
+
+	temp_offset = 0;
+	list_for_each_entry(dmabuf, &dma_buffer_list, list) {
+		if (temp_offset == offset)
+			memcpy(dmabuf->virt, dcfg, SLI4_PAGE_SIZE);
+		else if (temp_offset == offset + SLI4_PAGE_SIZE)
+			memcpy(dmabuf->virt, dcfg_p2, SLI4_PAGE_SIZE);
+
+		temp_offset += SLI4_PAGE_SIZE;
+	}
+
+	/* write back the entire object */
+	offset = 0;
+	rc = lpfc_auth_wr_object(phba, &dma_buffer_list,
+				 LPFC_AUTH_OBJECT_MAX_SIZE, &offset, obj_name);
+	if (rc) {
+		lpfc_printf_log(phba, KERN_INFO, LOG_LIBDFC | LOG_AUTH,
+				"3109 Write Object failed, status:%x.\n", rc);
+		rc = LPFC_BSG_AUTH_STS_GENERAL_ERROR;
+	}
+release_out:
+	list_for_each_entry_safe(dmabuf, next, &dma_buffer_list, list) {
+		list_del(&dmabuf->list);
+		dma_free_coherent(&phba->pcidev->dev, SLI4_PAGE_SIZE,
+				  dmabuf->virt, dmabuf->phys);
+		kfree(dmabuf);
+	}
+	return rc;
+}
+
+/**
+ * lpfc_manage_auth_pwd_fetch - Return password information.
+ * @phba: Pointer to HBA context object.
+ * @buf - Pointer to a password descriptor.
+ * @src - Argument specifying the password information source.
+ *         0 - active (driver) configuration.
+ *         1 - saved (flash) configuration.
+ *
+ * This function returns password information, if available, for
+ * a configuration entry matching the wwpn pair described by the
+ * password descriptor. The src parameter specifies whether the
+ * saved or active configuration values are to be used.
+ **/
+static int
+lpfc_manage_auth_pwd_fetch(struct lpfc_hba *phba, uint8_t *buf,
+			   uint8_t src)
+{
+	struct lpfc_bsg_auth_pwd_item *pbuf;
+	struct list_head dmabuf_list;
+	struct lpfc_dmabuf *dmabuf, *next;
+	struct lpfc_auth_cfg *pcfg = NULL;
+	struct lpfc_auth_cfg_entry *ptmp;
+	struct lpfc_auth_cfg_entry *ptmp_p2 = NULL;
+	struct lpfc_auth_cfg_entry *entry = NULL;
+	uint32_t offset;
+	uint8_t i, valid;
+	char *obj_name = {"/driver/auth.cfg"};
+	int rc = 0;
+
+	pbuf = (struct lpfc_bsg_auth_pwd_item *)buf;
+	if (!pbuf)
+		return LPFC_BSG_AUTH_STS_GENERAL_ERROR;
+
+	if (src) {
+		/* use the configuration from flash */
+		INIT_LIST_HEAD(&dmabuf_list);
+		for (i = 0; i < 2; i++) {
+			dmabuf = kzalloc(sizeof(*dmabuf), GFP_KERNEL);
+			if (!dmabuf)
+				return -ENOMEM;
+
+			dmabuf->virt = dma_alloc_coherent(&phba->pcidev->dev,
+							  SLI4_PAGE_SIZE,
+							  &dmabuf->phys,
+							  GFP_KERNEL);
+			if (!dmabuf->virt) {
+				kfree(dmabuf);
+				rc = -ENOMEM;
+				goto release_out;
+			}
+			if (i)
+				ptmp_p2 = (struct lpfc_auth_cfg_entry *)
+						dmabuf->virt;
+			else
+				pcfg = (struct lpfc_auth_cfg *)dmabuf->virt;
+
+			list_add_tail(&dmabuf->list, &dmabuf_list);
+		}
+
+		offset = phba->sli4_hba.lnk_info.lnk_no * SLI4_PAGE_SIZE * 2;
+		rc = lpfc_auth_rd_object(phba, &dmabuf_list,
+					 SLI4_PAGE_SIZE * 2, &offset,
+					 obj_name);
+		if (rc || offset < sizeof(struct lpfc_auth_cfg_hdr)) {
+			rc = LPFC_BSG_AUTH_STS_NOT_CONFIGURED;
+			goto release_out;
+		}
+
+		ptmp = &pcfg->entry[0];
+		for (i = 0; i < pcfg->hdr.entry_cnt; i++, ptmp++) {
+			if (i == AUTH_CONFIG_ENTRIES_PER_PAGE)
+				ptmp = ptmp_p2;
+
+			/* look for matching wwpn pair */
+			if (!memcmp(&ptmp->local_wwn[0],
+				    &pbuf->lwwpn[0], 8) &&
+				    !memcmp(&ptmp->remote_wwn[0],
+				    &pbuf->rwwpn[0], 8)) {
+				entry = ptmp;
+				break;
+			}
+		}
+	} else
+		entry = lpfc_auth_find_cfg_item(phba, &pbuf->lwwpn[0],
+						&pbuf->rwwpn[0], &valid);
+
+	if (entry) {
+		if ((entry->pwd.local_pw_mode == 0) ||
+		    (entry->pwd.local_pw_mode > 2) ||
+		    (entry->pwd.local_pw_length == 0) ||
+		    (entry->pwd.local_pw[0] == 0))
+			pbuf->local.type = 3;
+		else {
+			pbuf->local.type = entry->pwd.local_pw_mode;
+			pbuf->local.length = entry->pwd.local_pw_length;
+			memcpy(&pbuf->local.pwd[0],
+			       &entry->pwd.local_pw[0],
+			       LPFC_AUTH_PSSWD_MAX_LEN);
+		}
+		if ((entry->pwd.remote_pw_mode == 0) ||
+		    (entry->pwd.remote_pw_mode > 2) ||
+		    (entry->pwd.remote_pw_length == 0) ||
+		    (entry->pwd.remote_pw[0] == 0))
+
+			pbuf->remote.type = 3;
+		else {
+			pbuf->remote.type = entry->pwd.remote_pw_mode;
+			pbuf->remote.length = entry->pwd.remote_pw_length;
+			memcpy(&pbuf->remote.pwd[0],
+			       &entry->pwd.remote_pw[0],
+			       LPFC_AUTH_PSSWD_MAX_LEN);
+		}
+	} else {
+		rc = LPFC_BSG_AUTH_STS_NOT_CONFIGURED;
+	}
+
+release_out:
+	if (src)
+		list_for_each_entry_safe(dmabuf, next, &dmabuf_list, list) {
+			list_del(&dmabuf->list);
+			dma_free_coherent(&phba->pcidev->dev, SLI4_PAGE_SIZE,
+					  dmabuf->virt, dmabuf->phys);
+			kfree(dmabuf);
+		}
+
+	return rc;
+}
+
+/**
+ * lpfc_manage_auth_password_update - Update password information.
+ * @phba: Pointer to HBA context object.
+ * @buf - Pointer to a password information structure.
+ *
+ * This function updates password information, for a lwwpn/rwwpn pair
+ * described in the password information structure.
+ **/
+static int
+lpfc_manage_auth_pwd_update(struct lpfc_vport *vport, uint8_t *buf)
+{
+	struct lpfc_hba *phba = vport->phba;
+	struct lpfc_bsg_auth_pwd_item *pbuf;
+	struct lpfc_auth_cfg *pcfg = NULL;
+	struct lpfc_auth_cfg_entry *entry = NULL;
+	struct lpfc_nodelist *ndlp = NULL;
+	uint8_t valid;
+	int rc = 0;
+
+	pbuf = (struct lpfc_bsg_auth_pwd_item *)buf;
+	if (!pbuf)
+		return LPFC_BSG_AUTH_STS_GENERAL_ERROR;
+
+	if (list_empty(&phba->lpfc_auth_active_cfg_list)) {
+		rc = lpfc_auth_alloc_active_cfg_list(phba);
+		if (rc)
+			return rc;
+
+		pcfg = lpfc_auth_get_active_cfg_ptr(phba);
+
+		pcfg->hdr.signature = cpu_to_le32(0x61757468);
+		pcfg->hdr.version = 0;
+		pcfg->hdr.size = sizeof(struct lpfc_auth_cfg_hdr);
+		pcfg->hdr.entry_cnt = 0;
+	}
+
+	entry = lpfc_auth_find_cfg_item(phba, &pbuf->lwwpn[0],
+					&pbuf->rwwpn[0], &valid);
+	if (!entry) {
+		pcfg = lpfc_auth_get_active_cfg_ptr(phba);
+		if (pcfg->hdr.entry_cnt == MAX_AUTH_CONFIG_ENTRIES)
+			return LPFC_BSG_AUTH_STS_OUT_OF_RESOURCES;
+
+		/* Do not allow matching local and remote passwords */
+		if (!memcmp(&pbuf->local.pwd[0], &pbuf->remote.pwd[0],
+			    LPFC_AUTH_PSSWD_MAX_LEN))
+			return LPFC_BSG_AUTH_STS_PSSWDS_SAME;
+
+		if (pcfg->hdr.entry_cnt < AUTH_CONFIG_ENTRIES_PER_PAGE) {
+			entry = &pcfg->entry[pcfg->hdr.entry_cnt];
+		} else {
+			entry = lpfc_auth_get_active_cfg_p2(phba);
+			entry += pcfg->hdr.entry_cnt -
+					AUTH_CONFIG_ENTRIES_PER_PAGE;
+		}
+		memcpy(&entry->local_wwn[0], &pbuf->lwwpn[0], 8);
+		memcpy(&entry->remote_wwn[0], &pbuf->rwwpn[0], 8);
+		pcfg->hdr.entry_cnt++;
+	}
+
+	if (entry) {
+		/* Do not allow matching passwords */
+		if (pbuf->local.type && pbuf->local.type < 3) {
+			if (pbuf->remote.type && pbuf->remote.type < 3) {
+				if (!memcmp(&pbuf->local.pwd[0],
+					    &pbuf->remote.pwd[0],
+					    LPFC_AUTH_PSSWD_MAX_LEN))
+					return LPFC_BSG_AUTH_STS_PSSWDS_SAME;
+			} else {
+				if (!memcmp(&pbuf->local.pwd[0],
+					    &entry->pwd.remote_pw[0],
+					    LPFC_AUTH_PSSWD_MAX_LEN))
+					return LPFC_BSG_AUTH_STS_PSSWDS_SAME;
+			}
+		} else
+		if (pbuf->remote.type && pbuf->remote.type < 3) {
+			if (!memcmp(&pbuf->remote.pwd[0],
+				    &entry->pwd.local_pw[0],
+				    LPFC_AUTH_PSSWD_MAX_LEN))
+				return LPFC_BSG_AUTH_STS_PSSWDS_SAME;
+		}
+		/* Authentication with the fabric may be active. */
+		ndlp = lpfc_auth_findnode(vport,
+					  (struct lpfc_name *)pbuf->lwwpn,
+					  (struct lpfc_name *)pbuf->rwwpn);
+		/* Check if authentication is in progress. */
+		if (ndlp && NLP_CHK_NODE_ACT(ndlp) &&
+		    (ndlp->dhc_cfg.msg == LPFC_AUTH_NEGOTIATE ||
+		     ndlp->dhc_cfg.msg == LPFC_DHCHAP_CHALLENGE ||
+		     ndlp->dhc_cfg.msg == LPFC_DHCHAP_REPLY))
+			return LPFC_BSG_AUTH_STS_IN_PROGRESS;
+
+		if (pbuf->local.type && pbuf->local.type < 3) {
+			entry->pwd.local_pw_length =
+				(uint8_t)pbuf->local.length;
+			entry->pwd.local_pw_mode =
+				(uint8_t)pbuf->local.type;
+			memcpy(&entry->pwd.local_pw[0],
+			       &pbuf->local.pwd[0],
+			       LPFC_AUTH_PSSWD_MAX_LEN);
+		}
+		if (pbuf->remote.type && pbuf->remote.type < 3) {
+			entry->pwd.remote_pw_length =
+				(uint8_t)pbuf->remote.length;
+			entry->pwd.remote_pw_mode =
+				(uint8_t)pbuf->remote.type;
+			memcpy(&entry->pwd.remote_pw[0],
+			       &pbuf->remote.pwd[0],
+			       LPFC_AUTH_PSSWD_MAX_LEN);
+		}
+
+		/* if ndlp found, refresh auth cfg */
+		if (ndlp && NLP_CHK_NODE_ACT(ndlp)) {
+			ndlp->dhc_cfg.local_passwd_len =
+				entry->pwd.local_pw_length;
+			ndlp->dhc_cfg.remote_passwd_len =
+				entry->pwd.remote_pw_length;
+			memcpy(ndlp->dhc_cfg.local_passwd,
+			       &entry->pwd.local_pw,
+			       entry->pwd.local_pw_length);
+			memcpy(ndlp->dhc_cfg.remote_passwd,
+			       &entry->pwd.remote_pw,
+			       entry->pwd.remote_pw_length);
+		}
+	}
+	return rc;
+}
+
+/**
+ * lpfc_manage_auth_drvr_cfg_update - Update configuration information.
+ * @phba: Pointer to HBA context object.
+ * @buf - Pointer to a list of configuration descriptors.
+ *
+ * This function updates configuration information, for one or more lwwpn/rwwpn
+ * pairs described in the list of configuration items provided.
+ **/
+static int
+lpfc_manage_auth_drvr_cfg_update(struct lpfc_vport *vport, uint8_t *buf)
+{
+	struct lpfc_hba *phba = vport->phba;
+	struct lpfc_bsg_auth_cfg_list *clist;
+	struct lpfc_bsg_auth_cfg_item *ci;
+	struct lpfc_auth_cfg_entry *entry = NULL;
+	uint8_t i, item_cnt, valid;
+	struct lpfc_nodelist *ndlp = NULL;
+	uint8_t wwpn[8];
+	int rc = LPFC_BSG_AUTH_STS_SUCCESS;
+
+	u64_to_wwn(AUTH_FABRIC_WWN, wwpn);
+	clist = (struct lpfc_bsg_auth_cfg_list *)buf;
+	if (!clist)
+		return LPFC_BSG_AUTH_STS_GENERAL_ERROR;
+
+	item_cnt = clist->entry_cnt;
+	for (i = 0; i < item_cnt; i++) {
+		entry = lpfc_auth_find_cfg_item(phba,
+						&clist->cfg_item[i].lwwpn[0],
+						&clist->cfg_item[i].rwwpn[0],
+						&valid);
+		if (entry) {
+			ci = &clist->cfg_item[i];
+			if ((entry->pwd.local_pw_length == 0) ||
+			    (entry->pwd.local_pw_mode == 0) ||
+			    (entry->pwd.local_pw_mode > 2) ||
+			    (entry->pwd.local_pw[0] == 0)) {
+				ci->status =
+					LPFC_BSG_AUTH_STS_LOCAL_SECRET_NOT_SET;
+				rc = LPFC_BSG_AUTH_STS_GENERAL_ERROR;
+				continue;
+			}
+
+			/* Authentication with the fabric may be active. */
+			ndlp = lpfc_auth_findnode(vport,
+						  (struct lpfc_name *)ci->lwwpn,
+						  (struct lpfc_name *)ci->rwwpn
+						  );
+			/* Check if authentication is in progress. */
+			if (ndlp && NLP_CHK_NODE_ACT(ndlp) &&
+			    (ndlp->dhc_cfg.msg == LPFC_AUTH_NEGOTIATE ||
+			     ndlp->dhc_cfg.msg == LPFC_DHCHAP_CHALLENGE ||
+			     ndlp->dhc_cfg.msg == LPFC_DHCHAP_REPLY)) {
+				ci->status =
+					LPFC_BSG_AUTH_STS_IN_PROGRESS;
+				rc = LPFC_BSG_AUTH_STS_GENERAL_ERROR;
+				continue;
+			}
+
+			/* update existing entry */
+			memcpy(entry, ci->lwwpn,
+			       sizeof(struct lpfc_auth_cfg_entry) -
+			       sizeof(struct lpfc_auth_pwd_entry));
+
+			if (ci->reauth_interval > REAUTH_MAX_INTERVAL)
+				entry->reauth_interval = REAUTH_MAX_INTERVAL;
+
+			entry->auth_flags.valid = 1;
+			ci->status = 0;
+
+			/* if ndlp found, refresh auth cfg */
+			if (ndlp && NLP_CHK_NODE_ACT(ndlp)) {
+				ndlp->dhc_cfg.auth_tmo = entry->auth_tmo;
+				ndlp->dhc_cfg.auth_mode = entry->auth_mode;
+				ndlp->dhc_cfg.bidirectional =
+					entry->auth_flags.bi_direction;
+				ndlp->dhc_cfg.reauth_interval =
+					entry->reauth_interval;
+				ndlp->dhc_cfg.direction = AUTH_DIRECTION_NONE;
+
+				/* [re]start re-authentication */
+				if (ndlp->dhc_cfg.reauth_interval &&
+				    ndlp->dhc_cfg.state == LPFC_AUTH_SUCCESS)
+					lpfc_auth_start_reauth_tmr(ndlp);
+			}
+		} else {
+			clist->cfg_item[i].status =
+				LPFC_BSG_AUTH_STS_LOCAL_SECRET_NOT_SET;
+			rc = LPFC_BSG_AUTH_STS_GENERAL_ERROR;
+		}
+	}
+	return rc;
+}
+
+/**
+ * lpfc_manage_auth_cfg_fetch - Return configuration information.
+ * @phba: Pointer to HBA context object.
+ * @buf - Pointer to a list of configuration descriptors.
+ * @src - Argument specifying the configuration information source.
+ *         0 - active (driver) configuration.
+ *         1 - saved (flash) configuration.
+ *
+ * This function returns configuration information, if available, for one or
+ * more configuration entries matching the wwpn pairs described in the list.
+ * The src parameter specifies whether the saved or active configuration
+ * values are to be used.
+ **/
+static int
+lpfc_manage_auth_cfg_fetch(struct lpfc_hba *phba, uint8_t *buf,
+			   uint8_t *wwpn, uint8_t src)
+{
+	struct lpfc_bsg_auth_cfg_list *clist;
+	struct lpfc_bsg_auth_cfg_item *cfg_item;
+	uint8_t wwn_match[8];
+	struct list_head dmabuf_list;
+	struct lpfc_dmabuf *dmabuf, *next;
+	struct lpfc_auth_cfg *pcfg = NULL;
+	struct lpfc_auth_cfg_entry *ptmp_p2 = NULL;
+	struct lpfc_auth_cfg_entry *entry = NULL;
+	uint32_t offset;
+	uint8_t i, j, item_cnt;
+	char *obj_name = {"/driver/auth.cfg"};
+	int rc = 0;
+
+	if (src) {
+		/* use the saved configuration */
+		INIT_LIST_HEAD(&dmabuf_list);
+		for (i = 0; i < 2; i++) {
+			dmabuf = kzalloc(sizeof(*dmabuf), GFP_KERNEL);
+			if (!dmabuf)
+				return -ENOMEM;
+
+			dmabuf->virt = dma_alloc_coherent(&phba->pcidev->dev,
+							  SLI4_PAGE_SIZE,
+							  &dmabuf->phys,
+							  GFP_KERNEL);
+			if (!dmabuf->virt) {
+				kfree(dmabuf);
+				rc = -ENOMEM;
+				goto release_out;
+			}
+			if (i)
+				ptmp_p2 = (struct lpfc_auth_cfg_entry *)
+						dmabuf->virt;
+			else
+				pcfg = (struct lpfc_auth_cfg *)dmabuf->virt;
+
+			list_add_tail(&dmabuf->list, &dmabuf_list);
+		}
+
+		offset = phba->sli4_hba.lnk_info.lnk_no * SLI4_PAGE_SIZE * 2;
+		rc = lpfc_auth_rd_object(phba, &dmabuf_list,
+					 SLI4_PAGE_SIZE * 2, &offset,
+					 obj_name);
+		if (rc || offset < sizeof(struct lpfc_auth_cfg_hdr)) {
+			rc = LPFC_BSG_AUTH_STS_CONFIG_NOT_FOUND;
+			goto release_out;
+		}
+
+	} else {
+		/* use active configuration */
+		pcfg = lpfc_auth_get_active_cfg_ptr(phba);
+		if (!pcfg)
+			return LPFC_BSG_AUTH_STS_CONFIG_NOT_FOUND;
+
+		ptmp_p2 = lpfc_auth_get_active_cfg_p2(phba);
+	}
+
+	clist = (struct lpfc_bsg_auth_cfg_list *)buf;
+	if (!clist) {
+		rc = LPFC_BSG_AUTH_STS_GENERAL_ERROR;
+		goto release_out;
+	}
+	u64_to_wwn(AUTH_FABRIC_WWN, wwn_match);
+	item_cnt = clist->entry_cnt;
+	if (!item_cnt) {
+		rc = LPFC_BSG_AUTH_STS_GENERAL_ERROR;
+		goto release_out;
+	}
+
+	if (!pcfg->hdr.entry_cnt)
+		return LPFC_BSG_AUTH_STS_CONFIG_NOT_FOUND;
+
+	if (item_cnt > MAX_AUTH_CONFIG_ENTRIES)
+		item_cnt = MAX_AUTH_CONFIG_ENTRIES;
+
+	entry = &pcfg->entry[0];
+	cfg_item = &clist->cfg_item[0]; /* only used for exact match search */
+	for (i = 0, j = 0; i < pcfg->hdr.entry_cnt; i++, entry++) {
+		if (i == AUTH_CONFIG_ENTRIES_PER_PAGE)
+			entry = ptmp_p2; /* switching to second page */
+
+		if (memcmp(wwpn, &wwn_match, 8)) { /* match specified */
+			if (*(uint64_t *)wwpn == 0) { /* match exact */
+				if ((memcmp(&entry->local_wwn,
+					    &cfg_item->lwwpn, 8)) ||
+				    (memcmp(&entry->remote_wwn,
+					    &cfg_item->rwwpn, 8)))
+					continue;
+			} else if (memcmp(wwpn, &entry->local_wwn, 8)) {
+				continue;
+			}
+		}
+		if (j < item_cnt) {
+			memcpy(&clist->cfg_item[j], entry,
+			       sizeof(struct lpfc_bsg_auth_cfg_item));
+			/* check for a config */
+			if (entry->auth_flags.valid)
+				clist->cfg_item[j].status = 0;
+			else {
+				clist->cfg_item[j].status =
+					LPFC_BSG_AUTH_STS_NOT_CONFIGURED;
+				rc = LPFC_BSG_AUTH_STS_NOT_CONFIGURED;
+			}
+		}
+		j++;
+	}
+	clist->entry_cnt = j;
+	if (clist->entry_cnt > item_cnt)
+		rc = LPFC_BSG_AUTH_STS_MORE_DATA_AVAILABLE;
+	else if (!rc && !clist->entry_cnt)
+		rc = LPFC_BSG_AUTH_STS_CONFIG_NOT_FOUND;
+release_out:
+	if (src)
+		list_for_each_entry_safe(dmabuf, next, &dmabuf_list, list) {
+			list_del(&dmabuf->list);
+			dma_free_coherent(&phba->pcidev->dev, SLI4_PAGE_SIZE,
+					  dmabuf->virt, dmabuf->phys);
+			kfree(dmabuf);
+		}
+
+	return rc;
+}
+
+/**
+ * lpfc_manage_auth_cfg_delete - remove configuration information.
+ * @phba: Pointer to HBA context object.
+ * @buf - Pointer to a list of configuration descriptors.
+ * @flag - argument to specify scope of the wwpn matching.
+ *
+ * This function deletes configuration information for one or more lwwpn/rwwpn
+ * pairs described in the list of configuration items provided.
+ **/
+static int
+lpfc_manage_auth_cfg_delete(struct lpfc_vport *vport, uint8_t *buf,
+			    uint8_t flag)
+{
+	struct lpfc_hba *phba = vport->phba;
+	struct lpfc_bsg_auth_cfg_list *plist;
+	struct lpfc_bsg_auth_cfg_item *cfg_item;
+	struct lpfc_auth_cfg *d_cfg = NULL;
+	struct lpfc_auth_cfg_entry *d_item, *d_last;
+	struct lpfc_nodelist *ndlp = NULL;
+	uint8_t i, j, item_cnt_p, item_cnt_d, *p2;
+	int rc = 0;
+
+	plist = (struct lpfc_bsg_auth_cfg_list *)buf;
+	if (plist)
+		item_cnt_p = plist->entry_cnt;
+
+	d_cfg = lpfc_auth_get_active_cfg_ptr(phba);
+	if (!d_cfg) {
+		/* no driver config found. */
+		if (plist) {
+			for (i = 0; i < item_cnt_p; i++)
+				plist->cfg_item[i].status =
+					LPFC_BSG_AUTH_STS_CONFIG_NOT_FOUND;
+		}
+		return LPFC_BSG_AUTH_STS_GENERAL_ERROR;
+	}
+
+	if (flag == 1) {
+		/* delete all entries */
+		memset(&d_cfg->entry[0], 0,
+		       SLI4_PAGE_SIZE - sizeof(struct lpfc_auth_cfg_hdr));
+
+		if (d_cfg->hdr.entry_cnt > AUTH_CONFIG_ENTRIES_PER_PAGE) {
+			p2 = (uint8_t *)lpfc_auth_get_active_cfg_p2(phba);
+			if (p2)
+				memset(p2, 0, SLI4_PAGE_SIZE);
+		}
+		d_cfg->hdr.entry_cnt = 0;
+		return rc;
+	}
+
+	if (!plist)
+		return LPFC_BSG_AUTH_STS_GENERAL_ERROR;
+
+	item_cnt_d = d_cfg->hdr.entry_cnt;
+	if (item_cnt_d > MAX_AUTH_CONFIG_ENTRIES)
+		item_cnt_d = MAX_AUTH_CONFIG_ENTRIES;
+
+	/* delete items described in list */
+	for (i = 0; i < item_cnt_p; i++) {
+		cfg_item = &plist->cfg_item[i];
+		cfg_item->status = LPFC_BSG_AUTH_STS_CONFIG_NOT_FOUND;
+
+		if (d_cfg->hdr.entry_cnt == 0) {
+			rc = LPFC_BSG_AUTH_STS_GENERAL_ERROR;
+			continue;
+		}
+		d_item = &d_cfg->entry[0];
+		if (d_cfg->hdr.entry_cnt < AUTH_CONFIG_ENTRIES_PER_PAGE) {
+			d_last = &d_cfg->entry[d_cfg->hdr.entry_cnt - 1];
+		} else {
+			d_last = lpfc_auth_get_active_cfg_p2(phba);
+			d_last +=  d_cfg->hdr.entry_cnt -
+					AUTH_CONFIG_ENTRIES_PER_PAGE;
+		}
+
+		for (j = 0; j < d_cfg->hdr.entry_cnt; j++) {
+			if (j == AUTH_CONFIG_ENTRIES_PER_PAGE)
+				d_item = (struct lpfc_auth_cfg_entry *)
+					  lpfc_auth_get_active_cfg_p2(phba);
+
+			if ((memcmp(&d_item->local_wwn[0],
+				    &cfg_item->lwwpn[0], 8) == 0) &&
+			    (memcmp(&d_item->remote_wwn[0],
+				    &cfg_item->rwwpn[0], 8) == 0)) {
+				/* match found */
+				ndlp = lpfc_auth_findnode(vport,
+							  (struct lpfc_name *)
+							   d_item->local_wwn,
+							  (struct lpfc_name *)
+							   d_item->remote_wwn);
+
+				/* check for authentication active */
+				if (ndlp && NLP_CHK_NODE_ACT(ndlp) &&
+				    (ndlp->dhc_cfg.msg ==
+					LPFC_AUTH_NEGOTIATE ||
+				     ndlp->dhc_cfg.msg ==
+					LPFC_DHCHAP_CHALLENGE ||
+				     ndlp->dhc_cfg.msg ==
+					LPFC_DHCHAP_REPLY)) {
+					cfg_item->status =
+						LPFC_BSG_AUTH_STS_IN_PROGRESS;
+					rc = LPFC_BSG_AUTH_STS_GENERAL_ERROR;
+					continue;
+				}
+
+				if (d_last != d_item)
+					memcpy(d_item, d_last,
+					       sizeof(struct
+						      lpfc_auth_cfg_entry));
+
+				memset(d_last, 0,
+				       sizeof(struct lpfc_auth_cfg_entry));
+				d_cfg->hdr.entry_cnt--;
+				cfg_item->status = 0; /* success */
+				break;
+			}
+			d_item++;
+		}
+	}
+	return rc;
+}
+
+/**
+ * lpfc_manage_auth_cfg - Provides processing of various auth cfg changes.
+ * @job: fc_bsg_job to handle
+ *
+ * This function updates configuration information described in the job.
+ **/
+static int
+lpfc_manage_auth_cfg(struct bsg_job *job)
+
+{
+	struct lpfc_vport *vport = shost_priv(fc_bsg_to_shost(job));
+	struct lpfc_hba *phba = vport->phba;
+	struct fc_bsg_request *bsg_request = job->request;
+	struct fc_bsg_reply *bsg_reply = job->reply;
+	struct auth_cfg_mgmt_req *auth_req;
+	uint32_t xfr_size;
+	uint8_t *xfr_data = NULL;
+	int rc = 0;
+
+	/* in case no data  transferred */
+	bsg_reply->reply_payload_rcv_len = 0;
+
+	if (job->request_len < (sizeof(struct fc_bsg_request) +
+				sizeof(struct auth_cfg_mgmt_req))) {
+		lpfc_printf_log(phba, KERN_WARNING, LOG_LIBDFC,
+				"3149 Received AUTH_MGMT request below "
+				"minimum size\n");
+		rc = -EINVAL;
+		goto update_auth_cfg_exit;
+	}
+	auth_req = (struct auth_cfg_mgmt_req *)
+		bsg_request->rqst_data.h_vendor.vendor_cmd;
+
+	if (!auth_req) {
+		rc = -EINVAL;
+		goto update_auth_cfg_exit;
+	}
+
+	xfr_size = job->request_payload.payload_len;
+	if (xfr_size) {
+		if (xfr_size > BUF_SZ_4K)
+			xfr_size = BUF_SZ_4K;
+		xfr_data = kmalloc(xfr_size, GFP_KERNEL);
+		if (!xfr_data) {
+			rc = -ENOMEM;
+			goto update_auth_cfg_exit;
+		}
+		sg_copy_to_buffer(job->request_payload.sg_list,
+				  job->request_payload.sg_cnt,
+				  xfr_data, xfr_size);
+	}
+
+	switch (auth_req->cfg_op) {
+	case AUTH_MGMT_OP_GET_CFG:
+		rc = lpfc_manage_auth_cfg_fetch(phba, xfr_data,
+						auth_req->wwpn,
+						(uint8_t)auth_req->param);
+		break;
+	case AUTH_MGMT_OP_SET_CFG:
+		rc = lpfc_manage_auth_drvr_cfg_update(vport, xfr_data);
+		break;
+	case AUTH_MGMT_OP_DEL_CFG:
+		rc = lpfc_manage_auth_cfg_delete(vport, xfr_data,
+						 (uint8_t)auth_req->param);
+		break;
+	case AUTH_MGMT_OP_SET_PWD:
+		rc = lpfc_manage_auth_pwd_update(vport, xfr_data);
+		break;
+	case AUTH_MGMT_OP_GET_PWD:
+		rc = lpfc_manage_auth_pwd_fetch(phba, xfr_data,
+						(uint8_t)auth_req->param);
+		break;
+	case AUTH_MGMT_OP_DEL_OBJ:
+		rc = lpfc_del_object(phba, xfr_data);
+		break;
+	case AUTH_MGMT_OP_RMW_OBJ:
+		rc = lpfc_manage_auth_update_obj(phba, xfr_data);
+		break;
+	default:
+		rc = -EINVAL;
+		lpfc_printf_log(phba, KERN_INFO, LOG_LIBDFC | LOG_AUTH,
+				"3171 Unknown auth mgmt cmd:%x op:%x "
+				"wwpn: %llx flags x%x\n",
+				auth_req->command, auth_req->cfg_op,
+				*(uint64_t *)&auth_req->wwpn, auth_req->param);
+		break;
+	}
+
+	bsg_reply->reply_payload_rcv_len =
+		sg_copy_from_buffer(job->reply_payload.sg_list,
+				    job->reply_payload.sg_cnt,
+				    xfr_data, xfr_size);
+
+	kfree(xfr_data);
+update_auth_cfg_exit:
+	bsg_reply->result = rc;
+	if (!rc)
+		bsg_job_done(job, bsg_reply->result,
+			     bsg_reply->reply_payload_rcv_len);
+	return rc;
+}
+#endif
 
 /**
  * lpfc_check_fwlog_support: Check FW log support on the adapter
@@ -5438,10 +6827,12 @@ lpfc_bsg_get_ras_config(struct bsg_job *job)
 		bsg_reply->reply_data.vendor_reply.vendor_rsp;
 
 	/* Current logging state */
-	if (ras_fwlog->ras_active == true)
+	spin_lock_irq(&phba->hbalock);
+	if (ras_fwlog->state == ACTIVE)
 		ras_reply->state = LPFC_RASLOG_STATE_RUNNING;
 	else
 		ras_reply->state = LPFC_RASLOG_STATE_STOPPED;
+	spin_unlock_irq(&phba->hbalock);
 
 	ras_reply->log_level = phba->ras_fwlog.fw_loglevel;
 	ras_reply->log_buff_sz = phba->cfg_ras_fwlog_buffsize;
@@ -5498,10 +6889,13 @@ lpfc_bsg_set_ras_config(struct bsg_job *job)
 
 	if (action == LPFC_RASACTION_STOP_LOGGING) {
 		/* Check if already disabled */
-		if (ras_fwlog->ras_active == false) {
+		spin_lock_irq(&phba->hbalock);
+		if (ras_fwlog->state != ACTIVE) {
+			spin_unlock_irq(&phba->hbalock);
 			rc = -ESRCH;
 			goto ras_job_error;
 		}
+		spin_unlock_irq(&phba->hbalock);
 
 		/* Disable logging */
 		lpfc_ras_stop_fwlog(phba);
@@ -5512,8 +6906,10 @@ lpfc_bsg_set_ras_config(struct bsg_job *job)
 		 * FW-logging with new log-level. Return status
 		 * "Logging already Running" to caller.
 		 **/
-		if (ras_fwlog->ras_active)
+		spin_lock_irq(&phba->hbalock);
+		if (ras_fwlog->state != INACTIVE)
 			action_status = -EINPROGRESS;
+		spin_unlock_irq(&phba->hbalock);
 
 		/* Enable logging */
 		rc = lpfc_sli4_ras_fwlog_init(phba, log_level,
@@ -5629,10 +7025,13 @@ lpfc_bsg_get_ras_fwlog(struct bsg_job *job)
 		goto ras_job_error;
 
 	/* Logging to be stopped before reading */
-	if (ras_fwlog->ras_active == true) {
+	spin_lock_irq(&phba->hbalock);
+	if (ras_fwlog->state == ACTIVE) {
+		spin_unlock_irq(&phba->hbalock);
 		rc = -EINPROGRESS;
 		goto ras_job_error;
 	}
+	spin_unlock_irq(&phba->hbalock);
 
 	if (job->request_len <
 	    sizeof(struct fc_bsg_request) +
@@ -5706,8 +7105,7 @@ lpfc_get_trunk_info(struct bsg_job *job)
 	event_reply = (struct lpfc_trunk_info *)
 		bsg_reply->reply_data.vendor_reply.vendor_rsp;
 
-	if (job->reply_len <
-	    sizeof(struct fc_bsg_request) + sizeof(struct lpfc_trunk_info)) {
+	if (job->reply_len < sizeof(*bsg_reply) + sizeof(*event_reply)) {
 		lpfc_printf_log(phba, KERN_WARNING, LOG_LIBDFC,
 				"2728 Received GET TRUNK _INFO reply below "
 				"minimum size\n");
@@ -5758,6 +7156,92 @@ job_error:
 
 }
 
+static int
+lpfc_get_cgnbuf_info(struct bsg_job *job)
+{
+	struct lpfc_vport *vport = shost_priv(fc_bsg_to_shost(job));
+	struct lpfc_hba *phba = vport->phba;
+	struct fc_bsg_request *bsg_request = job->request;
+	struct fc_bsg_reply *bsg_reply = job->reply;
+	struct get_cgnbuf_info_req *cgnbuf_req;
+	struct lpfc_cgn_info *cp;
+	uint8_t *cgn_buff;
+	int size, cinfosz;
+	int  rc = 0;
+
+	if (job->request_len < sizeof(struct fc_bsg_request) +
+	    sizeof(struct get_cgnbuf_info_req)) {
+		rc = -ENOMEM;
+		goto job_exit;
+	}
+
+	if (!phba->sli4_hba.pc_sli4_params.cmf) {
+		rc = -ENOENT;
+		goto job_exit;
+	}
+
+	if (!phba->cgn_i || !phba->cgn_i->virt) {
+		rc = -ENOENT;
+		goto job_exit;
+	}
+
+	cp = phba->cgn_i->virt;
+	if (cp->cgn_info_version < LPFC_CGN_INFO_V3) {
+		rc = -EPERM;
+		goto job_exit;
+	}
+
+	cgnbuf_req = (struct get_cgnbuf_info_req *)
+		bsg_request->rqst_data.h_vendor.vendor_cmd;
+
+	/* For reset or size == 0 */
+	bsg_reply->reply_payload_rcv_len = 0;
+
+	if (cgnbuf_req->reset == LPFC_BSG_CGN_RESET_STAT) {
+		lpfc_init_congestion_stat(phba);
+		goto job_exit;
+	}
+
+	/* We don't want to include the CRC at the end */
+	cinfosz = sizeof(struct lpfc_cgn_info) - sizeof(uint32_t);
+
+	size = cgnbuf_req->read_size;
+	if (!size)
+		goto job_exit;
+
+	if (size < cinfosz) {
+		/* Just copy back what we can */
+		cinfosz = size;
+		rc = -E2BIG;
+	}
+
+	/* Allocate memory to read congestion info */
+	cgn_buff = vmalloc(cinfosz);
+	if (!cgn_buff) {
+		rc = -ENOMEM;
+		goto job_exit;
+	}
+
+	memcpy(cgn_buff, cp, cinfosz);
+
+	bsg_reply->reply_payload_rcv_len =
+		sg_copy_from_buffer(job->reply_payload.sg_list,
+				    job->reply_payload.sg_cnt,
+				    cgn_buff, cinfosz);
+
+	vfree(cgn_buff);
+
+job_exit:
+	bsg_reply->result = rc;
+	if (!rc)
+		bsg_job_done(job, bsg_reply->result,
+			     bsg_reply->reply_payload_rcv_len);
+	else
+		lpfc_printf_log(phba, KERN_ERR, LOG_LIBDFC,
+				"2724 GET CGNBUF error: %d\n", rc);
+	return rc;
+}
+
 /**
  * lpfc_bsg_hst_vendor - process a vendor-specific fc_bsg_job
  * @job: fc_bsg_job to handle
@@ -5802,9 +7286,22 @@ lpfc_bsg_hst_vendor(struct bsg_job *job)
 	case LPFC_BSG_VENDOR_MENLO_DATA:
 		rc = lpfc_menlo_cmd(job);
 		break;
+#ifndef NO_APEX
+	case LPFC_BSG_VENDOR_SET_FCP_PRIORITY:
+		rc = lpfc_bsg_set_fcp_priority(job);
+		break;
+	case LPFC_BSG_VENDOR_GET_FCP_PRIORITY:
+		rc = lpfc_bsg_get_fcp_priority(job);
+		break;
+#endif
 	case LPFC_BSG_VENDOR_FORCED_LINK_SPEED:
 		rc = lpfc_forced_link_speed(job);
 		break;
+#ifndef BUILD_BRCMFCOE
+	case LPFC_BSG_VENDOR_AUTH_CFG_MGMT:
+		rc = lpfc_manage_auth_cfg(job);
+		break;
+#endif
 	case LPFC_BSG_VENDOR_RAS_GET_LWPD:
 		rc = lpfc_bsg_get_ras_lwpd(job);
 		break;
@@ -5819,6 +7316,9 @@ lpfc_bsg_hst_vendor(struct bsg_job *job)
 		break;
 	case LPFC_BSG_VENDOR_GET_TRUNK_INFO:
 		rc = lpfc_get_trunk_info(job);
+		break;
+	case LPFC_BSG_VENDOR_GET_CGNBUF_INFO:
+		rc = lpfc_get_cgnbuf_info(job);
 		break;
 	default:
 		rc = -EINVAL;
@@ -5987,3 +7487,4 @@ lpfc_bsg_timeout(struct bsg_job *job)
 	 */
 	return rc;
 }
+

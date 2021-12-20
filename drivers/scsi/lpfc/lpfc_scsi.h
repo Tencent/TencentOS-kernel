@@ -2,7 +2,7 @@
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
  * Copyright (C) 2017-2019 Broadcom. All Rights Reserved. The term *
- * “Broadcom” refers to Broadcom Inc and/or its subsidiaries.  *
+ * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.     *
  * Copyright (C) 2004-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
  * www.broadcom.com                                                *
@@ -24,6 +24,9 @@
 
 struct lpfc_hba;
 #define LPFC_FCP_CDB_LEN 16
+#define CTRL_ID 0
+#define LPFC_DATA_SIZE 255
+#define LPFC_FCP_FB_MAX 65536
 
 #define list_remove_head(list, entry, type, member)		\
 	do {							\
@@ -130,6 +133,28 @@ struct lpfc_scsicmd_bkt {
 	uint32_t cmd_count;
 };
 
+struct lpfc_scsi_io_req {
+	u32 dev_id;
+	u32 cmd_id;
+	void (*cmd_cmpl)(struct lpfc_hba *phba, struct lpfc_iocbq *p_io_in,
+			 struct lpfc_iocbq *p_io_out);
+};
+
+struct lpfc_first_burst_page {
+	u8 page_code;
+	u8 page_len;
+	u8 buf_full_r;
+	u8 buf_mt_r;
+	__be16 bus_inact_lmt;
+	__be16 disc_tmo;
+	__be16 conn_tmo;
+	__be16 max_burst;
+	u8 byte12;
+	u8 rsvd;
+	__be16 first_burst;
+};
+
+#define LPFC_RETRY_PAUSE       300
 #define LPFC_SCSI_DMA_EXT_SIZE	264
 #define LPFC_BPL_SIZE		1024
 #define MDAC_DIRECT_CMD		0x22
@@ -138,11 +163,64 @@ struct lpfc_scsicmd_bkt {
 #define NO_MORE_OAS_LUN		-1
 #define NOT_OAS_ENABLED_LUN	NO_MORE_OAS_LUN
 
+#ifndef WRITE_SAME_16
+#define WRITE_SAME_16 0x93
+#endif
+
+#ifndef VERIFY_12
+#define VERIFY_12 0xaf
+#endif
+
+/* ASC/ASCQ codes used in driver */
+#define LPFC_ASC_DIF_ERR	0x10
+#define LPFC_ASCQ_GUARD_CHECK	0x1
+#define LPFC_ASCQ_REFTAG_CHECK	0x3
+#define LPFC_ASC_TARGET_CHANGED	0x3f
+#define LPFC_ASCQ_INQUIRY_DATA	0x3
+#define LPFC_ASC_DATA_PHASE_ERR	0x4b
+#define LPFC_ASCQ_EDIF_MODE	0x82
+
+/* This macro is available from RHEL 7.1 onwards. */
+#ifndef FC_PORTSPEED_32GBIT
+#define FC_PORTSPEED_32GBIT     0x40
+#endif
+
+#ifndef FC_PORTSPEED_64GBIT
+#define FC_PORTSPEED_64GBIT     0x1000
+#endif
+
+#ifndef FC_PORTSPEED_25GBIT
+#define FC_PORTSPEED_25GBIT	0x800
+#endif
+
+#ifndef FC_PORTSPEED_40GBIT
+#define FC_PORTSPEED_40GBIT	0x100
+#endif
+
+#ifndef FC_PORTSPEED_100GBIT
+#define FC_PORTSPEED_100GBIT	0x400
+#endif
+
 #ifndef FC_PORTSPEED_128GBIT
 #define FC_PORTSPEED_128GBIT	0x2000
 #endif
 
 #define TXRDY_PAYLOAD_LEN	12
+
+/* Safe command codes for scanning, excluding group code */
+#define LPFC_INQUIRY_CMD_CODE			(INQUIRY & 0x1f)
+#define LPFC_LOG_SELECT_CMD_CODE		(LOG_SELECT & 0x1f)
+#define LPFC_LOG_SENSE_CMD_CODE			(LOG_SENSE & 0x1f)
+#define LPFC_MODE_SELECT_CMD_CODE		(MODE_SELECT & 0x1f)
+#define LPFC_MODE_SENSE_CMD_CODE		(MODE_SENSE & 0x1f)
+#define LPFC_REPORT_LUNS_CMD_CODE		(REPORT_LUNS & 0x1f)
+#define LPFC_SEND_DIAGNOSTIC_CMD_CODE		(SEND_DIAGNOSTIC & 0x1f)
+#define LPFC_MAINTENANCE_IN_CMD_CODE		(MAINTENANCE_IN & 0x1f)
+#define LPFC_MAINTENANCE_OUT_CMD_CODE		(MAINTENANCE_OUT & 0x1f)
+#define LPFC_PERSISTENT_RESERVE_IN_CMD_CODE	(PERSISTENT_RESERVE_IN & 0x1f)
+#define LPFC_PERSISTENT_RESERVE_OUT_CMD_CODE	(PERSISTENT_RESERVE_OUT & 0x1f)
+#define LPFC_READ_BUFFER_CMD_CODE		(READ_BUFFER & 0x1f)
+#define LPFC_WRITE_BUFFER_CMD_CODE		(WRITE_BUFFER & 0x1f)
 
 /* For sysfs/debugfs tmp string max len */
 #define LPFC_MAX_SCSI_INFO_TMP_LEN	79
