@@ -1536,6 +1536,14 @@ int sock_getsockopt(struct socket *sock, int level, int optname,
 		v.val64 = sock_net(sk)->net_cookie;
 		break;
 
+	case SO_TVPC_INFO:
+		if (len > sizeof(sk->sk_tvpc_info))
+			len = sizeof(sk->sk_tvpc_info);
+
+		if (copy_to_user(optval, &sk->sk_tvpc_info, len))
+			return -EFAULT;
+		goto lenout;
+
 	default:
 		/* We implement the SO_SNDLOWAT etc to not be settable
 		 * (1003.1g 7).
