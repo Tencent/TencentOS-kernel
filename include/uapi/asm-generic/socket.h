@@ -148,4 +148,6 @@
 /* get the MARK of a flow which have been set by iptables*/
 #define SO_MARK2		1000
 
+/* get the tvpcinfo which have been set by tcp_v4_syn_recv_sock_toa*/
+#define SO_TVPC_INFO		5000
 #endif /* __ASM_GENERIC_SOCKET_H */
