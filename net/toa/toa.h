@@ -20,11 +20,11 @@
 #include <net/ipv6.h>
 #include <net/transp_v6.h>
 
-#define TOA_VERSION "1.0.0.0"
+#define TOA_VERSION "2.0.0.0"
 
-#define TOA_DBG(msg...)			\
+#define TOA_DBG(msg,...)			\
     do {						\
-          printk(KERN_DEBUG "[DEBUG] TOA: " msg);       \
+          if (0xff==dbg){printk(KERN_DEBUG "[DEBUG] TOA: comm:%s pid:%d " msg, current->comm, (int)current->pid, ##__VA_ARGS__);}       \
     } while (0)
 
 #define TOA_INFO(msg...)			\
@@ -33,10 +33,15 @@
                printk(KERN_INFO "TOA: " msg);\
      } while(0)
 
-#define TCPOPT_TOA  200
-
-/* MUST be 4n !!!! */
-#define TCPOLEN_TOA 8		/* |opcode|size|ip+port| = 1 + 1 + 6 */
+#define TCPOPT_REAL_CLIENTIP 200
+/* |opcode|size|vmip+sport| = 1 + 1 + 6 */
+#define TCPOLEN_REAL_CLIENTIP 8
+#define TCPOPT_VM_VPCID 201
+/* |opcode=1|opcode=1|opcode|size|vpcid| = 1 + 1 + 4 */
+#define TCPOLEN_VM_VPCID 6
+#define TCPOPT_VIP 202
+/* |opcode|size|vip+vport| = 1 + 1 + 6 */
+#define TCPOLEN_VIP 8
 
 /* MUST be 4 bytes alignment */
 struct toa_data {
@@ -54,6 +59,12 @@ enum {
 	GETNAME_TOA_MISMATCH_CNT,
 	GETNAME_TOA_BYPASS_CNT,
 	GETNAME_TOA_EMPTY_CNT,
+	GETNAME_VTOA_GET_CNT,
+	GETNAME_VTOA_GET_ATTR_ERR_CNT,
+	GETNAME_VTOA_GET_LOCKUP_ERR_CNT,
+	GETNAME_VTOA_GET_NETLINK_ERR_CNT,
+	GETNAME_VTOA_GETPEERNAME_IPV4_ERR_CNT,
+	GETNAME_VTOA_GETPEERNAME_IPV6_ERR_CNT,
 	TOA_STAT_LAST
 };
 

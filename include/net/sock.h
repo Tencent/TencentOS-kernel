@@ -232,6 +232,15 @@ struct sock_common {
 	/* public: */
 };
 
+/*tvpc data*/
+struct tvpc_info {
+	u32 vpcid;
+	__be32 vmip;
+	__be32 vip;
+	__be16 sport;
+	__be16 vport;
+};
+
 struct bpf_sk_storage;
 
 /**
@@ -513,7 +522,7 @@ struct sock {
 	struct bpf_sk_storage __rcu	*sk_bpf_storage;
 #endif
 	struct rcu_head		sk_rcu;
-
+	struct struct tvpc_info  sk_tvpc_info;
 	KABI_RESERVE(1);
 	KABI_RESERVE(2);
 	KABI_RESERVE(3);
