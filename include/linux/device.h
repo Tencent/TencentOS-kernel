@@ -1502,6 +1502,9 @@ extern void device_unregister(struct device *dev);
 extern void device_initialize(struct device *dev);
 extern int __must_check device_add(struct device *dev);
 extern void device_del(struct device *dev);
+extern bool device_is_hidden(struct device *dev);
+extern int device_hide(struct device *dev);
+extern int device_unhide(struct device *dev);
 extern int device_for_each_child(struct device *dev, void *data,
 		     int (*fn)(struct device *dev, void *data));
 extern int device_for_each_child_reverse(struct device *dev, void *data,

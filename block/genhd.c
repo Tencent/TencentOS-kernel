@@ -836,6 +836,56 @@ void del_gendisk(struct gendisk *disk)
 }
 EXPORT_SYMBOL(del_gendisk);
 
+static int hide_disk(struct gendisk *disk)
+{
+	struct device *ddev = disk_to_dev(disk);
+	struct disk_part_iter piter;
+	struct hd_struct *part;
+	int ret;
+
+	ret = device_hide(ddev);
+	if (ret)
+		return ret;
+
+	disk_part_iter_init(&piter, disk,
+			     DISK_PITER_INCL_EMPTY | DISK_PITER_REVERSE);
+	while ((part = disk_part_iter_next(&piter)))
+		device_hide(part_to_dev(part));
+	disk_part_iter_exit(&piter);
+
+	if (!sysfs_deprecated)
+		sysfs_remove_link(block_depr, dev_name(ddev));
+
+	return ret;
+}
+
+static int unhide_disk(struct gendisk *disk)
+{
+	struct device *ddev = disk_to_dev(disk);
+	struct disk_part_iter piter;
+	struct hd_struct *part;
+	int ret;
+
+	ret = device_unhide(ddev);
+	if (ret)
+		return ret;
+
+	disk_part_iter_init(&piter, disk, DISK_PITER_INCL_EMPTY);
+	while ((part = disk_part_iter_next(&piter)))
+		device_unhide(part_to_dev(part));
+	disk_part_iter_exit(&piter);
+
+	if (!sysfs_deprecated) {
+		if (sysfs_create_link(block_depr, &ddev->kobj,
+				      kobject_name(&ddev->kobj)))
+			pr_warn("%s: failed to restore /sys/block link\n",
+				disk->disk_name);
+	}
+
+	return ret;
+}
+
+
 /* sysfs access to bad-blocks list. */
 static ssize_t disk_badblocks_show(struct device *dev,
 					struct device_attribute *attr,
@@ -1181,6 +1231,31 @@ static ssize_t disk_discard_alignment_show(struct device *dev,
 	return sprintf(buf, "%d\n", queue_discard_alignment(disk->queue));
 }
 
+static ssize_t disk_hiddens_show(struct device *dev,
+				struct device_attribute *attr,
+				char *buf)
+{
+	return sprintf(buf, "%d\n", device_is_hidden(dev));
+}
+
+static ssize_t disk_hiddens_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buf, size_t len)
+{
+	struct gendisk *disk = dev_to_disk(dev);
+	bool hide;
+	int ret;
+
+	ret = kstrtobool(buf, &hide);
+	if (ret)
+		return ret;
+
+	if (hide != device_is_hidden(dev))
+		ret = hide ? hide_disk(disk) : unhide_disk(disk);
+
+	return ret ?: len;
+}
+
 static DEVICE_ATTR(range, 0444, disk_range_show, NULL);
 static DEVICE_ATTR(ext_range, 0444, disk_ext_range_show, NULL);
 static DEVICE_ATTR(removable, 0444, disk_removable_show, NULL);
@@ -1193,6 +1268,8 @@ static DEVICE_ATTR(capability, 0444, disk_capability_show, NULL);
 static DEVICE_ATTR(stat, 0444, part_stat_show, NULL);
 static DEVICE_ATTR(inflight, 0444, part_inflight_show, NULL);
 static DEVICE_ATTR(badblocks, 0644, disk_badblocks_show, disk_badblocks_store);
+static DEVICE_ATTR(hiddens, S_IRUGO | S_IWUSR, disk_hiddens_show,
+		   disk_hiddens_store);
 #ifdef CONFIG_FAIL_MAKE_REQUEST
 static struct device_attribute dev_attr_fail =
 	__ATTR(make-it-fail, 0644, part_fail_show, part_fail_store);
@@ -1221,6 +1298,7 @@ static struct attribute *disk_attrs[] = {
 #ifdef CONFIG_FAIL_IO_TIMEOUT
 	&dev_attr_fail_timeout.attr,
 #endif
+	&dev_attr_hiddens.attr,
 	NULL
 };
 

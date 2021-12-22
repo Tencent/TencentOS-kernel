@@ -2404,6 +2404,71 @@ void device_del(struct device *dev)
 }
 EXPORT_SYMBOL_GPL(device_del);
 
+DEFINE_KLIST(klist_hidden_devices, NULL, NULL);
+
+bool device_is_hidden(struct device *dev)
+{
+	bool ret = false;
+
+	if (dev->class) {
+		mutex_lock(&dev->class->p->mutex);
+		ret = (dev->p->knode_class.n_klist == &klist_hidden_devices);
+		mutex_unlock(&dev->class->p->mutex);
+	}
+	return ret;
+}
+
+int device_hide(struct device *dev)
+{
+	char *envp[] = { "EVENT=hide", NULL };
+
+	if (!dev->class)
+		return -EINVAL;
+
+	if (MAJOR(dev->devt))
+		devtmpfs_delete_node(dev);
+
+	device_remove_class_symlinks(dev);
+
+	mutex_lock(&dev->class->p->mutex);
+	/* remove the device from the class list */
+	klist_remove(&dev->p->knode_class);
+	/* add to the hidden devices list */
+	klist_add_tail(&dev->p->knode_class, &klist_hidden_devices);
+	mutex_unlock(&dev->class->p->mutex);
+
+	kobject_uevent_env(&dev->kobj, KOBJ_CHANGE, envp);
+
+	return 0;
+}
+
+int device_unhide(struct device *dev)
+{
+	char *envp[] = { "EVENT=unhide", NULL };
+	int err;
+
+	if (!dev->class)
+		return -EINVAL;
+
+	err = device_add_class_symlinks(dev);
+	if (err)
+		return err;
+
+	if (MAJOR(dev->devt))
+		devtmpfs_create_node(dev);
+
+	mutex_lock(&dev->class->p->mutex);
+	/* remove the device from the hidden devices list */
+	klist_remove(&dev->p->knode_class);
+	/* tie the class to the device */
+	klist_add_tail(&dev->p->knode_class, &dev->class->p->klist_devices);
+	mutex_unlock(&dev->class->p->mutex);
+
+	kobject_uevent_env(&dev->kobj, KOBJ_CHANGE, envp);
+
+	return err;
+}
+
 /**
  * device_unregister - unregister device from system.
  * @dev: device going away.
