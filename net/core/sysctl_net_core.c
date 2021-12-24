@@ -592,6 +592,15 @@ static struct ctl_table net_core_table[] = {
 		.mode           = 0644,
 		.proc_handler   = proc_dointvec_minmax,
 	},
+	{
+		.procname       = "forced_caps_enabled",
+		.data           = &sysctl_forced_caps_enabled,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
 	{ }
 };
 
