@@ -7496,7 +7496,7 @@ static DEFINE_MUTEX(cfs_constraints_mutex);
 const u64 max_cfs_quota_period = 1 * NSEC_PER_SEC; /* 1s */
 static const u64 min_cfs_quota_period = 1 * NSEC_PER_MSEC; /* 1ms */
 /* More than 203 days if BW_SHIFT equals 20. */
-static const u64 max_cfs_runtime = MAX_BW * NSEC_PER_USEC;
+const u64 max_cfs_runtime = MAX_BW * NSEC_PER_USEC;
 
 static int __cfs_schedulable(struct task_group *tg, u64 period, u64 runtime);
 
@@ -7560,12 +7560,12 @@ static int tg_set_cfs_bandwidth(struct task_group *tg, u64 period, u64 quota,
 	cfs_b->quota = quota;
 	cfs_b->burst = burst;
 
-	__refill_cfs_bandwidth_runtime(cfs_b);
-
 	/* Restart the period timer (if active) to handle new period expiry: */
 	if (runtime_enabled) {
 		cfs_b->buffer = min(max_cfs_runtime, quota + burst);
-		start_cfs_bandwidth(cfs_b);
+		cfs_b->max_overrun = DIV_ROUND_UP_ULL(max_cfs_runtime, quota);
+		cfs_b->runtime = cfs_b->quota;
+		start_cfs_bandwidth(cfs_b, 1);
 	}
 
 	raw_spin_unlock_irq(&cfs_b->lock);
