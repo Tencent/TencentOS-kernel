@@ -4385,7 +4385,7 @@ static inline u64 sched_cfs_bandwidth_slice(void)
 static void __refill_cfs_bandwidth_runtime(struct cfs_bandwidth *cfs_b,
 					   u64 overrun)
 {
-	u64 refill;
+	u64 refill, runtime;
 
 	if (cfs_b->quota != RUNTIME_INF) {
 
@@ -4394,10 +4394,21 @@ static void __refill_cfs_bandwidth_runtime(struct cfs_bandwidth *cfs_b,
 			return;
 		}
 
+		if (cfs_b->runtime_at_period_start > cfs_b->runtime) {
+			runtime = cfs_b->runtime_at_period_start
+				- cfs_b->runtime;
+			if (runtime > cfs_b->quota) {
+				cfs_b->burst_time += runtime - cfs_b->quota;
+				cfs_b->nr_burst++;
+			}
+		}
+
 		overrun = min(overrun, cfs_b->max_overrun);
 		refill = cfs_b->quota * overrun;
 		cfs_b->runtime += refill;
 		cfs_b->runtime = min(cfs_b->runtime, cfs_b->buffer);
+
+		cfs_b->runtime_at_period_start = cfs_b->runtime;
 	}
 }
 
