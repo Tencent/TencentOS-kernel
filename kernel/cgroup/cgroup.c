@@ -6558,7 +6558,13 @@ struct cgroup *cgroup_get_from_fd(int fd)
 	cgrp = css->cgroup;
 	if (!cgroup_on_dfl(cgrp)) {
 		cgroup_put(cgrp);
+
+#ifdef CONFIG_CGROUP_V1_BPF
+		cgrp = &cgrp_dfl_root.cgrp;
+		cgroup_get(cgrp);
+#else
 		return ERR_PTR(-EBADF);
+#endif
 	}
 
 	return cgrp;
