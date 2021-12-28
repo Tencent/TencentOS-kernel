@@ -6749,6 +6749,7 @@ static bool __sock_filter_check_attach_type(int off,
 		case BPF_CGROUP_INET4_POST_BIND:
 		case BPF_CGROUP_INET_POST_AUTOBIND:
 		case BPF_CGROUP_TWSK_CLOSE:
+		case BPF_CGROUP_UDP_UNHASH:
 			goto read_only;
 		default:
 			return false;
@@ -6766,6 +6767,7 @@ static bool __sock_filter_check_attach_type(int off,
 		case BPF_CGROUP_INET6_POST_BIND:
 		case BPF_CGROUP_INET_POST_AUTOBIND:
 		case BPF_CGROUP_TWSK_CLOSE:
+		case BPF_CGROUP_UDP_UNHASH:
 			goto read_only;
 		default:
 			return false;
