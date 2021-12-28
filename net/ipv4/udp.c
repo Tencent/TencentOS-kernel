@@ -1892,6 +1892,8 @@ void udp_lib_unhash(struct sock *sk)
 		struct udp_table *udptable = sk->sk_prot->h.udp_table;
 		struct udp_hslot *hslot, *hslot2;
 
+		BPF_CGROUP_RUN_PROG_UDP_UNHASH(sk);
+
 		hslot  = udp_hashslot(udptable, sock_net(sk),
 				      udp_sk(sk)->udp_port_hash);
 		hslot2 = udp_hashslot2(udptable, udp_sk(sk)->udp_portaddr_hash);
