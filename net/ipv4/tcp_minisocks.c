@@ -334,6 +334,8 @@ void tcp_time_wait(struct sock *sk, int state, int timeo)
 		 */
 		inet_twsk_hashdance(tw, sk, &tcp_hashinfo);
 		local_bh_enable();
+		if (BPF_SOCK_OPS_TEST_FLAG(tcp_sk(sk), BPF_SOCK_OPS_TW_CLOSE_FLAG))
+			tcp_sk(sk)->bpf_sock_ops_cb_flags &= ~BPF_SOCK_OPS_STATE_CB_FLAG;
 	} else {
 		/* Sorry, if we're out of memory, just CLOSE this
 		 * socket up.  We've got bigger problems than

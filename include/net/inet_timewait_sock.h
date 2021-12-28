@@ -74,6 +74,7 @@ struct inet_timewait_sock {
 	u32			tw_priority;
 	struct timer_list	tw_timer;
 	struct inet_bind_bucket	*tw_tb;
+	struct sock_cgroup_data tw_cgrp_data;
 };
 #define tw_tclass tw_tos
 

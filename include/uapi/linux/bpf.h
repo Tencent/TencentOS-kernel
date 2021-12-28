@@ -219,6 +219,7 @@ enum bpf_attach_type {
 	BPF_SK_REUSEPORT_SELECT_OR_MIGRATE,
 	BPF_PERF_EVENT,
 	BPF_CGROUP_INET_POST_AUTOBIND,
+	BPF_CGROUP_TWSK_CLOSE,
 	__MAX_BPF_ATTACH_TYPE
 };
 
@@ -3613,8 +3614,9 @@ enum {
 	BPF_SOCK_OPS_RETRANS_CB_FLAG	= (1<<1),
 	BPF_SOCK_OPS_STATE_CB_FLAG	= (1<<2),
 	BPF_SOCK_OPS_RTT_CB_FLAG	= (1<<3),
+	BPF_SOCK_OPS_TW_CLOSE_FLAG	= (1<<4),
 /* Mask of all currently supported cb flags */
-	BPF_SOCK_OPS_ALL_CB_FLAGS       = 0xF,
+	BPF_SOCK_OPS_ALL_CB_FLAGS       = 0x1F,
 };
 
 /* List of known BPF sock_ops operators.

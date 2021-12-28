@@ -16,6 +16,7 @@
 #include <linux/bpf-cgroup.h>
 #include <net/sock.h>
 #include <net/bpf_sk_storage.h>
+#include <net/inet_timewait_sock.h>
 
 #include "../cgroup/cgroup-internal.h"
 
@@ -662,6 +663,22 @@ int __cgroup_bpf_run_filter_skb(struct sock *sk,
 	return ret;
 }
 EXPORT_SYMBOL(__cgroup_bpf_run_filter_skb);
+
+int __cgroup_bpf_run_filter_twsk(struct sock *sk,
+			       enum bpf_attach_type type)
+{
+	struct inet_timewait_sock *twsk;
+	struct cgroup *cgrp;
+	int ret;
+
+	twsk = (struct inet_timewait_sock *)sk;
+	cgrp = sock_cgroup_ptr(&twsk->tw_cgrp_data);
+
+	ret = BPF_PROG_RUN_ARRAY(cgrp->bpf.effective[type],
+				 sk, BPF_PROG_RUN);
+	return ret == 1 ? 0 : -EPERM;
+}
+EXPORT_SYMBOL(__cgroup_bpf_run_filter_twsk);
 
 /**
  * __cgroup_bpf_run_filter_sk() - Run a program on a sock
