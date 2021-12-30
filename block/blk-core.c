@@ -835,6 +835,9 @@ static void blk_rq_timed_out_timer(unsigned long data)
 {
 	struct request_queue *q = (struct request_queue *)data;
 
+	if (blk_queue_no_timeout(q))
+		return;
+
 	kblockd_schedule_work(&q->timeout_work);
 }
 
