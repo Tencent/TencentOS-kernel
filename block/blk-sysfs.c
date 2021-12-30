@@ -162,6 +162,14 @@ static ssize_t queue_io_min_show(struct request_queue *q, char *page)
 	return queue_var_show(queue_io_min(q), page);
 }
 
+static ssize_t queue_timeout_timer_pending_show(struct request_queue *q, char *page)
+{
+	unsigned long pending;
+
+	pending = timer_pending(&q->timeout);
+	return queue_var_show(pending, page);
+}
+
 static ssize_t queue_io_opt_show(struct request_queue *q, char *page)
 {
 	return queue_var_show(queue_io_opt(q), page);
@@ -590,6 +598,11 @@ static struct queue_sysfs_entry queue_io_min_entry = {
 	.show = queue_io_min_show,
 };
 
+static struct queue_sysfs_entry queue_timeout_timer_pending = {
+	.attr = {.name = "timeout_timer_pending", .mode = S_IRUGO },
+	.show = queue_timeout_timer_pending_show,
+};
+
 static struct queue_sysfs_entry queue_io_opt_entry = {
 	.attr = {.name = "optimal_io_size", .mode = S_IRUGO },
 	.show = queue_io_opt_show,
@@ -714,6 +727,7 @@ static struct attribute *default_attrs[] = {
 	&queue_physical_block_size_entry.attr,
 	&queue_chunk_sectors_entry.attr,
 	&queue_io_min_entry.attr,
+	&queue_timeout_timer_pending.attr,
 	&queue_io_opt_entry.attr,
 	&queue_discard_granularity_entry.attr,
 	&queue_discard_max_entry.attr,

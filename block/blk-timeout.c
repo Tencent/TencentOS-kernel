@@ -199,6 +199,9 @@ void blk_add_timer(struct request *req)
 	if (!q->mq_ops && !q->rq_timed_out_fn)
 		return;
 
+	if (blk_queue_no_timeout(q))
+		return;
+
 	BUG_ON(!list_empty(&req->timeout_list));
 
 	/*
