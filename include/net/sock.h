@@ -1138,6 +1138,7 @@ struct proto {
 	void			(*unhash)(struct sock *sk);
 	void			(*rehash)(struct sock *sk);
 	int			(*get_port)(struct sock *sk, unsigned short snum);
+	void			(*put_port)(struct sock *sk);
 
 	/* Keeping track of sockets in use */
 #ifdef CONFIG_PROC_FS
