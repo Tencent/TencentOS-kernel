@@ -3674,6 +3674,11 @@ enum {
 					 */
 };
 
+enum {
+	SOCK_OPS_RET_OK = 0x100,
+	SOCK_OPS_RET_REJECT
+};
+
 /* List of TCP states. There is a build check in net/ipv4/tcp.c to detect
  * changes between the TCP and BPF versions. Ideally this should never happen.
  * If it does, we need to add code to convert them before calling
