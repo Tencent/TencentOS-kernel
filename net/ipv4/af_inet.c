@@ -184,6 +184,12 @@ static int inet_autobind(struct sock *sk)
 			release_sock(sk);
 			return -EAGAIN;
 		}
+		if (BPF_CGROUP_RUN_PROG_INET_POST_AUTOBIND(sk)) {
+			if (sk->sk_prot->put_port)
+				sk->sk_prot->put_port(sk);
+			release_sock(sk);
+			return -EAGAIN;
+		}
 		inet->inet_sport = htons(inet->inet_num);
 	}
 	release_sock(sk);
