@@ -205,6 +205,9 @@ int bpf_percpu_cgroup_storage_update(struct bpf_map *map, void *key,
 #define BPF_CGROUP_RUN_PROG_INET6_POST_BIND(sk)				       \
 	BPF_CGROUP_RUN_SK_PROG(sk, BPF_CGROUP_INET6_POST_BIND)
 
+#define BPF_CGROUP_RUN_PROG_INET_POST_AUTOBIND(sk)			\
+	BPF_CGROUP_RUN_SK_PROG(sk, BPF_CGROUP_INET_POST_AUTOBIND)
+
 #define BPF_CGROUP_RUN_SA_PROG(sk, uaddr, type)				       \
 ({									       \
 	int __ret = 0;							       \

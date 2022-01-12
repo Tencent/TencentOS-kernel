@@ -1665,6 +1665,7 @@ bpf_prog_load_check_attach_type(enum bpf_prog_type prog_type,
 		case BPF_CGROUP_INET_SOCK_CREATE:
 		case BPF_CGROUP_INET4_POST_BIND:
 		case BPF_CGROUP_INET6_POST_BIND:
+		case BPF_CGROUP_INET_POST_AUTOBIND:
 			return 0;
 		default:
 			return -EINVAL;
@@ -1996,6 +1997,7 @@ static int bpf_prog_attach(const union bpf_attr *attr)
 	case BPF_CGROUP_INET_SOCK_CREATE:
 	case BPF_CGROUP_INET4_POST_BIND:
 	case BPF_CGROUP_INET6_POST_BIND:
+	case BPF_CGROUP_INET_POST_AUTOBIND:
 		ptype = BPF_PROG_TYPE_CGROUP_SOCK;
 		break;
 	case BPF_CGROUP_INET4_BIND:
@@ -2087,6 +2089,7 @@ static int bpf_prog_detach(const union bpf_attr *attr)
 	case BPF_CGROUP_INET_SOCK_CREATE:
 	case BPF_CGROUP_INET4_POST_BIND:
 	case BPF_CGROUP_INET6_POST_BIND:
+	case BPF_CGROUP_INET_POST_AUTOBIND:
 		ptype = BPF_PROG_TYPE_CGROUP_SOCK;
 		break;
 	case BPF_CGROUP_INET4_BIND:
@@ -2159,6 +2162,7 @@ static int bpf_prog_query(const union bpf_attr *attr,
 	case BPF_CGROUP_SYSCTL:
 	case BPF_CGROUP_GETSOCKOPT:
 	case BPF_CGROUP_SETSOCKOPT:
+	case BPF_CGROUP_INET_POST_AUTOBIND:
 		break;
 	case BPF_LIRC_MODE2:
 		return lirc_prog_query(attr, uattr);
