@@ -76,7 +76,7 @@ static void __put_single_page(struct page *page)
 {
 	__page_cache_release(page);
 	mem_cgroup_uncharge(page);
-	free_unref_page(page);
+	free_unref_page(page, 0);
 }
 
 static void __put_compound_page(struct page *page)
