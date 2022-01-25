@@ -2,15 +2,15 @@
 %global with_perf 1
 %global with_tools 1
 %if 0%{?rhel} == 6
-%global rdist .tl1
+%global rdist .oc6
 %global debug_path /usr/lib/debug/lib/
 %else
 %global debug_path /usr/lib/debug/usr/lib/
 %if 0%{?rhel} == 7
-%global rdist .tl2
+%global rdist .oc7
 %else
 %if 0%{?rhel} == 8
-%global rdist .tl3
+%global rdist .oc8
 %global __python  /usr/bin/python2
 %global _enable_debug_packages        %{nil}
 %global debug_package                %{nil}
