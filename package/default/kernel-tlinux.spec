@@ -34,6 +34,9 @@ License: GPLv2
 Vendor: Tencent
 Packager: tlinux team <g_CAPD_SRDC_OS@tencent.com>
 Provides: kernel = %{version}-%{release}
+Provides: kernel-core = %{version}-%{release}
+Provides: kernel-modules = %{version}-%{release}
+Provides: kernel-modules-extra = %{version}-%{release}
 Group: System Environment/Kernel
 Source0: %{name}-%{version}.tar.gz
 Source1: tlinux_cciss_link.modules
