@@ -1,15 +1,15 @@
 %global with_debuginfo 0
 %global with_perf 1
 %if 0%{?rhel} == 6
-%global rdist .tl1
+%global rdist .oc6
 %global debug_path /usr/lib/debug/lib/
 %else
 %global debug_path /usr/lib/debug/usr/lib/
 %if 0%{?rhel} == 7
-%global rdist .tl2
+%global rdist .oc7
 %endif
 %if 0%{?rhel} == 8
-%global rdist .tl3
+%global rdist .oc8
 %global __python  /usr/bin/python2
 %global _enable_debug_packages        %{nil}
 %global debug_package                %{nil}
@@ -29,6 +29,9 @@ License: GPLv2
 Vendor: Tencent
 Packager: tlinux team <g_CAPD_SRDC_OS@tencent.com>
 Provides: kernel = %{version}-%{release}
+Provides: kernel-core = %{version}-%{release}
+Provides: kernel-modules = %{version}-%{release}
+Provides: kernel-modules-extra = %{version}-%{release}
 Group: System Environment/Kernel
 Source0: %{name}-%{version}.tar.gz
 Source1: tlinux_cciss_link.modules
