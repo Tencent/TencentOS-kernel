@@ -31,7 +31,7 @@ Version: %{version}
 Release: %{release_os}%{?rdist}
 License: GPLv2
 Vendor: Tencent
-Packager: tlinux team <g_CAPD_SRDC_OS@tencent.com>
+Packager: OpenCloudOS Team
 Provides: kernel = %{version}-%{release}
 Provides: kernel-core = %{version}-%{release}
 Provides: kernel-modules = %{version}-%{release}
@@ -54,10 +54,10 @@ BuildRequires: net-tools
 %endif
 
 %description
-This package contains tlinux kernel, the core of operating system.
+This package contains OpenCloudOS kernel, the core of operating system.
 
 %package debuginfo-common
-Summary: tlinux kernel vmlinux for crash debug
+Summary: OpenCloudOS kernel vmlinux for crash debug
 Release: %{release}
 Group: System Environment/Kernel
 Provides: kernel-debuginfo-common kernel-debuginfo 
@@ -150,7 +150,7 @@ fi;
 
 %post
 # post #########################################################################
-echo "Install tlinux kernel"
+echo "Install OpenCloudOS kernel"
 %if 0%{?rhel} >= 7
 /sbin/new-kernel-pkg --package kernel --install %{tagged_name}%{?dist} --kernel-args="crashkernel=512M-12G:128M,12G-64G:256M,64G-128G:512M,128G-:768M" --make-default|| exit $?
 %else

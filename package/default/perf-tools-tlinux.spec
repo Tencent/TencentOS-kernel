@@ -21,7 +21,7 @@ Version: %{version}
 Release: %{release_os}%{?dist}
 License: GPLv2
 Vendor: Tencent
-Packager: tlinux team <g_CAPD_SRDC_OS@tencent.com>
+Packager: OpenCloudOS Team
 Provides: perf = %{version}-%{release}
 Source0: %{name}-%{version}.tar.gz
 # Sources for kernel tools
@@ -100,13 +100,6 @@ from the kernel source.
 
 # build ########################################################################
 %build
-
-
-if [ ! -f /etc/tlinux-release ]; then
-	echo "Error: please build this rpm on tlinux\n"
-	exit 1
-fi
-
 
 cd %{name}-%{version}
 all_types="%{kernel_all_types}"
@@ -208,11 +201,6 @@ if [ %{_target_cpu} != ${system_arch} ]; then
 	echo "This rpm is intended for %{_target_cpu} platform. It seems your system is ${system_arch}.";
 	exit 1;
 fi;
-
-if [ ! -f /etc/tlinux-release -o ! -f /etc/redhat-release ]; then
-	echo "Error: Cannot install this rpm on non-tlinux OS"
-	exit 1;
-fi
 
 %post
 # post #########################################################################
