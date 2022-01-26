@@ -586,10 +586,10 @@ fi;
 # post #########################################################################
 echo "Install OpenCloudOS kernel"
 %if 0%{?rhel} == 8
-kernel-install add  %{tagged_name} /lib/modules/%{tagged_name}/vmlinuz
 cp -p /lib/modules/%{tagged_name}/dist_compat/config-%{tagged_name}%{?dist} /boot
 cp -p /lib/modules/%{tagged_name}/dist_compat/.vmlinuz-%{tagged_name}%{?dist}.hmac /boot
 cp -p /lib/modules/%{tagged_name}/dist_compat/System.map-%{tagged_name}%{?dist} /boot
+kernel-install add %{tagged_name} /lib/modules/%{tagged_name}/vmlinuz
 %else
 %if 0%{?rhel} == 7
 /sbin/new-kernel-pkg --package kernel --install %{tagged_name}%{?dist} --kernel-args="crashkernel=512M-12G:128M,12G-64G:256M,64G-128G:512M,128G-:768M" --make-default|| exit $?
