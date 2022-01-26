@@ -272,6 +272,9 @@ echo "Prepare $kernel_full_name source."
 prepare_tlinux_spec
 
 cp package/default/tlinux_cciss_link.modules $build_srcdir
+cp package/default/cpupower.service $build_srcdir
+cp package/default/cpupower.config $build_srcdir
+
 if [ "$kvm_guest" = "yes" ] ; then
 	cp package/default/kvm_guest/*.patch $build_srcdir
 fi
