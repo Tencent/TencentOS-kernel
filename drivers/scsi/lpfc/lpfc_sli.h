@@ -1,7 +1,7 @@
 /*******************************************************************
  * This file is part of the Emulex Linux Device Driver for         *
  * Fibre Channel Host Bus Adapters.                                *
- * Copyright (C) 2017-2019 Broadcom. All Rights Reserved. The term *
+ * Copyright (C) 2017-2020 Broadcom. All Rights Reserved. The term *
  * “Broadcom” refers to Broadcom Inc. and/or its subsidiaries.     *
  * Copyright (C) 2004-2016 Emulex.  All rights reserved.           *
  * EMULEX and SLI are trademarks of Emulex.                        *
@@ -95,11 +95,15 @@ struct lpfc_iocbq {
 #define LPFC_IO_OAS		0x10000 /* OAS FCP IO */
 #define LPFC_IO_FOF		0x20000 /* FOF FCP IO */
 #define LPFC_IO_LOOPBACK	0x40000 /* Loopback IO */
+#define LPFC_IO_DRVR_INIT	0x80000000 /* Driver initiated SCSI cmd */
 #define LPFC_PRLI_NVME_REQ	0x80000 /* This is an NVME PRLI. */
 #define LPFC_PRLI_FCP_REQ	0x100000 /* This is an NVME PRLI. */
 #define LPFC_IO_NVME	        0x200000 /* NVME FCP command */
 #define LPFC_IO_NVME_LS		0x400000 /* NVME LS command */
 #define LPFC_IO_NVMET		0x800000 /* NVMET command */
+#define LPFC_IO_RAW		0x1000000 /* Raw ELS command */
+#define LPFC_IO_CMF	        0x2000000 /* CMF command */
+#define LPFC_IO_DRVR_INIT       0x80000000
 
 	uint32_t drvrTimeout;	/* driver timeout in seconds */
 	struct lpfc_vport *vport;/* virtual port pointer */
@@ -130,6 +134,7 @@ struct lpfc_iocbq {
 #define IOCB_BUSY           1
 #define IOCB_ERROR          2
 #define IOCB_TIMEDOUT       3
+#define IOCB_ABORTED        4
 
 #define SLI_WQE_RET_WQE    1    /* Return WQE if cmd ring full */
 
@@ -348,7 +353,7 @@ struct lpfc_sli {
 	struct lpfc_iocbq ** iocbq_lookup; /* array to lookup IOCB by IOTAG */
 	size_t iocbq_lookup_len;           /* current lengs of the array */
 	uint16_t  last_iotag;              /* last allocated IOTAG */
-	time64_t  stats_start;		   /* in seconds */
+	unsigned long  stats_start;        /* in seconds */
 	struct lpfc_lnk_stat lnk_stat_offsets;
 };
 
@@ -411,6 +416,10 @@ struct lpfc_io_buf {
 						 * protection data
 						 */
 
+			void *edifp;		/* External DIF information
+						 * for IO
+						 */
+
 			/*
 			 * data and dma_handle are the kernel virtual and bus
 			 * address of the dma-able buffer containing the
@@ -439,6 +448,7 @@ struct lpfc_io_buf {
 		struct {
 			struct nvmefc_fcp_req *nvmeCmd;
 			uint16_t qidx;
+
 		};
 	};
 #ifdef CONFIG_SCSI_LPFC_DEBUG_FS
@@ -446,6 +456,7 @@ struct lpfc_io_buf {
 	uint64_t ts_last_cmd;
 	uint64_t ts_cmd_wqput;
 	uint64_t ts_isr_cmpl;
-	uint64_t ts_data_nvme;
+	uint64_t ts_data_io;
 #endif
+	uint64_t rx_cmd_start;
 };

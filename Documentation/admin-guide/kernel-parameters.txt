@@ -3784,6 +3784,14 @@
 			[KNL] Number of legacy pty's. Overwrites compiled-in
 			default number.
 
+qspinlock.numa_spinlock_threshold_ns=	[NUMA, PV_OPS]
+			Set the time threshold in nanoseconds for the
+			number of intra-node lock hand-offs before the
+			NUMA-aware spinlock is forced to be passed to
+			a thread on another NUMA node. Smaller values
+			result in a more fair, but less performant spinlock,
+			and vice versa. The default value is 1000000 (=1ms).
+
 	quiet		[KNL] Disable most log messages
 
 	r128=		[HW,DRM]
@@ -5487,6 +5495,10 @@
 	xen.event_loop_timeout=	[XEN]
 			After which time (jiffies) the event handling loop
 			should start to delay EOI handling. Default is 2.
+	nopvspin	[X86,XEN,KVM]
+			Disables the qspinlock slow path using PV optimizations
+			which allow the hypervisor to 'idle' the guest on lock
+			contention.
 
 	xirc2ps_cs=	[NET,PCMCIA]
 			Format:
