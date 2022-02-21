@@ -231,6 +231,15 @@ struct sock_common {
 	/* public: */
 };
 
+/*tvpc data*/
+struct tvpc_info {
+	u32 vpcid;
+	__be32 vmip;
+	__be32 vip;
+	__be16 sport;
+	__be16 vport;
+};
+
 /**
   *	struct sock - network layer representation of sockets
   *	@__sk_common: shared layout with inet_timewait_sock
@@ -482,6 +491,7 @@ struct sock {
 	void                    (*sk_destruct)(struct sock *sk);
 	struct sock_reuseport __rcu	*sk_reuseport_cb;
 	struct rcu_head		sk_rcu;
+	struct tvpc_info  sk_tvpc_info;
 };
 
 enum sk_pacing {
