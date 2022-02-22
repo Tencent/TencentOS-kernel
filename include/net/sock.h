@@ -522,7 +522,7 @@ struct sock {
 	struct bpf_sk_storage __rcu	*sk_bpf_storage;
 #endif
 	struct rcu_head		sk_rcu;
-	struct struct tvpc_info  sk_tvpc_info;
+	struct tvpc_info        sk_tvpc_info;
 	KABI_RESERVE(1);
 	KABI_RESERVE(2);
 	KABI_RESERVE(3);
