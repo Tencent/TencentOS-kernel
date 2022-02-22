@@ -245,6 +245,9 @@ static char * get_schedlat_name(enum sli_memlat_stat_item sidx)
 	case SCHEDLAT_LONGSYS:
 		name = "schedlat_longsys";
 		break;
+	case SCHEDLAT_IRQTIME:
+		name = "schedlat_irqtime";
+		break;
 	default:
 		break;
 	}
@@ -308,17 +311,12 @@ int sli_memlat_max_show(struct seq_file *m, struct cgroup *cgrp)
 
 	for (sidx = MEM_LAT_GLOBAL_DIRECT_RECLAIM; sidx < MEM_LAT_STAT_NR; sidx++) {
 		int cpu;
-		unsigned long latency_max = 0, latency;
+		unsigned long latency_sum = 0;
 
-		for_each_possible_cpu(cpu) {
-			latency = per_cpu_ptr(cgrp->sli_memlat_stat_percpu, cpu)->latency_max[sidx];
-			per_cpu_ptr(cgrp->sli_memlat_stat_percpu, cpu)->latency_max[sidx] = 0;
+		for_each_possible_cpu(cpu)
+			latency_sum += per_cpu_ptr(cgrp->sli_memlat_stat_percpu, cpu)->latency_max[sidx];
 
-			if (latency > latency_max)
-				latency_max = latency;
-		}
-
-		seq_printf(m,"%s: %lu\n", get_memlat_name(sidx), latency_max);
+		seq_printf(m,"%s: %lu\n", get_memlat_name(sidx), latency_sum);
 	}
 
 	return 0;
@@ -354,7 +352,7 @@ void sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start)
 	}
 
 	cgrp = memcg->css.cgroup;
-	if (cgrp && cgrp->sli_memlat_stat_percpu) {
+	if (cgrp && cgroup_parent(cgrp)) {
 		this_cpu_inc(cgrp->sli_memlat_stat_percpu->item[sidx][cidx]);
 		if (duration >= threshold) {
 			char *lat_name;
@@ -363,8 +361,7 @@ void sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start)
 			store_task_stack(current, lat_name, duration, 0);
 		}
 
-		if (duration > this_cpu_read(cgrp->sli_memlat_stat_percpu->latency_max[sidx]))
-			this_cpu_write(cgrp->sli_memlat_stat_percpu->latency_max[sidx], duration);
+		this_cpu_add(cgrp->sli_memlat_stat_percpu->latency_max[sidx], duration);
 	}
 	rcu_read_unlock();
 }
@@ -466,7 +463,7 @@ void sli_schedlat_stat(struct task_struct *task, enum sli_schedlat_stat_item sid
 
 	rcu_read_lock();
 	cgrp = get_cgroup_from_task(task);
-	if (cgrp && cgrp->sli_schedlat_stat_percpu) {
+	if (cgrp && cgroup_parent(cgrp)) {
 		this_cpu_inc(cgrp->sli_schedlat_stat_percpu->item[sidx][cidx]);
 		if (delta >= threshold) {
 			char *lat_name;
@@ -475,8 +472,7 @@ void sli_schedlat_stat(struct task_struct *task, enum sli_schedlat_stat_item sid
 			store_task_stack(task, lat_name, delta, 0);
 		}
 
-		if (delta > this_cpu_read(cgrp->sli_schedlat_stat_percpu->latency_max[sidx]))
-			this_cpu_write(cgrp->sli_schedlat_stat_percpu->latency_max[sidx], delta);
+		this_cpu_add(cgrp->sli_schedlat_stat_percpu->latency_max[sidx], delta);
 	}
 	rcu_read_unlock();
 }
@@ -496,7 +492,7 @@ void sli_schedlat_rundelay(struct task_struct *task, struct task_struct *prev, u
 
 	rcu_read_lock();
 	cgrp = get_cgroup_from_task(task);
-	if (cgrp && cgrp->sli_schedlat_stat_percpu) {
+	if (cgrp && cgroup_parent(cgrp)) {
 		this_cpu_inc(cgrp->sli_schedlat_stat_percpu->item[sidx][cidx]);
 		if (delta >= threshold) {
 			int i;
@@ -525,8 +521,7 @@ void sli_schedlat_rundelay(struct task_struct *task, struct task_struct *prev, u
 			kfree(entries);
 		}
 
-		if (delta > this_cpu_read(cgrp->sli_schedlat_stat_percpu->latency_max[sidx]))
-			this_cpu_write(cgrp->sli_schedlat_stat_percpu->latency_max[sidx], delta);
+		this_cpu_add(cgrp->sli_schedlat_stat_percpu->latency_max[sidx], delta);
 	}
 
 out:
@@ -605,17 +600,12 @@ int sli_schedlat_max_show(struct seq_file *m, struct cgroup *cgrp)
 
 	for (sidx = SCHEDLAT_WAIT; sidx < SCHEDLAT_STAT_NR; sidx++) {
 		int cpu;
-		unsigned long latency_max = 0, latency;
+		unsigned long latency_sum = 0;
 
-		for_each_possible_cpu(cpu) {
-			latency = per_cpu_ptr(cgrp->sli_schedlat_stat_percpu, cpu)->latency_max[sidx];
-			per_cpu_ptr(cgrp->sli_schedlat_stat_percpu, cpu)->latency_max[sidx] = 0;
+		for_each_possible_cpu(cpu)
+			latency_sum += per_cpu_ptr(cgrp->sli_schedlat_stat_percpu, cpu)->latency_max[sidx];
 
-			if (latency > latency_max)
-				latency_max = latency;
-		}
-
-		seq_printf(m,"%s: %lu\n", get_schedlat_name(sidx), latency_max);
+		seq_printf(m,"%s: %lu\n", get_schedlat_name(sidx), latency_sum);
 	}
 
 	return 0;
