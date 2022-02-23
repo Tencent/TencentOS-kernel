@@ -11,58 +11,34 @@
 #include <asm/irq_regs.h>
 #include "../sched/sched.h"
 #include <linux/sli.h>
+#include <linux/rculist.h>
 
-#define LINE_SIZE 128
 #define MAX_STACK_TRACE_DEPTH	64
 
-struct member_offset {
-	char member[LINE_SIZE];
-	int  offset;
-};
+static DEFINE_STATIC_KEY_FALSE(sli_enabled);
+static DEFINE_STATIC_KEY_FALSE(sli_monitor_enabled);
 
-struct memlat_thr {
-	u64 global_direct_reclaim_thr;
-	u64 memcg_direct_reclaim_thr;
-	u64 direct_compact_thr;
-	u64 global_direct_swapout_thr;
-	u64 memcg_direct_swapout_thr;
-	u64 direct_swapin_thr;
-	u64 page_alloc_thr;
-};
+static struct sli_event_monitor default_sli_event_monitor;
+static struct workqueue_struct *sli_workqueue;
 
-struct schedlat_thr {
-	u64 schedlat_wait_thr;
-	u64 schedlat_block_thr;
-	u64 schedlat_ioblock_thr;
-	u64 schedlat_sleep_thr;
-	u64 schedlat_rundelay_thr;
-	u64 schedlat_longsys_thr;
-};
+static void sli_event_monitor_init(struct sli_event_monitor *event_monitor, struct cgroup *cgrp)
+{
+	INIT_LIST_HEAD_RCU(&event_monitor->event_head);
 
-static DEFINE_STATIC_KEY_TRUE(sli_no_enabled);
-static struct memlat_thr memlat_threshold;
-static struct schedlat_thr schedlat_threshold;
+	memset(&event_monitor->schedlat_threshold, 0xff, sizeof(event_monitor->schedlat_threshold));
+	memset(&event_monitor->schedlat_count, 0xff, sizeof(event_monitor->schedlat_count));
+	memset(&event_monitor->memlat_threshold, 0xff, sizeof(event_monitor->memlat_threshold));
+	memset(&event_monitor->memlat_count, 0xff, sizeof(event_monitor->memlat_count));
+	memset(&event_monitor->longterm_threshold, 0xff, sizeof(event_monitor->longterm_threshold));
 
-static const struct member_offset memlat_member_offset[] = {
-	{ "global_direct_reclaim_threshold=", offsetof(struct memlat_thr, global_direct_reclaim_thr)},
-	{ "memcg_direct_reclaim_threshold=", offsetof(struct memlat_thr, memcg_direct_reclaim_thr)},
-	{ "direct_compact_threshold=", offsetof(struct memlat_thr, direct_compact_thr)},
-	{ "global_direct_swapout_threshold=", offsetof(struct memlat_thr, global_direct_swapout_thr)},
-	{ "memcg_direct_swapout_threshold=", offsetof(struct memlat_thr, memcg_direct_swapout_thr)},
-	{ "direct_swapin_threshold=", offsetof(struct memlat_thr, direct_swapin_thr)},
-	{ "page_alloc_threshold=", offsetof(struct memlat_thr, page_alloc_thr)},
-	{ },
-};
+	event_monitor->last_update = jiffies;
+	event_monitor->cgrp = cgrp;
+}
 
-static const struct member_offset schedlat_member_offset[] = {
-	{ "schedlat_wait_thr=",offsetof(struct schedlat_thr,schedlat_wait_thr) },
-	{ "schedlat_block_thr=",offsetof(struct schedlat_thr,schedlat_block_thr) },
-	{ "schedlat_ioblock_thr=",offsetof(struct schedlat_thr,schedlat_ioblock_thr) },
-	{ "schedlat_sleep_thr=",offsetof(struct schedlat_thr,schedlat_sleep_thr) },
-	{ "schedlat_rundelay_thr=",offsetof(struct schedlat_thr,schedlat_rundelay_thr) },
-	{ "schedlat_longsys_thr=",offsetof(struct schedlat_thr,schedlat_longsys_thr) },
-	{ },
-};
+static inline struct sli_event_monitor *get_sli_event_monitor(struct cgroup *cgrp)
+{
+	return &default_sli_event_monitor;
+}
 
 static void store_task_stack(struct task_struct *task, char *reason,
 			     u64 duration, unsigned int skipnr)
@@ -93,42 +69,6 @@ static void store_task_stack(struct task_struct *task, char *reason,
 
 	kfree(entries);
 	return;
-}
-
-static u64 get_memlat_threshold(enum sli_memlat_stat_item sidx)
-{
-	long threshold = -1;
-
-	switch (sidx) {
-	case MEM_LAT_GLOBAL_DIRECT_RECLAIM:
-		threshold = memlat_threshold.global_direct_reclaim_thr;
-		break;
-	case MEM_LAT_MEMCG_DIRECT_RECLAIM:
-		threshold = memlat_threshold.memcg_direct_reclaim_thr;
-		break;
-	case MEM_LAT_DIRECT_COMPACT:
-		threshold = memlat_threshold.direct_compact_thr;
-		break;
-	case MEM_LAT_GLOBAL_DIRECT_SWAPOUT:
-		threshold = memlat_threshold.global_direct_swapout_thr;
-		break;
-	case MEM_LAT_MEMCG_DIRECT_SWAPOUT:
-		threshold = memlat_threshold.memcg_direct_swapout_thr;
-		break;
-	case MEM_LAT_DIRECT_SWAPIN:
-		threshold = memlat_threshold.direct_swapin_thr;
-		break;
-	case MEM_LAT_PAGE_ALLOC:
-		threshold = memlat_threshold.page_alloc_thr;
-		break;
-	default:
-		break;
-	}
-
-	if (threshold != -1)
-		threshold = threshold << 20;//ns to ms,2^20=1048576(about 1000000)
-
-	return threshold;
 }
 
 static char * get_memlat_name(enum sli_memlat_stat_item sidx)
@@ -189,39 +129,6 @@ static enum sli_lat_count get_lat_count_idx(u64 duration)
 	return idx;
 }
 
-static u64 get_schedlat_threshold(enum sli_memlat_stat_item sidx)
-{
-	long threshold = -1;
-
-	switch (sidx) {
-	case SCHEDLAT_WAIT:
-		threshold = schedlat_threshold.schedlat_wait_thr;
-		break;
-	case SCHEDLAT_BLOCK:
-		threshold = schedlat_threshold.schedlat_block_thr;
-		break;
-	case SCHEDLAT_IOBLOCK:
-		threshold = schedlat_threshold.schedlat_ioblock_thr;
-		break;
-	case SCHEDLAT_SLEEP:
-		threshold = schedlat_threshold.schedlat_sleep_thr;
-		break;
-	case SCHEDLAT_RUNDELAY:
-		threshold = schedlat_threshold.schedlat_rundelay_thr;
-		break;
-	case SCHEDLAT_LONGSYS:
-		threshold = schedlat_threshold.schedlat_longsys_thr;
-		break;
-	default:
-		break;
-	}
-
-	if (threshold != -1)
-		threshold = threshold << 20;//ms to ns,2^20=1048576(about 1000000)
-
-	return threshold;
-}
-
 static char * get_schedlat_name(enum sli_memlat_stat_item sidx)
 {
 	char *name = NULL;
@@ -272,8 +179,8 @@ int sli_memlat_stat_show(struct seq_file *m, struct cgroup *cgrp)
 {
 	enum sli_memlat_stat_item sidx;
 
-	if (static_branch_likely(&sli_no_enabled)) {
-		seq_printf(m,"sli is not enabled,please echo 1 > /proc/sli/sli_enabled!\n");
+	if (!static_branch_likely(&sli_enabled)) {
+		seq_printf(m, "sli is not enabled, please echo 1 > /proc/sli/sli_enabled\n");
 		return 0;
 	}
 
@@ -281,7 +188,7 @@ int sli_memlat_stat_show(struct seq_file *m, struct cgroup *cgrp)
 		return 0;
 
 	for (sidx = MEM_LAT_GLOBAL_DIRECT_RECLAIM;sidx < MEM_LAT_STAT_NR;sidx++) {
-		seq_printf(m,"%s:\n",get_memlat_name(sidx));
+		seq_printf(m, "%s:\n", get_memlat_name(sidx));
 		seq_printf(m, "0-1ms: %llu\n", sli_memlat_stat_gather(cgrp, sidx, LAT_0_1));
 		seq_printf(m, "1-4ms: %llu\n", sli_memlat_stat_gather(cgrp, sidx, LAT_1_4));
 		seq_printf(m, "4-8ms: %llu\n", sli_memlat_stat_gather(cgrp, sidx, LAT_4_8));
@@ -299,10 +206,8 @@ int sli_memlat_max_show(struct seq_file *m, struct cgroup *cgrp)
 {
 	enum sli_memlat_stat_item sidx;
 
-	if (static_branch_likely(&sli_no_enabled)) {
-		seq_printf(m,"sli is not enabled,please echo 1 > /proc/sli/sli_enabled && "
-				   "echo 1 > /proc/sys/kernel/sched_schedstats\n"
-				  );
+	if (!static_branch_likely(&sli_enabled)) {
+		seq_printf(m, "sli is not enabled, please echo 1 > /proc/sli/sli_enabled\n");
 		return 0;
 	}
 
@@ -316,7 +221,7 @@ int sli_memlat_max_show(struct seq_file *m, struct cgroup *cgrp)
 		for_each_possible_cpu(cpu)
 			latency_sum += per_cpu_ptr(cgrp->sli_memlat_stat_percpu, cpu)->latency_max[sidx];
 
-		seq_printf(m,"%s: %lu\n", get_memlat_name(sidx), latency_sum);
+		seq_printf(m, "%s: %lu\n", get_memlat_name(sidx), latency_sum);
 	}
 
 	return 0;
@@ -324,7 +229,7 @@ int sli_memlat_max_show(struct seq_file *m, struct cgroup *cgrp)
 
 void sli_memlat_stat_start(u64 *start)
 {
-	if (static_branch_likely(&sli_no_enabled))
+	if (!static_branch_likely(&sli_enabled))
 		*start = 0;
 	else
 		*start = local_clock();
@@ -332,196 +237,136 @@ void sli_memlat_stat_start(u64 *start)
 
 void sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start)
 {
-	enum sli_lat_count cidx;
-	u64 duration,threshold;
 	struct mem_cgroup *memcg;
 	struct cgroup *cgrp;
 
-	if (static_branch_likely(&sli_no_enabled) || start == 0)
+	if (!static_branch_likely(&sli_enabled) || start == 0)
 		return;
-
-	duration = local_clock() - start;
-	threshold = get_memlat_threshold(sidx);
-	cidx = get_lat_count_idx(duration);
 
 	rcu_read_lock();
 	memcg = mem_cgroup_from_task(current);
-	if (!memcg || memcg == root_mem_cgroup ) {
-		rcu_read_unlock();
-		return;
-	}
+	if (!memcg || memcg == root_mem_cgroup)
+		goto out;
 
 	cgrp = memcg->css.cgroup;
 	if (cgrp && cgroup_parent(cgrp)) {
+		enum sli_lat_count cidx;
+		u64 duration;
+
+		duration = local_clock() - start;
+		cidx = get_lat_count_idx(duration);
+
+		duration = duration >> 10;
 		this_cpu_inc(cgrp->sli_memlat_stat_percpu->item[sidx][cidx]);
-		if (duration >= threshold) {
-			char *lat_name;
-
-			lat_name = get_memlat_name(sidx);
-			store_task_stack(current, lat_name, duration, 0);
-		}
-
 		this_cpu_add(cgrp->sli_memlat_stat_percpu->latency_max[sidx], duration);
+
+		if (static_branch_unlikely(&sli_monitor_enabled)) {
+			struct sli_event_monitor *event_monitor;
+
+			event_monitor = get_sli_event_monitor(cgrp);
+			if (duration < READ_ONCE(event_monitor->memlat_threshold[sidx]))
+				goto out;
+
+			if (event_monitor->mbuf_enable) {
+				char *lat_name;
+
+				lat_name = get_memlat_name(sidx);
+				store_task_stack(current, lat_name, duration, 0);
+			}
+		}
 	}
+
+out:
 	rcu_read_unlock();
 }
 
-static void sli_memlat_thr_set(u64 value)
-{
-	memlat_threshold.global_direct_reclaim_thr = value;
-	memlat_threshold.memcg_direct_reclaim_thr = value;
-	memlat_threshold.direct_compact_thr       = value;
-	memlat_threshold.global_direct_swapout_thr = value;
-	memlat_threshold.memcg_direct_swapout_thr = value;
-	memlat_threshold.direct_swapin_thr	  = value;
-	memlat_threshold.page_alloc_thr		  = value;
-}
-
-static int sli_memlat_thr_show(struct seq_file *m, void *v)
-{
-	seq_printf(m,"global_direct_reclaim_threshold = %llu ms\n"
-			   "memcg_direct_reclaim_threshold = %llu ms\n"
-			   "direct_compact_threshold       = %llu ms\n"
-			   "global_direct_swapout_threshold = %llu ms\n"
-			   "memcg_direct_swapout_threshold = %llu ms\n"
-			   "direct_swapin_threshold        = %llu ms\n"
-			   "page_alloc_threshold	   = %llu ms\n",
-			   memlat_threshold.global_direct_reclaim_thr,
-			   memlat_threshold.memcg_direct_reclaim_thr,
-			   memlat_threshold.direct_compact_thr,
-			   memlat_threshold.global_direct_swapout_thr,
-			   memlat_threshold.memcg_direct_swapout_thr,
-			   memlat_threshold.direct_swapin_thr,
-			   memlat_threshold.page_alloc_thr
-			   );
-
-	return 0;
-}
-
-static int sli_memlat_thr_open(struct inode *inode, struct file *filp)
-{
-	return single_open(filp, sli_memlat_thr_show, NULL);
-}
-
-static ssize_t sli_memlat_thr_write(struct file *file, 
-		const char __user *buf, size_t count, loff_t *offs)
-{
-	char line[LINE_SIZE];
-	u64 value;
-	char *ptr;
-	int i = 0;
-
-	memset(line, 0, LINE_SIZE);
-
-	count = min_t(size_t, count, LINE_SIZE - 1);
-
-	if (strncpy_from_user(line, buf, count) < 0)
-		return -EINVAL;
-
-	if (strlen(line) < 1)
-		return -EINVAL;
-
-	if (!kstrtou64(line, 0, &value)) {
-		sli_memlat_thr_set(value);
-		return count;
-	}
-
-	for ( ; memlat_member_offset[i].member ; i++) {
-		int lenstr = strlen(memlat_member_offset[i].member);
-
-		ptr = strnstr(line, memlat_member_offset[i].member, lenstr);
-		if (lenstr && ptr) {
-			if (kstrtou64(ptr+lenstr, 0, &value))
-				return -EINVAL;
-
-			*((u64 *)((char *)&memlat_threshold + memlat_member_offset[i].offset)) = value;
-			return count;
-		}
-	}
-
-	return -EINVAL;
-}
-
-static const struct file_operations sli_memlat_thr_fops = {
-	.open		= sli_memlat_thr_open,
-	.read		= seq_read,
-	.write		= sli_memlat_thr_write,
-	.release	= single_release,
-};
-
 void sli_schedlat_stat(struct task_struct *task, enum sli_schedlat_stat_item sidx, u64 delta)
 {
-	enum sli_lat_count cidx;
 	struct cgroup *cgrp = NULL;
-	u64 threshold;
 
-	if (static_branch_likely(&sli_no_enabled) || !task)
+	if (!static_branch_likely(&sli_enabled) || !task)
 		return;
-
-	threshold = get_schedlat_threshold(sidx);
-	cidx = get_lat_count_idx(delta);
 
 	rcu_read_lock();
 	cgrp = get_cgroup_from_task(task);
 	if (cgrp && cgroup_parent(cgrp)) {
+		enum sli_lat_count cidx = get_lat_count_idx(delta);
+
+		delta = delta >> 10;
 		this_cpu_inc(cgrp->sli_schedlat_stat_percpu->item[sidx][cidx]);
-		if (delta >= threshold) {
-			char *lat_name;
-
-			lat_name = get_schedlat_name(sidx);
-			store_task_stack(task, lat_name, delta, 0);
-		}
-
 		this_cpu_add(cgrp->sli_schedlat_stat_percpu->latency_max[sidx], delta);
+
+		if (static_branch_unlikely(&sli_monitor_enabled)) {
+			struct sli_event_monitor *event_monitor;
+
+			event_monitor = get_sli_event_monitor(cgrp);
+			if (delta < READ_ONCE(event_monitor->schedlat_threshold[sidx]))
+				goto out;
+
+			if (event_monitor->mbuf_enable) {
+				char *lat_name;
+
+				lat_name = get_schedlat_name(sidx);
+				store_task_stack(task, lat_name, delta, 0);
+			}
+		}
 	}
+
+out:
 	rcu_read_unlock();
 }
 
 void sli_schedlat_rundelay(struct task_struct *task, struct task_struct *prev, u64 delta)
 {
-	enum sli_lat_count cidx;
 	enum sli_schedlat_stat_item sidx = SCHEDLAT_RUNDELAY;
 	struct cgroup *cgrp = NULL;
-	u64 threshold;
 
-	if (static_branch_likely(&sli_no_enabled) || !task || !prev)
+	if (!static_branch_likely(&sli_enabled) || !task || !prev)
 		return;
-
-	threshold = get_schedlat_threshold(sidx);
-	cidx = get_lat_count_idx(delta);
 
 	rcu_read_lock();
 	cgrp = get_cgroup_from_task(task);
 	if (cgrp && cgroup_parent(cgrp)) {
-		this_cpu_inc(cgrp->sli_schedlat_stat_percpu->item[sidx][cidx]);
-		if (delta >= threshold) {
-			int i;
-			unsigned long *entries;
-			unsigned nr_entries = 0;
-			unsigned long flags;
+		enum sli_lat_count cidx = get_lat_count_idx(delta);
 
-			entries = kmalloc_array(MAX_STACK_TRACE_DEPTH, sizeof(*entries),
-						GFP_ATOMIC);
-			if (!entries)
+		delta = delta >> 10;
+		this_cpu_inc(cgrp->sli_schedlat_stat_percpu->item[sidx][cidx]);
+		this_cpu_add(cgrp->sli_schedlat_stat_percpu->latency_max[sidx], delta);
+
+		if (static_branch_unlikely(&sli_monitor_enabled)) {
+			struct sli_event_monitor *event_monitor;
+
+			event_monitor = get_sli_event_monitor(cgrp);
+			if (delta < READ_ONCE(event_monitor->schedlat_threshold[sidx]))
 				goto out;
 
-			nr_entries = stack_trace_save_tsk(prev, entries,
-							  MAX_STACK_TRACE_DEPTH, 0);
+			if (event_monitor->mbuf_enable) {
+				int i;
+				unsigned long *entries;
+				unsigned int nr_entries = 0;
+				unsigned long flags;
 
-			spin_lock_irqsave(&cgrp->cgrp_mbuf_lock, flags);
+				entries = kmalloc_array(MAX_STACK_TRACE_DEPTH, sizeof(*entries),
+							GFP_ATOMIC);
+				if (!entries)
+					goto out;
 
-			mbuf_print(cgrp, "record reason:schedlat_rundelay next_comm:%s "
-				   "next_pid:%d prev_comm:%s prev_pid:%d duration=%lld\n",
-				   task->comm, task->pid, prev->comm, prev->pid, delta);
+				nr_entries = stack_trace_save_tsk(prev, entries,
+								  MAX_STACK_TRACE_DEPTH, 0);
 
-			for (i = 0; i < nr_entries; i++)
-		                mbuf_print(cgrp, "[<0>] %pB\n", (void *)entries[i]);
+				spin_lock_irqsave(&cgrp->cgrp_mbuf_lock, flags);
 
-			spin_unlock_irqrestore(&cgrp->cgrp_mbuf_lock, flags);
-			kfree(entries);
+				mbuf_print(cgrp, "record reason:schedlat_rundelay next_comm:%s "
+					   "next_pid:%d prev_comm:%s prev_pid:%d duration=%lld\n",
+					   task->comm, task->pid, prev->comm, prev->pid, delta);
+
+				for (i = 0; i < nr_entries; i++)
+					mbuf_print(cgrp, "[<0>] %pB\n", (void *)entries[i]);
+
+				spin_unlock_irqrestore(&cgrp->cgrp_mbuf_lock, flags);
+				kfree(entries);
+			}
 		}
-
-		this_cpu_add(cgrp->sli_schedlat_stat_percpu->latency_max[sidx], delta);
 	}
 
 out:
@@ -533,7 +378,7 @@ void sli_check_longsys(struct task_struct *tsk)
 {
 	long delta;
 
-	if (static_branch_likely(&sli_no_enabled))
+	if (!static_branch_likely(&sli_enabled))
 		return;
 
 	if (!tsk || tsk->sched_class != &fair_sched_class)
@@ -561,15 +406,6 @@ void sli_check_longsys(struct task_struct *tsk)
 }
 
 #endif
-static void sli_schedlat_thr_set(u64 value)
-{
-	schedlat_threshold.schedlat_wait_thr = value;
-	schedlat_threshold.schedlat_block_thr = value;
-	schedlat_threshold.schedlat_ioblock_thr = value;
-	schedlat_threshold.schedlat_sleep_thr = value;
-	schedlat_threshold.schedlat_rundelay_thr = value;
-	schedlat_threshold.schedlat_longsys_thr = value;
-}
 
 static u64 sli_schedlat_stat_gather(struct cgroup *cgrp,
 				 enum sli_schedlat_stat_item sidx,
@@ -588,10 +424,8 @@ int sli_schedlat_max_show(struct seq_file *m, struct cgroup *cgrp)
 {
 	enum sli_schedlat_stat_item sidx;
 
-	if (static_branch_likely(&sli_no_enabled)) {
-		seq_printf(m,"sli is not enabled,please echo 1 > /proc/sli/sli_enabled && "
-				   "echo 1 > /proc/sys/kernel/sched_schedstats\n"
-				  );
+	if (!static_branch_likely(&sli_enabled)) {
+		seq_printf(m, "sli is not enabled, please echo 1 > /proc/sli/sli_enabled\n");
 		return 0;
 	}
 
@@ -605,7 +439,7 @@ int sli_schedlat_max_show(struct seq_file *m, struct cgroup *cgrp)
 		for_each_possible_cpu(cpu)
 			latency_sum += per_cpu_ptr(cgrp->sli_schedlat_stat_percpu, cpu)->latency_max[sidx];
 
-		seq_printf(m,"%s: %lu\n", get_schedlat_name(sidx), latency_sum);
+		seq_printf(m, "%s: %lu\n", get_schedlat_name(sidx), latency_sum);
 	}
 
 	return 0;
@@ -615,10 +449,8 @@ int sli_schedlat_stat_show(struct seq_file *m, struct cgroup *cgrp)
 {
 	enum sli_schedlat_stat_item sidx;
 
-	if (static_branch_likely(&sli_no_enabled)) {
-		seq_printf(m,"sli is not enabled,please echo 1 > /proc/sli/sli_enabled && "
-				   "echo 1 > /proc/sys/kernel/sched_schedstats\n"
-				  );
+	if (!static_branch_likely(&sli_enabled)) {
+		seq_printf(m, "sli is not enabled, please echo 1 > /proc/sli/sli_enabled\n");
 		return 0;
 	}
 
@@ -626,7 +458,7 @@ int sli_schedlat_stat_show(struct seq_file *m, struct cgroup *cgrp)
 		return 0;
 
 	for (sidx = SCHEDLAT_WAIT;sidx < SCHEDLAT_STAT_NR;sidx++) {
-		seq_printf(m,"%s:\n",get_schedlat_name(sidx));
+		seq_printf(m, "%s:\n", get_schedlat_name(sidx));
 		seq_printf(m, "0-1ms: %llu\n", sli_schedlat_stat_gather(cgrp, sidx, LAT_0_1));
 		seq_printf(m, "1-4ms: %llu\n", sli_schedlat_stat_gather(cgrp, sidx, LAT_1_4));
 		seq_printf(m, "4-8ms: %llu\n", sli_schedlat_stat_gather(cgrp, sidx, LAT_4_8));
@@ -640,79 +472,9 @@ int sli_schedlat_stat_show(struct seq_file *m, struct cgroup *cgrp)
 	return 0;
 }
 
-static int sli_schedlat_thr_show(struct seq_file *m, void *v)
-{
-	seq_printf(m,"schedlat_wait_thr = %llu ms\n"
-			   "schedlat_block_thr = %llu ms\n"
-			   "schedlat_ioblock_thr = %llu ms\n"
-			   "schedlat_sleep_thr = %llu ms\n"
-			   "schedlat_rundelay_thr = %llu ms\n"
-			   "schedlat_longsys_thr = %llu ms\n",
-			   schedlat_threshold.schedlat_wait_thr,
-			   schedlat_threshold.schedlat_block_thr,
-			   schedlat_threshold.schedlat_ioblock_thr,
-			   schedlat_threshold.schedlat_sleep_thr,
-			   schedlat_threshold.schedlat_rundelay_thr,
-			   schedlat_threshold.schedlat_longsys_thr
-			   );
-
-	return 0;
-}
-
-static int sli_schedlat_thr_open(struct inode *inode, struct file *filp)
-{
-	return single_open(filp, sli_schedlat_thr_show, NULL);
-}
-
-static ssize_t sli_schedlat_thr_write(struct file *file, 
-		const char __user *buf, size_t count, loff_t *offs)
-{
-	char line[LINE_SIZE];
-	u64 value;
-	char *ptr;
-	int i = 0;
-
-	memset(line, 0, LINE_SIZE);
-
-	count = min_t(size_t, count, LINE_SIZE - 1);
-
-	if (strncpy_from_user(line, buf, count) < 0)
-		return -EINVAL;
-
-	if (strlen(line) < 1)
-		return -EINVAL;
-
-	if (!kstrtou64(line, 0, &value)) {
-		sli_schedlat_thr_set(value);
-		return count;
-	}
-
-	for ( ; schedlat_member_offset[i].member ; i++) {
-		int lenstr = strlen(schedlat_member_offset[i].member);
-
-		ptr = strnstr(line, schedlat_member_offset[i].member, lenstr);
-		if (lenstr && ptr) {
-			if (kstrtou64(ptr+lenstr, 0, &value))
-				return -EINVAL;
-
-			*((u64 *)((char *)&schedlat_threshold + schedlat_member_offset[i].offset)) = value;
-			return count;
-		}
-	}
-
-	return -EINVAL;
-}
-
-static const struct file_operations sli_schedlat_thr_fops = {
-	.open		= sli_schedlat_thr_open,
-	.read		= seq_read,
-	.write		= sli_schedlat_thr_write,
-	.release	= single_release,
-};
-
 static int sli_enabled_show(struct seq_file *m, void *v)
 {
-	seq_printf(m, "%d\n", !static_key_enabled(&sli_no_enabled));
+	seq_printf(m, "%d\n", static_key_enabled(&sli_enabled));
 	return 0;
 }
 
@@ -739,10 +501,12 @@ static ssize_t sli_enabled_write(struct file *file, const char __user *ubuf,
 
 	switch (val) {
 	case '0':
-		static_branch_enable(&sli_no_enabled);
+		if (static_key_enabled(&sli_enabled))
+			static_branch_disable(&sli_enabled);
 		break;
 	case '1':
-		static_branch_disable(&sli_no_enabled);
+		if (!static_key_enabled(&sli_enabled))
+			static_branch_enable(&sli_enabled);
 		break;
 	default:
 		ret = -EINVAL;
@@ -792,13 +556,14 @@ void sli_cgroup_free(struct cgroup *cgroup)
 
 static int __init sli_proc_init(void)
 {
-	/* default threshhold is the max value of u64 */
-	sli_memlat_thr_set(-1);
-	sli_schedlat_thr_set(-1);
+	sli_event_monitor_init(&default_sli_event_monitor, NULL);
+	sli_workqueue = alloc_workqueue("events_unbound", WQ_UNBOUND, WQ_UNBOUND_MAX_ACTIVE);
+	if (!sli_workqueue) {
+		printk(KERN_ERR "Create sli workqueue failed!\n");
+		return -1;
+	}
 	proc_mkdir("sli", NULL);
 	proc_create("sli/sli_enabled", 0, NULL, &sli_enabled_fops);
-	proc_create("sli/memory_latency_threshold", 0, NULL, &sli_memlat_thr_fops);
-	proc_create("sli/sched_latency_threshold", 0, NULL, &sli_schedlat_thr_fops);
 	return 0;
 }
 

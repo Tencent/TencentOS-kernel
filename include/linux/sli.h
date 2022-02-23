@@ -47,6 +47,56 @@ struct sli_schedlat_stat {
 	unsigned long item[SCHEDLAT_STAT_NR][LAT_COUNT_NR];
 };
 
+enum sli_event_type {
+	SLI_SCHED_EVENT,
+	SLI_MEM_EVENT,
+	SLI_LONGTERM_EVENT,
+	SLI_EVENT_NR
+};
+
+/*
+ * Longterm event is the contiguous event statistic. Sli will
+ * collect all the data(such as irqtime in the interrupt) during
+ * the samping period(rather than based on the number of times which
+ * over the threshold). It will help us to find the interference that
+ * is small but contiguous(it may still affect the performance).
+ */
+enum sli_longterm_event {
+	SLI_LONGTERM_RUNDELAY,
+	SLI_LONGTERM_IRQTIME,
+	SLI_LONGTERM_NR
+};
+
+struct sli_event {
+	struct list_head event_node;
+	struct rcu_head rcu;
+
+	int event_type;
+	int event_id;
+};
+
+struct sli_event_monitor {
+	struct list_head event_head;
+	struct work_struct sli_event_work;
+	struct cgroup *cgrp;
+
+	int period;
+	int mbuf_enable;
+	int overrun;
+	unsigned long long last_update;
+
+	unsigned long long schedlat_threshold[SCHEDLAT_STAT_NR];
+	unsigned long long schedlat_count[SCHEDLAT_STAT_NR];
+	atomic_long_t schedlat_statistics[SCHEDLAT_STAT_NR];
+
+	unsigned long long memlat_threshold[MEM_LAT_STAT_NR];
+	unsigned long long memlat_count[MEM_LAT_STAT_NR];
+	atomic_long_t memlat_statistics[MEM_LAT_STAT_NR];
+
+	unsigned long long longterm_threshold[SLI_LONGTERM_NR];
+	atomic_long_t longterm_statistics[SLI_LONGTERM_NR];
+};
+
 int  sli_cgroup_alloc(struct cgroup *cgroup);
 void sli_cgroup_free(struct cgroup *cgroup);
 void sli_memlat_stat_start(u64 *start);
