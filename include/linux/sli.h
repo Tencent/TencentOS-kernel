@@ -31,14 +31,14 @@ enum sli_schedlat_stat_item {
 	SCHEDLAT_BLOCK,
 	SCHEDLAT_IOBLOCK,
 	SCHEDLAT_SLEEP,
-	SCHEDLAT_RUNDELAY,
 	SCHEDLAT_LONGSYS,
+	SCHEDLAT_RUNDELAY,
 	SCHEDLAT_IRQTIME,
 	SCHEDLAT_STAT_NR
 };
 
 struct sli_memlat_stat {
-	unsigned long latency_max[SCHEDLAT_STAT_NR];
+	unsigned long latency_max[MEM_LAT_STAT_NR];
 	unsigned long item[MEM_LAT_STAT_NR][LAT_COUNT_NR];
 };
 
@@ -80,6 +80,7 @@ struct sli_event_monitor {
 	struct work_struct sli_event_work;
 	struct cgroup *cgrp;
 
+	/* The minimum value is 1 tick */
 	int period;
 	int mbuf_enable;
 	int overrun;
@@ -107,6 +108,9 @@ void sli_schedlat_stat(struct task_struct *task,enum sli_schedlat_stat_item sidx
 void sli_schedlat_rundelay(struct task_struct *task, struct task_struct *prev, u64 delta);
 int  sli_schedlat_stat_show(struct seq_file *m, struct cgroup *cgrp);
 int  sli_schedlat_max_show(struct seq_file *m, struct cgroup *cgrp);
+ssize_t cgroup_sli_control_write(struct kernfs_open_file *of, char *buf,
+				 size_t nbytes, loff_t off);
+int cgroup_sli_control_show(struct seq_file *sf, void *v);
 #ifdef CONFIG_SCHED_INFO
 void sli_check_longsys(struct task_struct *tsk);
 #else

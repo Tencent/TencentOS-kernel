@@ -696,6 +696,9 @@ static inline union kernfs_node_id *cgroup_get_kernfs_id(struct cgroup *cgrp)
 
 void cgroup_path_from_kernfs_id(const union kernfs_node_id *id,
 					char *buf, size_t buflen);
+
+bool cgroup_need_sli(struct cgroup *cgrp);
+
 #else /* !CONFIG_CGROUPS */
 
 struct cgroup_subsys_state;

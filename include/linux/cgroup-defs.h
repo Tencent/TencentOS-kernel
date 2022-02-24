@@ -497,6 +497,9 @@ struct cgroup {
 	/* sched latency stat */
 	struct sli_schedlat_stat __percpu *sli_schedlat_stat_percpu;
 
+	/* proactive event monitoring structure for cgroup */
+	struct sli_event_monitor *cgrp_event_monitor;
+
 	spinlock_t cgrp_mbuf_lock;
 
 	/* ids of the ancestors at each level including self */

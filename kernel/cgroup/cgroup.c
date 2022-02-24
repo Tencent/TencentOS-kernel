@@ -5145,6 +5145,11 @@ static struct cftype cgroup_base_files[] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = cgroup_sli_max_show,
 	},
+	{
+		.name = "sli.control",
+		.write = cgroup_sli_control_write,
+		.seq_show = cgroup_sli_control_show,
+	},
 	{ }	/* terminate */
 };
 
@@ -5469,13 +5474,9 @@ static struct cgroup *cgroup_create(struct cgroup *parent)
 	if (ret)
 		goto out_idr_free;
 
-	ret = sli_cgroup_alloc(cgrp);
-	if (ret)
-		goto out_psi_free;
-
 	ret = cgroup_bpf_inherit(cgrp);
 	if (ret)
-		goto out_sli_free;
+		goto out_psi_free;
 
 	/*
 	 * New cgroup inherits effective freeze counter, and
@@ -5541,8 +5542,6 @@ static struct cgroup *cgroup_create(struct cgroup *parent)
 
 	return cgrp;
 
-out_sli_free:
-	sli_cgroup_free(cgrp);
 out_psi_free:
 	psi_cgroup_free(cgrp);
 out_idr_free:
@@ -5586,35 +5585,27 @@ fail:
  */
 static inline bool cgroup_need_mbuf(struct cgroup *cgrp)
 {
-	if (cgroup_on_dfl(cgrp)){
-#if IS_ENABLED(CONFIG_CGROUP_SCHED)
-		if (cgroup_css(cgrp, cgroup_subsys[cpu_cgrp_id]))
-			return true;
-#endif
+	if (cgroup_on_dfl(cgrp))
+		return true;
 
-#if IS_ENABLED(CONFIG_BLK_CGROUP)
-		if (cgroup_css(cgrp, cgroup_subsys[io_cgrp_id]))
-			return true;
+#if IS_ENABLED(CONFIG_CGROUP_CPUACCT)
+	if (cgroup_css(cgrp, cgroup_subsys[cpuacct_cgrp_id]))
+		return true;
 #endif
 
 #if IS_ENABLED(CONFIG_MEMCG)
-		if (cgroup_css(cgrp, cgroup_subsys[memory_cgrp_id]))
-			return true;
-#endif
-
-#if IS_ENABLED(CONFIG_CGROUP_NET_CLASSID)
-		if (cgroup_css(cgrp, cgroup_subsys[net_cls_cgrp_id]))
-			return true;
-#endif
-	} else
-#if IS_ENABLED(CONFIG_CGROUP_CPUACCT)
-		if (cgroup_css(cgrp, cgroup_subsys[cpuacct_cgrp_id]))
-			return true;
+	if (cgroup_css(cgrp, cgroup_subsys[memory_cgrp_id]))
+		return true;
 #endif
 
 	return false;
 }
 
+/* Wrap the mbuf and export to the include file */
+bool cgroup_need_sli(struct cgroup *cgrp)
+{
+	return cgroup_need_mbuf(cgrp);
+}
 
 int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
 {
@@ -5663,6 +5654,10 @@ int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
 		goto out_destroy;
 
 	ret = cgroup_apply_control_enable(cgrp);
+	if (ret)
+		goto out_destroy;
+
+	ret = sli_cgroup_alloc(cgrp);
 	if (ret)
 		goto out_destroy;
 
