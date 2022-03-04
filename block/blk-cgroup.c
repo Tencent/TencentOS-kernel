@@ -721,7 +721,9 @@ static void blkcg_dkstats_seqf_print(struct blkcg *blkcg, struct hd_struct *hd,
 	char buf[BDEVNAME_SIZE];
 	unsigned long rd_nsecs = blkcg_part_stat_read(blkcg, hd, nsecs[READ]);
 	unsigned long wr_nsecs = blkcg_part_stat_read(blkcg, hd, nsecs[WRITE]);
+	struct request_queue *q = part_to_disk(hd)->queue;
 
+	sync_io_ticks(hd, blk_queue_quiesced(q) || part_in_flight(q, hd) > 0);
 	seq_printf(seqf, "%4d %7d %s %lu %lu %lu "
 		   "%u %lu %lu %lu %u %u %u %u %u %u\n",
 		   MAJOR(part_devt(hd)), MINOR(part_devt(hd)),

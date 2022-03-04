@@ -348,6 +348,7 @@ static inline int init_part_stats(struct hd_struct *part)
 	part->dkstats = alloc_percpu(struct disk_stats);
 	if (!part->dkstats)
 		return 0;
+	part->stamp = jiffies - 1;
 	return 1;
 }
 
@@ -436,6 +437,7 @@ static inline void free_part_info(struct hd_struct *part)
 }
 
 void update_io_ticks(struct hd_struct *part, unsigned long now, bool end);
+void sync_io_ticks(struct hd_struct *part, bool busy);
 
 /* block/genhd.c */
 extern void device_add_disk(struct device *parent, struct gendisk *disk,
