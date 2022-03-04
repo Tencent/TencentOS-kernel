@@ -111,9 +111,5 @@ int  sli_schedlat_max_show(struct seq_file *m, struct cgroup *cgrp);
 ssize_t cgroup_sli_control_write(struct kernfs_open_file *of, char *buf,
 				 size_t nbytes, loff_t off);
 int cgroup_sli_control_show(struct seq_file *sf, void *v);
-#ifdef CONFIG_SCHED_INFO
-void sli_check_longsys(struct task_struct *tsk);
-#else
-static void sli_check_longsys(struct task_struct *tsk){};
-#endif
+void sli_update_tick(struct task_struct *tsk);
 #endif /*_LINUX_SLI_H*/

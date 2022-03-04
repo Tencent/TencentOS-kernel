@@ -64,6 +64,7 @@ static const char *sanity_check_abbr[] = {
 	"mbuf_enable="
 };
 
+static void sli_proactive_monitor_work(struct work_struct *work);
 static unsigned long sli_get_longterm_statistics(struct cgroup *cgrp,
 						 enum sli_longterm_event event_id);
 
@@ -85,6 +86,7 @@ static inline u64 sli_convert_value(u64 value, bool control_show)
 static void sli_event_monitor_init(struct sli_event_monitor *event_monitor, struct cgroup *cgrp)
 {
 	INIT_LIST_HEAD_RCU(&event_monitor->event_head);
+	INIT_WORK(&event_monitor->sli_event_work, sli_proactive_monitor_work);
 
 	memset(&event_monitor->schedlat_threshold, 0xff, sizeof(event_monitor->schedlat_threshold));
 	memset(&event_monitor->schedlat_count, 0xff, sizeof(event_monitor->schedlat_count));
@@ -420,6 +422,8 @@ void sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start)
 			if (duration < READ_ONCE(event_monitor->memlat_threshold[sidx]))
 				goto out;
 
+			atomic_long_inc(&event_monitor->memlat_statistics[sidx]);
+
 			if (event_monitor->mbuf_enable) {
 				char *lat_name;
 
@@ -454,6 +458,8 @@ void sli_schedlat_stat(struct task_struct *task, enum sli_schedlat_stat_item sid
 
 			if (delta < READ_ONCE(event_monitor->schedlat_threshold[sidx]))
 				goto out;
+
+			atomic_long_inc(&event_monitor->schedlat_statistics[sidx]);
 
 			if (event_monitor->mbuf_enable) {
 				char *lat_name;
@@ -490,6 +496,8 @@ void sli_schedlat_rundelay(struct task_struct *task, struct task_struct *prev, u
 
 			if (delta < READ_ONCE(event_monitor->schedlat_threshold[sidx]))
 				goto out;
+
+			atomic_long_inc(&event_monitor->schedlat_statistics[sidx]);
 
 			if (event_monitor->mbuf_enable) {
 				int i;
@@ -529,10 +537,7 @@ void sli_check_longsys(struct task_struct *tsk)
 {
 	long delta;
 
-	if (!static_branch_likely(&sli_enabled))
-		return;
-
-	if (!tsk || tsk->sched_class != &fair_sched_class)
+	if (tsk->sched_class != &fair_sched_class)
 		return ;
 
 	/* Longsys is performed only when TIF_RESCHED is set */
@@ -547,16 +552,114 @@ void sli_check_longsys(struct task_struct *tsk)
 	    tsk->sched_info.task_switch != (tsk->nvcsw + tsk->nivcsw) ||
 	    tsk->utime != tsk->sched_info.utime) {
 		tsk->sched_info.utime = tsk->utime;
-		tsk->sched_info.kernel_exec_start = rq_clock(this_rq());
+		tsk->sched_info.kernel_exec_start = rq_clock(task_rq(tsk));
 		tsk->sched_info.task_switch = tsk->nvcsw + tsk->nivcsw;
 		return;
 	}
 
-	delta = rq_clock(this_rq()) - tsk->sched_info.kernel_exec_start;
+	delta = rq_clock(task_rq(tsk)) - tsk->sched_info.kernel_exec_start;
 	sli_schedlat_stat(tsk, SCHEDLAT_LONGSYS, delta);
 }
-
 #endif
+
+static void sli_proactive_monitor_work(struct work_struct *work)
+{
+	struct sli_event *event;
+	struct sli_event_monitor *event_monitor = container_of(work, struct sli_event_monitor,
+							       sli_event_work);
+
+	rcu_read_lock();
+
+	list_for_each_entry_rcu(event, &event_monitor->event_head, event_node) {
+		u64 statistics;
+
+		switch (event->event_type) {
+		case SLI_SCHED_EVENT:
+			atomic_long_set(&event_monitor->schedlat_statistics[event->event_id], 0);
+			break;
+		case SLI_MEM_EVENT:
+			atomic_long_set(&event_monitor->memlat_statistics[event->event_id], 0);
+			break;
+		case SLI_LONGTERM_EVENT:
+			statistics = sli_get_longterm_statistics(event_monitor->cgrp,
+								 event->event_id);
+
+			atomic_long_set(&event_monitor->longterm_statistics[event->event_id],
+					statistics);
+			break;
+		default:
+			break;
+		}
+	}
+
+	rcu_read_unlock();
+	css_put(&event_monitor->cgrp->self);
+}
+
+void sli_update_tick(struct task_struct *tsk)
+{
+	struct cgroup *cgrp;
+
+	if (!static_branch_likely(&sli_monitor_enabled))
+		return;
+
+#ifdef CONFIG_SCHED_INFO
+	sli_check_longsys(tsk);
+#endif
+
+	rcu_read_lock();
+
+	cgrp = get_cgroup_from_task(tsk);
+	if (cgrp && cgroup_parent(cgrp)) {
+		bool ret;
+		int period;
+		unsigned long long old_value, last_update;
+
+		period = cgrp->cgrp_event_monitor->period;
+		if (!period)
+			goto unlock;
+
+retry:
+		last_update = READ_ONCE(cgrp->cgrp_event_monitor->last_update);
+		if (time_after((unsigned long)(period + last_update), jiffies))
+			goto unlock;
+
+		old_value = cmpxchg(&cgrp->cgrp_event_monitor->last_update,
+				    last_update, jiffies);
+		if (old_value != last_update)
+			goto retry;
+
+		/*
+		 * Current jiffies should be somewhere between period and 8 * period,
+		 * otherwise we consider the it is overrun and should be abandoned.
+		 */
+		if (time_before((unsigned long)((period << 3) + last_update), jiffies))
+			cgrp->cgrp_event_monitor->overrun = 1;
+
+		rcu_read_unlock();
+
+		ret = css_tryget(&cgrp->self);
+		if (!ret)
+			return;
+
+		/*
+		 * The sli trace work may have a lot a work to do, and should send
+		 * the event to polling tasks. So we don't do the work in interrupt
+		 * context(put the work to the workqueue).
+		 */
+		ret = queue_work(sli_workqueue, &cgrp->cgrp_event_monitor->sli_event_work);
+		/*
+		 * If work had been pushed to workqueue and not been executed, there is no
+		 * need to push it again. So we must put the css refcount.
+		 */
+		if (!ret)
+			css_put(&cgrp->self);
+		return;
+	}
+
+unlock:
+	rcu_read_unlock();
+}
 
 static u64 sli_schedlat_stat_gather(struct cgroup *cgrp,
 				 enum sli_schedlat_stat_item sidx,
