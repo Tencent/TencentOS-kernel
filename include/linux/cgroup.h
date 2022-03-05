@@ -26,7 +26,7 @@
 #include <linux/kernel_stat.h>
 
 #include <linux/cgroup-defs.h>
-
+#include <linux/sli.h>
 #ifdef CONFIG_CGROUPS
 
 /*

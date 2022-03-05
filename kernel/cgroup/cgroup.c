@@ -5031,6 +5031,36 @@ out_unlock:
 	return ret ?: nbytes;
 }
 
+static int cgroup_sli_monitor_open(struct kernfs_open_file *of)
+{
+	return sli_monitor_open(of);
+}
+
+static void *cgroup_sli_monitor_start(struct seq_file *s, loff_t *pos)
+{
+	return sli_monitor_start(s, pos);
+}
+
+static int cgroup_sli_monitor_show(struct seq_file *seq, void *v)
+{
+	return sli_monitor_show(seq, v);
+}
+
+static void *cgroup_sli_monitor_next(struct seq_file *s, void *v, loff_t *pos)
+{
+	return sli_monitor_next(s, v, pos);
+}
+
+static void cgroup_sli_monitor_stop(struct seq_file *seq, void *v)
+{
+	sli_monitor_stop(seq, v);
+}
+
+static __poll_t cgroup_sli_monitor_poll(struct kernfs_open_file *of, poll_table *pt)
+{
+	return sli_monitor_poll(of, pt);
+}
+
 /* cgroup core interface files for the default hierarchy */
 static struct cftype cgroup_base_files[] = {
 	{
@@ -5149,6 +5179,16 @@ static struct cftype cgroup_base_files[] = {
 		.name = "sli.control",
 		.write = cgroup_sli_control_write,
 		.seq_show = cgroup_sli_control_show,
+	},
+	{
+		.name = "sli.monitor",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.open = cgroup_sli_monitor_open,
+		.seq_show = cgroup_sli_monitor_show,
+		.seq_start = cgroup_sli_monitor_start,
+		.seq_next = cgroup_sli_monitor_next,
+		.seq_stop = cgroup_sli_monitor_stop,
+		.poll = cgroup_sli_monitor_poll,
 	},
 	{ }	/* terminate */
 };
@@ -5664,6 +5704,9 @@ int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
 	if(sysctl_qos_mbuf_enable && cgroup_need_mbuf(cgrp))
 		cgrp->mbuf = mbuf_slot_alloc(cgrp);
 
+	if (cgroup_need_mbuf(cgrp))
+		cgrp->sctx = sctx_alloc();
+
 	TRACE_CGROUP_PATH(mkdir, cgrp);
 
 	/* let's create and online css's */
@@ -5849,6 +5892,8 @@ static int cgroup_destroy_locked(struct cgroup *cgrp)
 	if (cgrp->mbuf)
 		mbuf_free(cgrp);
 
+	if (cgrp->sctx)
+		sctx_free(cgrp);
 	/* put the base reference */
 	percpu_ref_kill(&cgrp->self.refcnt);
 

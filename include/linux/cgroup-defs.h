@@ -500,6 +500,8 @@ struct cgroup {
 	/* proactive event monitoring structure for cgroup */
 	struct sli_event_monitor *cgrp_event_monitor;
 
+	/* sli notify info */
+	struct sli_notify_ctx *sctx;
 	spinlock_t cgrp_mbuf_lock;
 
 	/* ids of the ancestors at each level including self */

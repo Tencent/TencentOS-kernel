@@ -1058,6 +1058,201 @@ int cgroup_sli_control_show(struct seq_file *sf, void *v)
 	return 0;
 }
 
+/* sli monitor function*/
+struct sli_notify_ctx* sctx_alloc(void)
+{
+	struct sli_notify_ctx *sctx;
+
+	sctx = kzalloc(sizeof(struct sli_notify_ctx), GFP_KERNEL);
+	if (sctx) {
+		/* Do init work */
+		init_waitqueue_head(&sctx->wqh);
+		spin_lock_init(&sctx->notify_lock);
+	}
+
+	return sctx;
+}
+
+void sctx_free(struct cgroup *cgrp)
+{
+	if (cgrp->sctx) {
+		kfree(cgrp->sctx);
+		cgrp->sctx = NULL;
+	}
+}
+
+static int sli_monitor_exchange(struct sli_notify_event *tnotify_event,
+				struct sli_notify_event *snotify_event)
+{
+	memcpy(tnotify_event->notify_vector, snotify_event->notify_vector,
+	       sizeof(struct sli_notify_event));
+	memset(snotify_event->notify_vector, 0, sizeof(struct sli_notify_event));
+
+	return 0;
+}
+
+int sli_monitor_open(struct kernfs_open_file *of)
+{
+	struct file *filp = of->file;
+	int ret = 0;
+
+	filp->f_mode &= FMODE_READ;
+
+	if (!filp->f_mode & FMODE_READ)
+		ret = -EINVAL;
+
+	return ret;
+}
+
+static inline void notify_event_print(struct seq_file *seq,
+				      struct sli_notify_event *notify_event,
+				      u32 event_type, u32 levent_max)
+{
+	int index;
+	u32 count;
+
+	for (index = 0; index < levent_max; index++) {
+		count = notify_event->notify_vector[event_type][index];
+		/*
+		 * Only print when event count > 0, print format:
+		 * event_type event_item event_count
+		 */
+		if (count > 0)
+			seq_printf(seq, "%u %u %u\n", event_type, index, count);
+	}
+}
+
+int sli_monitor_show(struct seq_file *seq, void *v)
+{
+	struct cgroup *cgrp = seq_css(seq)->cgroup;
+	struct sli_notify_event notify_event;
+	unsigned long flags;
+	int i = 0;
+
+	if (cgrp && cgrp->sctx) {
+
+		spin_lock_irqsave(&cgrp->sctx->notify_lock, flags);
+		sli_monitor_exchange(&notify_event, &cgrp->sctx->notify_event);
+		spin_unlock_irqrestore(&cgrp->sctx->notify_lock, flags);
+
+		for (i = 0; i < SLI_EVENT_NR; i++)
+			notify_event_print(seq, &notify_event, i, SLI_ITEM_MAX);
+	}
+
+	return 0;
+}
+
+void *sli_monitor_start(struct seq_file *s, loff_t *pos)
+{
+	return  NULL + !*pos;
+}
+
+/* seq_next function is necessary for seq_read */
+void *sli_monitor_next(struct seq_file *s, void *v, loff_t *pos)
+{
+	return NULL;
+}
+
+void sli_monitor_stop(struct seq_file *seq, void *v)
+{
+	/* must reset index, so next read can begin from 0 */
+	if (!seq->count)
+		seq->index = 0;
+}
+
+static inline bool is_notify_active(struct sli_notify_event *ne)
+{
+	int index_e;
+	int index_i;
+
+	/* Any sli event count  > 0 will be active */
+	for (index_e = 0; index_e < SLI_EVENT_NR; index_e++) {
+		for (index_i = 0; index_i < SLI_ITEM_MAX; index_i++)
+			if (ne->notify_vector[index_e][index_i] > 0)
+				return true;
+	}
+
+	return false;
+}
+
+__poll_t sli_monitor_poll(struct kernfs_open_file *of,
+			  poll_table *pt)
+{
+	struct cgroup *cgrp = of->kn->parent->priv;
+	struct file *filp = of->file;
+	struct sli_notify_ctx *sctx;
+	__poll_t events = 0;
+	bool active;
+	unsigned long flags;
+
+	sctx = cgrp->sctx;
+	if (!sctx) {
+		pr_err("sli:can not find sctx for cgroup [ %s ]", of->kn->name);
+		return -EINVAL;
+	}
+
+	poll_wait(filp, &sctx->wqh, pt);
+
+	/* Must hold notify_event lock */
+	spin_lock_irqsave(&cgrp->sctx->notify_lock, flags);
+	active = is_notify_active(&sctx->notify_event);
+	spin_unlock_irqrestore(&cgrp->sctx->notify_lock, flags);
+
+	if (active)
+		events |= EPOLLIN;
+
+	return events;
+
+}
+
+int sli_event_add(struct sli_notify_event *notify_event,
+		  u32 event_type, u32 levent, u32 count)
+{
+	int res = 0;
+
+	if (!notify_event) {
+		pr_err("sli: target notify_event is NULL\n");
+		res = -1;
+		goto end;
+	}
+
+	if (event_type >= SLI_EVENT_NR || levent > SLI_ITEM_MAX) {
+		pr_err("sli: invalid sli event type [ %u ] or sli item [ %u ]\n",
+		       event_type, levent);
+		res = -1;
+		goto end;
+	}
+	notify_event->notify_vector[event_type][levent] = count;
+
+end:
+	return res;
+}
+EXPORT_SYMBOL(sli_event_add);
+
+u32 sli_monitor_signal(struct cgroup *cgrp, struct sli_notify_event *notify_event)
+{
+	unsigned long flags;
+	struct sli_notify_ctx *sctx;
+
+	if (!cgrp->sctx) {
+		pr_err("sli:can not find notify info for cgroup:[ %s ]\n", cgrp->kn->name);
+		return 0;
+	}
+
+	sctx = cgrp->sctx;
+
+	spin_lock_irqsave(&sctx->notify_lock, flags);
+	sli_monitor_exchange(&cgrp->sctx->notify_event, notify_event);
+	spin_unlock_irqrestore(&sctx->notify_lock, flags);
+
+	if (waitqueue_active(&sctx->wqh))
+		wake_up_poll(&sctx->wqh, EPOLLIN);
+
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(sli_monitor_signal);
+
 static int sli_enabled_show(struct seq_file *m, void *v)
 {
 	seq_printf(m, "%d\n", static_key_enabled(&sli_enabled));
