@@ -175,7 +175,7 @@ unsigned int vm_pagecache_limit_async __read_mostly = 0;
 unsigned int vm_pagecache_ignore_slab __read_mostly = 1;
 static struct task_struct *kpclimitd = NULL;
 static bool kpclimitd_context = false;
-unsigned int vm_pagecache_limit_global __read_mostly = 1;
+unsigned int vm_pagecache_limit_global __read_mostly = 0;
 /*
  * The total number of pages which are beyond the high watermark within all
  * zones.

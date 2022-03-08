@@ -3437,7 +3437,7 @@ static int mem_cgroup_hierarchy_write(struct cgroup_subsys_state *css,
 
 #define MIN_PAGECACHE_PAGES 16
 
-unsigned int vm_pagecache_limit_retry_times;
+unsigned int vm_pagecache_limit_retry_times __read_mostly = MEM_CGROUP_RECLAIM_RETRIES;
 void mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask)
 {
 	unsigned long pages_used, pages_max, pages_reclaimed, goal_pages_used, pre_used;
