@@ -1474,7 +1474,7 @@ bool mem_cgroup_charge_skmem(struct mem_cgroup *memcg, unsigned int nr_pages);
 void mem_cgroup_uncharge_skmem(struct mem_cgroup *memcg, unsigned int nr_pages);
 #ifdef CONFIG_MEMCG
 
-extern unsigned int vm_pagecache_limit_retry_times __read_mostly;
+extern unsigned int vm_pagecache_limit_retry_times;
 extern void mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask);
 
 extern struct static_key_false memcg_sockets_enabled_key;
