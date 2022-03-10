@@ -76,6 +76,8 @@ struct mem_cgroup *root_mem_cgroup __read_mostly;
 
 #define MEM_CGROUP_RECLAIM_RETRIES	5
 #define DEFAULT_PAGE_RECLAIM_RATIO	5
+#define PAGECACHE_MAX_RATIO_MIN 5
+#define PAGECACHE_MAX_RATIO_MAX 100
 
 /* Socket memory accounting disabled? */
 static bool cgroup_memory_nosocket;
@@ -3443,8 +3445,13 @@ void mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask)
 	unsigned long pages_used, pages_max, pages_reclaimed, goal_pages_used, pre_used;
 	unsigned int retry_times = 0;
 	unsigned int limit_retry_times;
+	u32 max_ratio;
 
 	if (!memcg || mem_cgroup_is_root(memcg))
+		return;
+
+	max_ratio = READ_ONCE(memcg->pagecache_max_ratio);
+	if (max_ratio == PAGECACHE_MAX_RATIO_MAX)
 		return;
 
 	pages_max = READ_ONCE(memcg->pagecache.max);
@@ -3471,34 +3478,30 @@ void mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask)
 	goal_pages_used = (100 - READ_ONCE(memcg->pagecache_reclaim_ratio)) * pages_max / 100;
 	goal_pages_used = max_t(unsigned long, MIN_PAGECACHE_PAGES, goal_pages_used);
 
-	if (pages_used > pages_max) {
+	if (pages_used > pages_max)
 		memcg_memory_event(memcg, MEMCG_PAGECACHE_MAX);
-		while (pages_used > goal_pages_used) {
-			if (fatal_signal_pending(current))
-				break;
 
-			pre_used = pages_used;
-			pages_reclaimed = shrink_page_cache_memcg(gfp_mask, memcg, pages_used - goal_pages_used);
+	while (pages_used > goal_pages_used) {
+		if (fatal_signal_pending(current))
+			break;
 
-			if (limit_retry_times == 0)
-				goto next_shrink;
+		pre_used = pages_used;
+		pages_reclaimed = shrink_page_cache_memcg(gfp_mask, memcg, pages_used - goal_pages_used);
 
-			if (pages_reclaimed == 0) {
-				congestion_wait(BLK_RW_ASYNC, HZ/10);
-				retry_times++;
-			} else
-				retry_times = 0;
+		if (pages_reclaimed == 0) {
+			congestion_wait(BLK_RW_ASYNC, HZ/10);
+			retry_times++;
+		} else
+			retry_times = 0;
 
-			if (retry_times > limit_retry_times) {
-				memcg_memory_event(memcg, MEMCG_PAGECACHE_OOM);
-				mem_cgroup_out_of_memory(memcg, GFP_KERNEL, 0);
-				break;
-			}
-
-next_shrink:
-			pages_used = page_counter_read(&memcg->pagecache);
-			cond_resched();
+		if (retry_times > limit_retry_times) {
+			memcg_memory_event(memcg, MEMCG_PAGECACHE_OOM);
+			mem_cgroup_out_of_memory(memcg, GFP_KERNEL, 0);
+			break;
 		}
+
+		pages_used = page_counter_read(&memcg->pagecache);
+		cond_resched();
 	}
 }
 
@@ -3528,9 +3531,12 @@ static ssize_t pagecache_reclaim_ratio_write(struct kernfs_open_file *of,
 
 	if ((reclaim_ratio > 0) && (reclaim_ratio < 100)) {
 		memcg->pagecache_reclaim_ratio = reclaim_ratio;
+		mem_cgroup_shrink_pagecache(memcg, GFP_KERNEL);
 		return nbytes;
 	} else if (reclaim_ratio == 100) {
 		nr_pages = page_counter_read(&memcg->pagecache);
+
+		//try reclaim once
 		shrink_page_cache_memcg(GFP_KERNEL, memcg, nr_pages);
 		return nbytes;
 	}
@@ -3572,9 +3578,6 @@ unsigned long mem_cgroup_pagecache_get_reclaim_pages(struct mem_cgroup *memcg)
 	return pages_used > pages_max ? pages_used - goal_pages_used : 0;
 }
 
-#define PAGECACHE_MAX_RATIO_MIN 5
-#define PAGECACHE_MAX_RATIO_MAX 100
-
 static void pagecache_set_limit(struct mem_cgroup *memcg)
 {
 	unsigned long max, pre, pages_max;
@@ -3598,7 +3601,6 @@ static ssize_t memory_pagecache_max_write(struct kernfs_open_file *of,
 	if (!buf)
 		return -EINVAL;
 
-	xchg(&memcg->pagecache.max, max);
 	ret = kstrtou64(buf, 0, &max_ratio);
 	if (ret)
 		return ret;
@@ -3614,7 +3616,7 @@ static ssize_t memory_pagecache_max_write(struct kernfs_open_file *of,
 
 	memcg->pagecache_max_ratio = max_ratio;
 	pagecache_set_limit(memcg);
-	max = memcg->pagecache.max;
+	max = READ_ONCE(memcg->pagecache.max);
 
 	for (;;) {
 		unsigned long pages_used = page_counter_read(&memcg->pagecache);
