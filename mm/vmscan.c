@@ -4774,8 +4774,8 @@ void check_move_unevictable_pages(struct pagevec *pvec)
 			del_page_from_lru_list(page, lruvec, LRU_UNEVICTABLE);
 			add_page_to_lru_list(page, lruvec, lru);
 			pgrescued++;
-			SetPageLRU(page);
 		}
+		SetPageLRU(page);
 	}
 
 	if (lruvec) {
