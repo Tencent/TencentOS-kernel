@@ -47,8 +47,7 @@ static const char *memlat_threshold_name[] = {
 	"memlat_direct_compact_threshold=",
 	"memlat_global_direct_swapout_threshold=",
 	"memlat_memcg_direct_swapout_threshold=",
-	"memlat_direct_swapin_threshold=",
-	"memlat_page_alloc_threshold="
+	"memlat_direct_swapin_threshold="
 };
 
 static const char *longterm_threshold_name[] = {
@@ -231,9 +230,6 @@ static char * get_memlat_name(enum sli_memlat_stat_item sidx)
 		break;
 	case MEM_LAT_DIRECT_SWAPIN:
 		name = "memlat_direct_swapin";
-		break;
-	case MEM_LAT_PAGE_ALLOC:
-		name = "memlat_page_alloc";
 		break;
 	default:
 		break;

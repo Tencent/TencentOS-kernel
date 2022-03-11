@@ -9,7 +9,6 @@ enum sli_memlat_stat_item {
 	MEM_LAT_GLOBAL_DIRECT_SWAPOUT,	/* global direct swapout latency */
 	MEM_LAT_MEMCG_DIRECT_SWAPOUT,	/* memcg direct swapout latency */
 	MEM_LAT_DIRECT_SWAPIN,		/* direct swapin latency */
-	MEM_LAT_PAGE_ALLOC,		/* latency of page alloc */
 	MEM_LAT_STAT_NR,
 };
 
