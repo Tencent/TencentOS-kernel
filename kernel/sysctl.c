@@ -134,6 +134,8 @@ extern int max_softirq_accel_mask;
 static int sixty = 60;
 #endif
 
+extern unsigned int sysctl_allow_memcg_migrate_ignore_blkio_bind;
+
 static int __maybe_unused neg_one = -1;
 static int __maybe_unused two = 2;
 static int __maybe_unused four = 4;
@@ -1466,6 +1468,15 @@ static struct ctl_table kern_table[] = {
 		.proc_handler   = proc_dointvec_minmax,
 		.extra1         = SYSCTL_ZERO,
 		.extra2         = SYSCTL_ONE,
+	},
+	{
+		.procname	= "allow_memcg_migrate_ignore_blkio_bind",
+		.data		= &sysctl_allow_memcg_migrate_ignore_blkio_bind,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
 	},
 	{
 		.procname	= "qos_mbuf_enable",
