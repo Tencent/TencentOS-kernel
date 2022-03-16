@@ -69,6 +69,7 @@
 #include <linux/mount.h>
 #include <linux/userfaultfd_k.h>
 #include <linux/trackgpu.h>
+#include <linux/blkdev.h>
 
 #include "../lib/kstrtox.h"
 
@@ -1471,6 +1472,15 @@ static struct ctl_table kern_table[] = {
 		.data		= &sysctl_qos_mbuf_enable,
 		.maxlen		= sizeof(int),
 		.mode		= 0600,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+	{
+		.procname	= "io_qos",
+		.data		= &sysctl_io_qos_enabled,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= SYSCTL_ONE,

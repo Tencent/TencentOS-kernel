@@ -1846,4 +1846,5 @@ static inline void blk_wake_io_task(struct task_struct *waiter)
 		wake_up_process(waiter);
 }
 
+extern unsigned int sysctl_io_qos_enabled;
 #endif
