@@ -5406,14 +5406,14 @@ static ssize_t mem_cgroup_bind_blkio_write(struct kernfs_open_file *of,
 		memcg->bind_blkio_path = NULL;
 		css_put(memcg->bind_blkio);
 		memcg->bind_blkio = NULL;
+
+		wb_memcg_offline(memcg);
+		INIT_LIST_HEAD(&memcg->cgwb_list);
 	}
 
 	if (!strnlen(buf, PATH_MAX)) {
 		mutex_unlock(&memcg_max_mutex);
 		kfree(pbuf);
-
-		wb_memcg_offline(memcg);
-		INIT_LIST_HEAD(&memcg->cgwb_list);
 		return nbytes;
 	}
 
