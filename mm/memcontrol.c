@@ -5390,6 +5390,9 @@ static ssize_t mem_cgroup_bind_blkio_write(struct kernfs_open_file *of,
 	char *pbuf;
 	int ret;
 
+	if (!sysctl_io_qos_enabled)
+		return -EPERM;
+
 	buf = strstrip(buf);
 
 	/* alloc memory outside mutex */
