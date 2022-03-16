@@ -340,6 +340,10 @@ struct mem_cgroup {
 	struct deferred_split deferred_split_queue;
 #endif
 
+	/* attach a blkio with memcg for cgroup v1 */
+	struct cgroup_subsys_state *bind_blkio;
+	char *bind_blkio_path;
+
 	struct mem_cgroup_per_node *nodeinfo[0];
 	/* WARNING: nodeinfo must be the last member here */
 };

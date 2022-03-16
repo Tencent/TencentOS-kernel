@@ -536,7 +536,10 @@ static int cgwb_create(struct backing_dev_info *bdi,
 	int ret = 0;
 
 	memcg = mem_cgroup_from_css(memcg_css);
-	blkcg_css = cgroup_get_e_css(memcg_css->cgroup, &io_cgrp_subsys);
+	if (cgroup_subsys_on_dfl(memory_cgrp_subsys))
+		blkcg_css = cgroup_get_e_css(memcg_css->cgroup, &io_cgrp_subsys);
+	else
+		blkcg_css = memcg->bind_blkio ?: blkcg_root_css;
 	blkcg = css_to_blkcg(blkcg_css);
 	memcg_cgwb_list = &memcg->cgwb_list;
 	blkcg_cgwb_list = &blkcg->cgwb_list;
@@ -653,9 +656,14 @@ struct bdi_writeback *wb_get_lookup(struct backing_dev_info *bdi,
 	wb = radix_tree_lookup(&bdi->cgwb_tree, memcg_css->id);
 	if (wb) {
 		struct cgroup_subsys_state *blkcg_css;
+		struct mem_cgroup *memcg;
 
 		/* see whether the blkcg association has changed */
-		blkcg_css = cgroup_get_e_css(memcg_css->cgroup, &io_cgrp_subsys);
+		memcg = mem_cgroup_from_css(memcg_css);
+		if (cgroup_subsys_on_dfl(memory_cgrp_subsys))
+			blkcg_css = cgroup_get_e_css(memcg_css->cgroup, &io_cgrp_subsys);
+		else
+			blkcg_css = memcg->bind_blkio ?: blkcg_root_css;
 		if (unlikely(wb->blkcg_css != blkcg_css || !wb_tryget(wb)))
 			wb = NULL;
 		css_put(blkcg_css);
