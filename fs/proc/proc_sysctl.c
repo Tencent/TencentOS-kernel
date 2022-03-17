@@ -15,6 +15,7 @@
 #include <linux/module.h>
 #include <linux/bpf-cgroup.h>
 #include "internal.h"
+#include <linux/nsproxy.h>
 
 static const struct dentry_operations proc_sys_dentry_operations;
 static const struct file_operations proc_sys_file_operations;
@@ -572,6 +573,46 @@ out:
 	return err;
 }
 
+static ssize_t sysctl_in_forbid_list(struct file *filp, int write)
+{
+	ssize_t error;
+	struct sysctl_restrict_record *sysctl_restrict_entry;
+	char *pathbuf, *full_path;
+
+	/* for host and the containers that shares the network namespace with the host */
+	if (write && (current->nsproxy->net_ns == &init_net)) {
+		pathbuf = kmalloc(PATH_MAX, GFP_KERNEL);
+		if (!pathbuf) {
+			error = -ENOMEM;
+			return error;
+		}
+
+		full_path = file_path(filp, pathbuf, PATH_MAX);
+		if (IS_ERR(full_path)) {
+			error = PTR_ERR(full_path);
+			goto out;
+		}
+
+		rcu_read_lock();
+		list_for_each_entry_rcu(sysctl_restrict_entry, &sysctl_restrict_list, list) {
+			if (strncmp(full_path, sysctl_restrict_entry->procname, PATH_MAX) == 0) {
+				pr_err("sysctl write forbidden: %s\n", sysctl_restrict_entry->procname);
+				rcu_read_unlock();
+				error = -EPERM;
+				goto out;
+			}
+		}
+		rcu_read_unlock();
+
+		kfree(pathbuf);
+	}
+	return 0;
+
+out:
+	kfree(pathbuf);
+	return error;
+}
+
 static ssize_t proc_sys_call_handler(struct file *filp, void __user *buf,
 		size_t count, loff_t *ppos, int write)
 {
@@ -583,6 +624,11 @@ static ssize_t proc_sys_call_handler(struct file *filp, void __user *buf,
 
 	if (IS_ERR(head))
 		return PTR_ERR(head);
+
+	/* whether in the sysctl forbid list set by the user */
+	error = sysctl_in_forbid_list(filp, write);
+	if (error != 0)
+		goto out;
 
 	/*
 	 * At this point we know that the sysctl was not unregistered
