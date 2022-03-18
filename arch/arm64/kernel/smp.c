@@ -101,8 +101,9 @@ static DECLARE_COMPLETION(cpu_running);
 
 int __cpu_up(unsigned int cpu, struct task_struct *idle)
 {
-	int ret;
+	int ret, try;
 	long status;
+	unsigned long jiffies_left, flags;
 
 	/*
 	 * We need to tell the secondary core where to find its stack and the
@@ -122,8 +123,29 @@ int __cpu_up(unsigned int cpu, struct task_struct *idle)
 		 * CPU was successfully started, wait for it to come online or
 		 * time out.
 		 */
-		wait_for_completion_timeout(&cpu_running,
+		jiffies_left = wait_for_completion_timeout(&cpu_running,
 					    msecs_to_jiffies(5000));
+
+		/*
+		 * Try 5000ms again to slove slave core boot fail on altramax platform.
+		 * It needing to disable cpu0's irq >= 5ms each time, which can reduce irq act.
+		 */
+		if (jiffies_left == 0) {
+			complete_acquire(&cpu_running);
+			for (try = 1; try <= 1000; try++) {
+				local_irq_save(flags);
+				mdelay(5);
+				if (completion_done(&cpu_running)) {
+					if (cpu_running.done != UINT_MAX)
+						cpu_running.done--;
+					local_irq_restore(flags);
+					break;
+				}
+				local_irq_restore(flags);
+			}
+			complete_release(&cpu_running);
+			set_current_state(TASK_RUNNING);
+		}
 
 		if (!cpu_online(cpu)) {
 			pr_crit("CPU%u: failed to come online\n", cpu);
