@@ -561,34 +561,77 @@ void sli_check_longsys(struct task_struct *tsk)
 static void sli_proactive_monitor_work(struct work_struct *work)
 {
 	struct sli_event *event;
+	struct sli_notify_event *notify_event;
 	struct sli_event_monitor *event_monitor = container_of(work, struct sli_event_monitor,
 							       sli_event_work);
 
-	rcu_read_lock();
+	notify_event = kzalloc(sizeof(struct sli_notify_event), GFP_KERNEL);
+	if (!notify_event)
+		return;
 
+	rcu_read_lock();
 	list_for_each_entry_rcu(event, &event_monitor->event_head, event_node) {
-		u64 statistics;
+		u64 statistics, last_statistics, threshold;
 
 		switch (event->event_type) {
 		case SLI_SCHED_EVENT:
+			statistics = (u64)atomic_long_read(
+					&event_monitor->schedlat_statistics[event->event_id]);
 			atomic_long_set(&event_monitor->schedlat_statistics[event->event_id], 0);
+
+			if (event_monitor->overrun) {
+				event_monitor->overrun = 0;
+				break;
+			}
+
+			if (statistics >= READ_ONCE(event_monitor->schedlat_count[event->event_id]))
+				sli_event_add(notify_event, event->event_type,
+					      event->event_id, statistics);
 			break;
 		case SLI_MEM_EVENT:
+			statistics = (u64)atomic_long_read(
+					&event_monitor->memlat_statistics[event->event_id]);
 			atomic_long_set(&event_monitor->memlat_statistics[event->event_id], 0);
+
+			if (event_monitor->overrun) {
+				event_monitor->overrun = 0;
+				break;
+			}
+
+			if (statistics >= READ_ONCE(event_monitor->memlat_count[event->event_id]))
+				sli_event_add(notify_event, event->event_type,
+					      event->event_id, statistics);
 			break;
 		case SLI_LONGTERM_EVENT:
 			statistics = sli_get_longterm_statistics(event_monitor->cgrp,
 								 event->event_id);
 
+			last_statistics = atomic_long_read(
+					&event_monitor->longterm_statistics[event->event_id]);
 			atomic_long_set(&event_monitor->longterm_statistics[event->event_id],
 					statistics);
+
+			if (event_monitor->overrun) {
+				event_monitor->overrun = 0;
+				break;
+			}
+
+			threshold = READ_ONCE(event_monitor->longterm_threshold[event->event_id]);
+			/* Deal with time wrapping correclty */
+			if ((long)(statistics - last_statistics - threshold) >= 0)
+				sli_event_add(notify_event, event->event_type,
+					      event->event_id, (int)(statistics - last_statistics));
 			break;
 		default:
 			break;
 		}
 	}
-
 	rcu_read_unlock();
+
+	/* Notify the userspace that the monitoring event had arrived */
+	sli_monitor_signal(event_monitor->cgrp, notify_event);
+
+	kfree(notify_event);
 	css_put(&event_monitor->cgrp->self);
 }
 
