@@ -410,6 +410,16 @@ static struct cftype files[] = {
 		.write = cgroup_sli_control_write,
 		.seq_show = cgroup_sli_control_show,
 	},
+	{
+		.name = "sli.monitor",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.open = cgroup_sli_monitor_open,
+		.seq_show = cgroup_sli_monitor_show,
+		.seq_start = cgroup_sli_monitor_start,
+		.seq_next = cgroup_sli_monitor_next,
+		.seq_stop = cgroup_sli_monitor_stop,
+		.poll = cgroup_sli_monitor_poll,
+	},
 	{ }	/* terminate */
 };
 

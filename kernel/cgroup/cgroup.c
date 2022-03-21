@@ -5031,32 +5031,32 @@ out_unlock:
 	return ret ?: nbytes;
 }
 
-static int cgroup_sli_monitor_open(struct kernfs_open_file *of)
+int cgroup_sli_monitor_open(struct kernfs_open_file *of)
 {
 	return sli_monitor_open(of);
 }
 
-static void *cgroup_sli_monitor_start(struct seq_file *s, loff_t *pos)
+void *cgroup_sli_monitor_start(struct seq_file *s, loff_t *pos)
 {
 	return sli_monitor_start(s, pos);
 }
 
-static int cgroup_sli_monitor_show(struct seq_file *seq, void *v)
+int cgroup_sli_monitor_show(struct seq_file *seq, void *v)
 {
 	return sli_monitor_show(seq, v);
 }
 
-static void *cgroup_sli_monitor_next(struct seq_file *s, void *v, loff_t *pos)
+void *cgroup_sli_monitor_next(struct seq_file *s, void *v, loff_t *pos)
 {
 	return sli_monitor_next(s, v, pos);
 }
 
-static void cgroup_sli_monitor_stop(struct seq_file *seq, void *v)
+void cgroup_sli_monitor_stop(struct seq_file *seq, void *v)
 {
 	sli_monitor_stop(seq, v);
 }
 
-static __poll_t cgroup_sli_monitor_poll(struct kernfs_open_file *of, poll_table *pt)
+__poll_t cgroup_sli_monitor_poll(struct kernfs_open_file *of, poll_table *pt)
 {
 	return sli_monitor_poll(of, pt);
 }
