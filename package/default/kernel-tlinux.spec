@@ -618,6 +618,7 @@ echo -e "Remove \"%{tagged_name}%{?dist}\" Done."
 # files ########################################################################
 %defattr(-,root,root)
 %if 0%{?rhel} == 7
+%ghost /boot/initramfs-%{tagged_name}%{?dist}
 /boot/vmlinuz-%{tagged_name}%{?dist}
 /boot/System.map-%{tagged_name}%{?dist}
 /boot/config-%{tagged_name}%{?dist}
