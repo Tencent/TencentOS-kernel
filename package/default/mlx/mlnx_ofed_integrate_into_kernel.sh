@@ -192,12 +192,12 @@ function handle_rpms_all()
 	done
 }
 
-__cleanup()
-{
-	sed -i '/__os_install_post/d' ~/.rpmmacros
-	sed -i '/__brp_mangle_shebangs/d' ~/.rpmmacros
-}
-trap '__cleanup' INT TERM ERR EXIT
+#__cleanup()
+#{
+#	sed -i '/__os_install_post/d' ~/.rpmmacros
+#	sed -i '/__brp_mangle_shebangs/d' ~/.rpmmacros
+#}
+#trap '__cleanup' INT TERM ERR EXIT
 
 ############################################################################
 
@@ -215,7 +215,7 @@ echo "This MLNX_OFED was built for distro: ${distro}"
 
 #this will cause error in chroot environment
 #echo "%__os_install_post %{nil}" >> ~/.rpmmacros
-echo "%__brp_mangle_shebangs %{nil}" >> ~/.rpmmacros
+#echo "%__brp_mangle_shebangs %{nil}" >> ~/.rpmmacros
 
 # compile modules against target kernel
 ./mlnxofedinstall \
@@ -228,8 +228,8 @@ echo "%__brp_mangle_shebangs %{nil}" >> ~/.rpmmacros
 	--skip-distro-check \
 	--skip-repo ${mlnxofedinstall_flags}
 
-sed -i '/__os_install_post/d' ~/.rpmmacros
-sed -i '/__brp_mangle_shebangs/d' ~/.rpmmacros
+#sed -i '/__os_install_post/d' ~/.rpmmacros
+#sed -i '/__brp_mangle_shebangs/d' ~/.rpmmacros
 
 # fix permissiosn
 chown -R ${USER} ${TMPD}

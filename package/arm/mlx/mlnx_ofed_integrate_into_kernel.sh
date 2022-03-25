@@ -214,7 +214,7 @@ distro=$(cat distro 2>/dev/null)
 echo "This MLNX_OFED was built for distro: ${distro}"
 
 #this will cause error in chroot environment
-#echo "%__os_install_post %{nil}" >> ~/.rpmmacros
+echo "%__os_install_post %{nil}" >> ~/.rpmmacros
 echo "%__brp_mangle_shebangs %{nil}" >> ~/.rpmmacros
 
 # compile modules against target kernel
