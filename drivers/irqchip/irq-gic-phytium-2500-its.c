@@ -1183,6 +1183,24 @@ static int its_cpumask_select(struct its_device *its_dev,
     cpu = cpumask_any_and(mask_val, cpu_mask);
     cpus = cpus + cpu % skt_cpu_cnt[skt_id];
 
+    if (is_kdump_kernel()) {
+         skt = (cpu_logical_map(cpu) >> 16) & 0xff;
+
+         if (skt_id == skt)
+              return cpu;
+
+         for (i = 0; i < nr_cpu_ids; i++) {
+              skt = (cpu_logical_map(i) >> 16) & 0xff;
+
+              if ((skt >= 0) && (skt < MAX_MARS3_SKT_COUNT)) {
+                   if(skt_id == skt)
+                        return i;
+              } else if (0xff != skt) {
+                   pr_err("socket address: %d is out of range.", skt);
+              }
+         }
+    }
+
     return cpus;
 }
 
@@ -2084,6 +2102,10 @@ static void its_free_pending_table(struct page *pt)
  */
 static bool enabled_lpis_allowed(void)
 {
+	/* Allow a kdump kernel */
+	if (is_kdump_kernel())
+		return true;
+
 	phys_addr_t addr;
 	u64 val;
 
@@ -2687,6 +2709,24 @@ static int its_cpumask_first(struct its_device *its_dev,
     cpu = cpumask_first(cpu_mask);
     if ((cpu > cpus) && (cpu < (cpus + skt_cpu_cnt[skt_id]))) {
         cpus = cpu;
+    }
+
+    if (is_kdump_kernel()) {
+         skt = (cpu_logical_map(cpu) >> 16) & 0xff;
+
+         if (skt_id == skt)
+              return cpu;
+
+         for (i = 0; i < nr_cpu_ids; i++) {
+              skt = (cpu_logical_map(i) >> 16) & 0xff;
+
+              if ((skt >= 0) && (skt < MAX_MARS3_SKT_COUNT)) {
+                   if (skt_id == skt)
+                        return i;
+              } else if (0xff != skt) {
+                   pr_err("socket address: %d is out of range.", skt);
+              }
+         }
     }
 
     return cpus;
