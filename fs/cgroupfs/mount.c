@@ -270,7 +270,7 @@ int cgroupfs_readdir(struct file *file, struct dir_context *ctx)
 static const struct file_operations cgroupfs_dir_operations = {
 	.llseek			= generic_file_llseek,
 	.read			= generic_read_dir,
-	.iterate_shared	= cgroupfs_readdir,
+	.iterate_shared		= cgroupfs_readdir,
 };
 
 struct inode *cgroupfs_get_inode(cgroupfs_entry_t *en)
@@ -286,6 +286,7 @@ struct inode *cgroupfs_get_inode(cgroupfs_entry_t *en)
 	inode->i_op = en->e_iops;
 	inode->i_fop = en->e_fops;
 	inode->i_private = en;
+	inode->i_ino = en->inum;
 	return inode;
 }
 
