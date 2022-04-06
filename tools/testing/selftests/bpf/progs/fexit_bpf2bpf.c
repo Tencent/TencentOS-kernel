@@ -1,47 +1,43 @@
 // SPDX-License-Identifier: GPL-2.0
 /* Copyright (c) 2019 Facebook */
+#include <linux/stddef.h>
+#include <linux/if_ether.h>
+#include <linux/ipv6.h>
 #include <linux/bpf.h>
-#include "bpf_helpers.h"
+#include <linux/tcp.h>
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
+#include <bpf/bpf_tracing.h>
 
 struct sk_buff {
 	unsigned int len;
 };
 
-struct args {
-	struct sk_buff *skb;
-	ks32 ret;
-};
-static volatile __u64 test_result;
+__u64 test_result = 0;
 SEC("fexit/test_pkt_access")
-int test_main(struct args *ctx)
+int BPF_PROG(test_main, struct sk_buff *skb, int ret)
 {
-	struct sk_buff *skb = ctx->skb;
 	int len;
 
 	__builtin_preserve_access_index(({
 		len = skb->len;
 	}));
-	if (len != 74 || ctx->ret != 0)
+	if (len != 74 || ret != 0)
 		return 0;
 	test_result = 1;
 	return 0;
 }
 
-struct args_subprog1 {
-	struct sk_buff *skb;
-	ks32 ret;
-};
-static volatile __u64 test_result_subprog1;
+__u64 test_result_subprog1 = 0;
 SEC("fexit/test_pkt_access_subprog1")
-int test_subprog1(struct args_subprog1 *ctx)
+int BPF_PROG(test_subprog1, struct sk_buff *skb, int ret)
 {
-	struct sk_buff *skb = ctx->skb;
 	int len;
 
 	__builtin_preserve_access_index(({
 		len = skb->len;
 	}));
-	if (len != 74 || ctx->ret != 148)
+	if (len != 74 || ret != 148)
 		return 0;
 	test_result_subprog1 = 1;
 	return 0;
@@ -62,10 +58,10 @@ int test_subprog1(struct args_subprog1 *ctx)
  * instead of accurate types.
  */
 struct args_subprog2 {
-	ku64 args[5];
-	ku64 ret;
+	__u64 args[5];
+	__u64 ret;
 };
-static volatile __u64 test_result_subprog2;
+__u64 test_result_subprog2 = 0;
 SEC("fexit/test_pkt_access_subprog2")
 int test_subprog2(struct args_subprog2 *ctx)
 {
@@ -77,7 +73,7 @@ int test_subprog2(struct args_subprog2 *ctx)
 			      __builtin_preserve_access_index(&skb->len));
 
 	ret = ctx->ret;
-	/* bpf_prog_load() loads "test_pkt_access.o" with BPF_F_TEST_RND_HI32
+	/* bpf_prog_test_load() loads "test_pkt_access.o" with BPF_F_TEST_RND_HI32
 	 * which randomizes upper 32 bits after BPF_ALU32 insns.
 	 * Hence after 'w0 <<= 1' upper bits of $rax are random.
 	 * That is expected and correct. Trim them.
@@ -88,4 +84,5 @@ int test_subprog2(struct args_subprog2 *ctx)
 	test_result_subprog2 = 1;
 	return 0;
 }
+
 char _license[] SEC("license") = "GPL";
