@@ -21,7 +21,7 @@ BPF_GCC		?= $(shell command -v bpf-gcc;)
 CFLAGS += -g -Wall -O2 -I$(APIDIR) -I$(LIBDIR) -I$(BPFDIR) -I$(GENDIR) $(GENFLAGS) -I../../../include \
 	  -Dbpf_prog_load=bpf_prog_test_load \
 	  -Dbpf_load_program=bpf_test_load_program
-LDLIBS += -lcap -lelf -lrt -lpthread
+LDLIBS += -lz -lcap -lelf -lrt -lpthread
 
 # Order correspond to 'make run_tests' order
 TEST_GEN_PROGS = test_verifier test_tag test_maps test_lru_map test_lpm_map test_progs \
@@ -148,7 +148,7 @@ $(shell $(1) -v -E - </dev/null 2>&1 \
 $(shell $(1) -dM -E - </dev/null | grep '#define __riscv_xlen ' | sed 's/#define /-D/' | sed 's/ /=/')
 endef
 CLANG_SYS_INCLUDES = $(call get_sys_includes,$(CLANG))
-BPF_CFLAGS = -I. -I./include/uapi -I../../../include/uapi \
+BPF_CFLAGS = -I. -I./include/uapi -I../../../include/uapi -I$(LIBDIR) \
 	     -I$(OUTPUT)/../usr/include -D__TARGET_ARCH_$(SRCARCH)
 
 CLANG_CFLAGS = $(CLANG_SYS_INCLUDES) \
