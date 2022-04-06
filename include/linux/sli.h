@@ -99,6 +99,9 @@ struct sli_event_monitor {
 
 	unsigned long long longterm_threshold[SLI_LONGTERM_NR];
 	atomic_long_t longterm_statistics[SLI_LONGTERM_NR];
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 };
 
 struct sli_notify_event {
@@ -111,6 +114,9 @@ struct sli_notify_ctx {
 	spinlock_t notify_lock;
 	struct sli_notify_event notify_event;
 	wait_queue_head_t wqh;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 };
 
 int  sli_cgroup_alloc(struct cgroup *cgroup);

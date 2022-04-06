@@ -29,6 +29,9 @@ struct sli_event_control {
 	int mbuf_enable;
 	unsigned long long count;
 	unsigned long long threshold;
+
+	KABI_RESERVE(1);
+	KABI_RESERVE(2);
 };
 
 static const char *schedlat_theshold_name[] = {
