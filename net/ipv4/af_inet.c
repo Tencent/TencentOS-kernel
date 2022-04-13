@@ -184,6 +184,12 @@ static int inet_autobind(struct sock *sk)
 			release_sock(sk);
 			return -EAGAIN;
 		}
+		if (BPF_CGROUP_RUN_PROG_INET_POST_AUTOBIND(sk)) {
+			if (sk->sk_prot->put_port)
+				sk->sk_prot->put_port(sk);
+			release_sock(sk);
+			return -EAGAIN;
+		}
 		inet->inet_sport = htons(inet->inet_num);
 	}
 	release_sock(sk);
@@ -231,7 +237,12 @@ int inet_listen(struct socket *sock, int backlog)
 		err = inet_csk_listen_start(sk, backlog);
 		if (err)
 			goto out;
-		tcp_call_bpf(sk, BPF_SOCK_OPS_TCP_LISTEN_CB, 0, NULL);
+		err = tcp_call_bpf(sk, BPF_SOCK_OPS_TCP_LISTEN_CB, 0, NULL);
+		if (err == SOCK_OPS_RET_REJECT) {
+			tcp_set_state(sk, TCP_CLOSE);
+			err = -EPERM;
+			goto out;
+		}
 	}
 	err = 0;
 
@@ -530,6 +541,8 @@ int __inet_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len,
 		err = BPF_CGROUP_RUN_PROG_INET4_POST_BIND(sk);
 		if (err) {
 			inet->inet_saddr = inet->inet_rcv_saddr = 0;
+			if (sk->sk_prot->put_port)
+				sk->sk_prot->put_port(sk);
 			goto out_release_sock;
 		}
 	}

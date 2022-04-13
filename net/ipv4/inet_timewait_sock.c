@@ -12,6 +12,7 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/module.h>
+#include <linux/bpf-cgroup.h>
 #include <net/inet_hashtables.h>
 #include <net/inet_timewait_sock.h>
 #include <net/ip.h>
@@ -46,6 +47,9 @@ static void inet_twsk_kill(struct inet_timewait_sock *tw)
 	struct inet_hashinfo *hashinfo = tw->tw_dr->hashinfo;
 	spinlock_t *lock = inet_ehash_lockp(hashinfo, tw->tw_hash);
 	struct inet_bind_hashbucket *bhead;
+
+	BPF_CGROUP_RUN_PROG_TW_CLOSE((struct sock *)tw);
+	cgroup_sk_free(&tw->tw_cgrp_data);
 
 	spin_lock(lock);
 	sk_nulls_del_node_init_rcu((struct sock *)tw);
@@ -184,6 +188,8 @@ struct inet_timewait_sock *inet_twsk_alloc(const struct sock *sk,
 		tw->tw_ipv6only	    = 0;
 		tw->tw_transparent  = inet->transparent;
 		tw->tw_prot	    = sk->sk_prot_creator;
+		tw->tw_cgrp_data    = sk->sk_cgrp_data;
+		cgroup_sk_clone(&tw->tw_cgrp_data);
 		atomic64_set(&tw->tw_cookie, atomic64_read(&sk->sk_cookie));
 		twsk_net_set(tw, sock_net(sk));
 		timer_setup(&tw->tw_timer, tw_timer_handler, TIMER_PINNED);

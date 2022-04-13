@@ -106,6 +106,9 @@ int __cgroup_bpf_run_filter_skb(struct sock *sk,
 int __cgroup_bpf_run_filter_sk(struct sock *sk,
 			       enum bpf_attach_type type);
 
+int __cgroup_bpf_run_filter_twsk(struct sock *sk,
+				 enum bpf_attach_type type);
+
 int __cgroup_bpf_run_filter_sock_addr(struct sock *sk,
 				      struct sockaddr *uaddr,
 				      enum bpf_attach_type type,
@@ -196,6 +199,15 @@ int bpf_percpu_cgroup_storage_update(struct bpf_map *map, void *key,
 	__ret;								       \
 })
 
+#define BPF_CGROUP_RUN_TWSK_PROG(sk, type)			\
+({								\
+	int __ret = 0;						\
+	if (cgroup_bpf_enabled) {				\
+		__ret = __cgroup_bpf_run_filter_twsk(sk, type);	\
+	}							\
+	__ret;							\
+})
+
 #define BPF_CGROUP_RUN_PROG_INET_SOCK(sk)				       \
 	BPF_CGROUP_RUN_SK_PROG(sk, BPF_CGROUP_INET_SOCK_CREATE)
 
@@ -204,6 +216,15 @@ int bpf_percpu_cgroup_storage_update(struct bpf_map *map, void *key,
 
 #define BPF_CGROUP_RUN_PROG_INET6_POST_BIND(sk)				       \
 	BPF_CGROUP_RUN_SK_PROG(sk, BPF_CGROUP_INET6_POST_BIND)
+
+#define BPF_CGROUP_RUN_PROG_INET_POST_AUTOBIND(sk)			\
+	BPF_CGROUP_RUN_SK_PROG(sk, BPF_CGROUP_INET_POST_AUTOBIND)
+
+#define BPF_CGROUP_RUN_PROG_TW_CLOSE(sk)				\
+	BPF_CGROUP_RUN_TWSK_PROG(sk, BPF_CGROUP_TWSK_CLOSE)
+
+#define BPF_CGROUP_RUN_PROG_UDP_UNHASH(sk)			\
+	BPF_CGROUP_RUN_SK_PROG(sk, BPF_CGROUP_UDP_UNHASH)
 
 #define BPF_CGROUP_RUN_SA_PROG(sk, uaddr, type)				       \
 ({									       \
@@ -386,6 +407,9 @@ static inline int bpf_percpu_cgroup_storage_update(struct bpf_map *map,
 #define BPF_CGROUP_RUN_PROG_INET6_BIND(sk, uaddr) ({ 0; })
 #define BPF_CGROUP_RUN_PROG_INET4_POST_BIND(sk) ({ 0; })
 #define BPF_CGROUP_RUN_PROG_INET6_POST_BIND(sk) ({ 0; })
+#define BPF_CGROUP_RUN_PROG_TW_CLOSE(sk) ({ 0; })
+#define BPF_CGROUP_RUN_PROG_UDP_UNHASH(sk) ({ 0; })
+#define BPF_CGROUP_RUN_PROG_INET_POST_AUTOBIND(sk) ({ 0; })
 #define BPF_CGROUP_RUN_PROG_INET4_CONNECT(sk, uaddr) ({ 0; })
 #define BPF_CGROUP_RUN_PROG_INET4_CONNECT_LOCK(sk, uaddr) ({ 0; })
 #define BPF_CGROUP_RUN_PROG_INET6_CONNECT(sk, uaddr) ({ 0; })

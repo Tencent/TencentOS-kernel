@@ -1,17 +1,15 @@
 #ifndef __LINUX_CGROUPFS_H
 #define __LINUX_CGROUPFS_H
-enum cgroupfs_file_type{
-	CGROUPFS_TYPE_MEMINFO,
-	CGROUPFS_TYPE_CPUINFO,
-	CGROUPFS_TYPE_STAT,
-	CGROUPFS_TYPE_UPTIME,
-	CGROUPFS_TYPE_LOADAVG,
-	CGROUPFS_TYPE_DKSTATS,
-	CGROUPFS_TYPE_VMSTAT,
-	CGROUPFS_TYPE_CPUDIR,
-	CGROUPFS_TYPE_NORMAL_DIR,
-	CGROUPFS_TYPE_LAST,
-};
+#define CGROUPFS_TYPE_MEMINFO		(1 << 0)
+#define CGROUPFS_TYPE_CPUINFO		(1 << 1)
+#define CGROUPFS_TYPE_STAT		(1 << 2)
+#define CGROUPFS_TYPE_UPTIME		(1 << 3)
+#define CGROUPFS_TYPE_LOADAVG		(1 << 4)
+#define CGROUPFS_TYPE_DKSTATS		(1 << 5)
+#define CGROUPFS_TYPE_VMSTAT		(1 << 6)
+#define CGROUPFS_TYPE_CPUDIR		(1 << 7)
+#define CGROUPFS_TYPE_NORMAL_DIR	(1 << 8)
+#define CGROUPFS_TYPE_AUTO_MOUNT	(1 << 9)
 
 typedef struct cgroupfs_entry {
 	struct rb_root subdir;
@@ -28,6 +26,7 @@ typedef struct cgroupfs_entry {
 	const struct inode_operations *e_iops;
 	const struct file_operations *e_fops;
 	const struct dentry_operations *e_dops;
+	void *private;
 	KABI_RESERVE(1);
 	KABI_RESERVE(2);
 	KABI_RESERVE(3);

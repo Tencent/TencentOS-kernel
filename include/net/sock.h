@@ -232,6 +232,15 @@ struct sock_common {
 	/* public: */
 };
 
+/*tvpc data*/
+struct tvpc_info {
+	u32 vpcid;
+	__be32 vmip;
+	__be32 vip;
+	__be16 sport;
+	__be16 vport;
+};
+
 struct bpf_sk_storage;
 
 /**
@@ -513,7 +522,7 @@ struct sock {
 	struct bpf_sk_storage __rcu	*sk_bpf_storage;
 #endif
 	struct rcu_head		sk_rcu;
-
+	struct tvpc_info        sk_tvpc_info;
 	KABI_RESERVE(1);
 	KABI_RESERVE(2);
 	KABI_RESERVE(3);
@@ -1138,6 +1147,7 @@ struct proto {
 	void			(*unhash)(struct sock *sk);
 	void			(*rehash)(struct sock *sk);
 	int			(*get_port)(struct sock *sk, unsigned short snum);
+	void			(*put_port)(struct sock *sk);
 
 	/* Keeping track of sockets in use */
 #ifdef CONFIG_PROC_FS
@@ -2589,6 +2599,8 @@ extern __u32 sysctl_rmem_default;
 
 extern int sysctl_forced_caps_enabled;
 
+/* On 32bit arches, an skb frag is limited to 2^15 */
+#define SKB_FRAG_PAGE_ORDER	get_order(32768)
 DECLARE_STATIC_KEY_FALSE(net_high_order_alloc_disable_key);
 
 static inline int sk_get_wmem0(const struct sock *sk, const struct proto *proto)

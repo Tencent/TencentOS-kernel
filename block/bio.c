@@ -1759,15 +1759,43 @@ void update_io_ticks(struct hd_struct *part, unsigned long now, bool end)
 	unsigned long stamp;
 again:
 	stamp = READ_ONCE(part->stamp);
-	if (unlikely(stamp != now)) {
-		if (likely(cmpxchg(&part->stamp, stamp, now) == stamp)) {
+	if (unlikely(time_before(stamp, now))) {
+		unsigned long old;
+again2:
+		if (likely((old = cmpxchg(&part->stamp, stamp, now)) == stamp)) {
 			__part_stat_add(part, io_ticks, end ? now - stamp : 1);
+		} else if(time_before(old, now)) {
+			stamp = old;
+			goto again2;
+		}
+		if (part->partno) {
+			part = &part_to_disk(part)->part0;
+			goto again;
 		}
 	}
-	if (part->partno) {
-		part = &part_to_disk(part)->part0;
-		goto again;
+}
+
+void sync_io_ticks(struct hd_struct *part, bool busy)
+{
+	part_stat_lock();
+	if(busy) {
+		/* count ticks till now as busy */
+		update_io_ticks(part, jiffies, true);
+	} else {
+		/* advance stamp to previous jiffies */
+		unsigned long prevj = jiffies - 1;
+		unsigned long stamp;
+again:
+		stamp = READ_ONCE(part->stamp);
+		if (unlikely(time_before(stamp, prevj))) {
+			cmpxchg(&part->stamp, stamp, prevj);
+			if (part->partno) {
+				part = &part_to_disk(part)->part0;
+				goto again;
+			}
+		}
 	}
+	part_stat_unlock();
 }
 
 void generic_start_io_acct(struct request_queue *q, int op,

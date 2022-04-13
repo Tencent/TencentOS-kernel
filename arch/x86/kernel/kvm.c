@@ -838,7 +838,7 @@ void __init kvm_spinlock_init(void)
 	 */
 	if (!kvm_para_has_feature(KVM_FEATURE_PV_UNHALT)) {
 		pr_info("PV spinlocks disabled, no host support\n");
-		return;
+		goto out;
 	}
 
 	/*

@@ -1024,6 +1024,19 @@ config CGROUP_BPF
 	  BPF_CGROUP_INET_INGRESS will be executed on the ingress path of
 	  inet sockets.
 
+config CGROUP_V1_BPF
+	bool "Support for eBPF program attached to cgroup v1"
+	default n
+	depends on CGROUP_BPF
+	help
+	  eBPF programs is not supported by cgroup v1, as v1 can have
+	  multiple hierarchy, and kernel does not know which one to use.
+
+	  To use eBPF programs in cgroup v1, simply attach eBPF programs
+	  to the default hierarchy when v1 is used. This means that eBPF
+	  programs can only attached to the cgroup root, and that is
+	  current solution.
+
 config CGROUP_DEBUG
 	bool "Debug controller"
 	default n

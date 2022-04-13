@@ -31,6 +31,7 @@
 #include <linux/of.h>
 #include <linux/irq_work.h>
 #include <linux/kexec.h>
+#include <linux/crash_dump.h>
 
 #include <asm/alternative.h>
 #include <asm/atomic.h>
@@ -101,8 +102,9 @@ static DECLARE_COMPLETION(cpu_running);
 
 int __cpu_up(unsigned int cpu, struct task_struct *idle)
 {
-	int ret;
+	int ret, try;
 	long status;
+	unsigned long jiffies_left, flags;
 
 	/*
 	 * We need to tell the secondary core where to find its stack and the
@@ -122,8 +124,29 @@ int __cpu_up(unsigned int cpu, struct task_struct *idle)
 		 * CPU was successfully started, wait for it to come online or
 		 * time out.
 		 */
-		wait_for_completion_timeout(&cpu_running,
+		jiffies_left = wait_for_completion_timeout(&cpu_running,
 					    msecs_to_jiffies(5000));
+
+		/*
+		 * Try 5000ms again to slove slave core boot fail on altramax platform.
+		 * It needing to disable cpu0's irq >= 5ms each time, which can reduce irq act.
+		 */
+		if (jiffies_left == 0) {
+			complete_acquire(&cpu_running);
+			for (try = 1; try <= 1000; try++) {
+				local_irq_save(flags);
+				mdelay(5);
+				if (completion_done(&cpu_running)) {
+					if (cpu_running.done != UINT_MAX)
+						cpu_running.done--;
+					local_irq_restore(flags);
+					break;
+				}
+				local_irq_restore(flags);
+			}
+			complete_release(&cpu_running);
+			set_current_state(TASK_RUNNING);
+		}
 
 		if (!cpu_online(cpu)) {
 			pr_crit("CPU%u: failed to come online\n", cpu);
@@ -501,6 +524,32 @@ static int __init smp_cpu_setup(int cpu)
 static bool bootcpu_valid __initdata;
 static unsigned int cpu_count = 1;
 
+#ifdef CONFIG_ARCH_PHYTIUM
+/*
+ * On phytium S2500 multi-socket server, for example 2-socket(2P), there are
+ * socekt0 and socket1 on the server:
+ * If storage device(like SAS controller and disks to save vmcore into) is
+ * installed on socket1 and second kernel brings up 2 CPUs both on socket0 with
+ * nr_cpus=2, then vmcore will fail to be saved into the disk.
+ * To avoid this issue, Bypass other non-cpu0 to ensure that each cpu0 on each
+ * socket can bootup and handle interrupt when booting the second kernel.
+ */
+static bool __init is_phytium_kdump_cpu_need_bypass(u64 hwid)
+{
+	if ((read_cpuid_id() & MIDR_CPU_MODEL_MASK) != MIDR_FT_2500)
+		return false;
+
+	/*
+	 * Bypass other non-cpu0 to ensure second kernel can bring up each cpu0
+	 * on each socket
+	 */
+	if (is_kdump_kernel() && (hwid & 0xffff) != (cpu_logical_map(0) & 0xffff))
+		return true;
+
+	return false;
+}
+#endif
+
 #ifdef CONFIG_ACPI
 static struct acpi_madt_generic_interrupt cpu_madt_gicc[NR_CPUS];
 
@@ -549,6 +598,11 @@ acpi_map_gic_cpu_interface(struct acpi_madt_generic_interrupt *processor)
 
 	if (cpu_count >= NR_CPUS)
 		return;
+
+#ifdef CONFIG_ARCH_PHYTIUM
+	if (is_phytium_kdump_cpu_need_bypass(hwid))
+		return;
+#endif
 
 	/* map the logical cpu id to cpu MPIDR */
 	set_cpu_logical_map(cpu_count, hwid);

@@ -132,8 +132,8 @@ enum {
 #define TCP_FULLNAT_REAL	10000
 
 struct tcp_fullnat_real_opt {
-	u32 real_ip;
-	u16 real_port;
+	__u32 real_ip;
+	__u16 real_port;
 };
 
 #define TCP_REPAIR_ON		1
