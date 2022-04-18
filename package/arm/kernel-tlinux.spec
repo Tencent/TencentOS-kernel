@@ -25,12 +25,12 @@
 # Architectures we build tools/cpupower on
 %define cpupowerarchs x86_64 aarch64
 
-Summary: Kernel for Tencent physical machine
+Summary: Kernel for OpenCloudOS physical machine
 Name: %{name}
 Version: %{version}
 Release: %{release_os}%{?rdist}
 License: GPLv2
-Vendor: Tencent
+Vendor: OpenCloudOS
 Packager: OpenCloudOS Team
 Provides: kernel = %{version}-%{release}
 Provides: kernel-core = %{version}-%{release}
@@ -44,7 +44,7 @@ Source2000: cpupower.service
 Source2001: cpupower.config
 URL: http://www.tencent.com
 ExclusiveArch:  aarch64
-Distribution: Tencent Linux
+Distribution: OpenCloudOS Linux
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-build
 BuildRequires: wget bc module-init-tools curl
 %if %{with_perf}
@@ -602,12 +602,15 @@ echo -e "Remove \"%{tagged_name}%{?dist}\" Done."
 %files -f core.list
 # files ########################################################################
 %defattr(-,root,root)
+%ghost /boot/initramfs-%{tagged_name}%{?dist}.img
 %if 0%{?rhel} == 7
 /boot/vmlinuz-%%{tagged_name}%%{?dist}
 /boot/.vmlinuz-%%{tagged_name}%%{?dist}.hmac
 #/boot/uImage-%%{tagged_name}%%{?dist}
 /boot/System.map-%%{tagged_name}%%{?dist}
 /boot/config-%%{tagged_name}%%{?dist}
+%else
+%ghost /boot/vmlinuz-%{tagged_name}%{?dist}
 %endif
 /boot/symvers-%{tagged_name}%{?dist}*
 /etc/sysconfig/modules/tlinux_cciss_link.modules
