@@ -1714,6 +1714,7 @@ static bool virtnet_send_command(struct virtnet_info *vi, u8 class, u8 cmd,
 {
 	struct scatterlist *sgs[4], hdr, stat;
 	unsigned out_num = 0, tmp;
+	unsigned long timeout = jiffies + 3*HZ;
 	int ret;
 
 	/* Caller should know better */
@@ -1748,8 +1749,14 @@ static bool virtnet_send_command(struct virtnet_info *vi, u8 class, u8 cmd,
 	 * into the hypervisor, so the request should be handled immediately.
 	 */
 	while (!virtqueue_get_buf(vi->cvq, &tmp) &&
-	       !virtqueue_is_broken(vi->cvq))
+	       !virtqueue_is_broken(vi->cvq)) {
+		if(time_after(jiffies, timeout)) {
+			dev_err(&vi->vdev->dev,
+					"%s: timeout waiting for response\n", __func__);	
+			break;
+		}
 		cpu_relax();
+	}
 
 	return vi->ctrl->status == VIRTIO_NET_OK;
 }
