@@ -5046,6 +5046,36 @@ out_unlock:
 	return ret ?: nbytes;
 }
 
+int cgroup_sli_monitor_open(struct kernfs_open_file *of)
+{
+	return sli_monitor_open(of);
+}
+
+void *cgroup_sli_monitor_start(struct seq_file *s, loff_t *pos)
+{
+	return sli_monitor_start(s, pos);
+}
+
+int cgroup_sli_monitor_show(struct seq_file *seq, void *v)
+{
+	return sli_monitor_show(seq, v);
+}
+
+void *cgroup_sli_monitor_next(struct seq_file *s, void *v, loff_t *pos)
+{
+	return sli_monitor_next(s, v, pos);
+}
+
+void cgroup_sli_monitor_stop(struct seq_file *seq, void *v)
+{
+	sli_monitor_stop(seq, v);
+}
+
+__poll_t cgroup_sli_monitor_poll(struct kernfs_open_file *of, poll_table *pt)
+{
+	return sli_monitor_poll(of, pt);
+}
+
 /* cgroup core interface files for the default hierarchy */
 static struct cftype cgroup_base_files[] = {
 	{
@@ -5159,6 +5189,21 @@ static struct cftype cgroup_base_files[] = {
 		.name = "sli.max",
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = cgroup_sli_max_show,
+	},
+	{
+		.name = "sli.control",
+		.write = cgroup_sli_control_write,
+		.seq_show = cgroup_sli_control_show,
+	},
+	{
+		.name = "sli.monitor",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.open = cgroup_sli_monitor_open,
+		.seq_show = cgroup_sli_monitor_show,
+		.seq_start = cgroup_sli_monitor_start,
+		.seq_next = cgroup_sli_monitor_next,
+		.seq_stop = cgroup_sli_monitor_stop,
+		.poll = cgroup_sli_monitor_poll,
 	},
 	{ }	/* terminate */
 };
@@ -5484,13 +5529,9 @@ static struct cgroup *cgroup_create(struct cgroup *parent)
 	if (ret)
 		goto out_idr_free;
 
-	ret = sli_cgroup_alloc(cgrp);
-	if (ret)
-		goto out_psi_free;
-
 	ret = cgroup_bpf_inherit(cgrp);
 	if (ret)
-		goto out_sli_free;
+		goto out_psi_free;
 
 	/*
 	 * New cgroup inherits effective freeze counter, and
@@ -5556,8 +5597,6 @@ static struct cgroup *cgroup_create(struct cgroup *parent)
 
 	return cgrp;
 
-out_sli_free:
-	sli_cgroup_free(cgrp);
 out_psi_free:
 	psi_cgroup_free(cgrp);
 out_idr_free:
@@ -5601,35 +5640,27 @@ fail:
  */
 static inline bool cgroup_need_mbuf(struct cgroup *cgrp)
 {
-	if (cgroup_on_dfl(cgrp)){
-#if IS_ENABLED(CONFIG_CGROUP_SCHED)
-		if (cgroup_css(cgrp, cgroup_subsys[cpu_cgrp_id]))
-			return true;
-#endif
+	if (cgroup_on_dfl(cgrp))
+		return true;
 
-#if IS_ENABLED(CONFIG_BLK_CGROUP)
-		if (cgroup_css(cgrp, cgroup_subsys[io_cgrp_id]))
-			return true;
+#if IS_ENABLED(CONFIG_CGROUP_CPUACCT)
+	if (cgroup_css(cgrp, cgroup_subsys[cpuacct_cgrp_id]))
+		return true;
 #endif
 
 #if IS_ENABLED(CONFIG_MEMCG)
-		if (cgroup_css(cgrp, cgroup_subsys[memory_cgrp_id]))
-			return true;
-#endif
-
-#if IS_ENABLED(CONFIG_CGROUP_NET_CLASSID)
-		if (cgroup_css(cgrp, cgroup_subsys[net_cls_cgrp_id]))
-			return true;
-#endif
-	} else
-#if IS_ENABLED(CONFIG_CGROUP_CPUACCT)
-		if (cgroup_css(cgrp, cgroup_subsys[cpuacct_cgrp_id]))
-			return true;
+	if (cgroup_css(cgrp, cgroup_subsys[memory_cgrp_id]))
+		return true;
 #endif
 
 	return false;
 }
 
+/* Wrap the mbuf and export to the include file */
+bool cgroup_need_sli(struct cgroup *cgrp)
+{
+	return cgroup_need_mbuf(cgrp);
+}
 
 int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
 {
@@ -5681,8 +5712,15 @@ int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
 	if (ret)
 		goto out_destroy;
 
+	ret = sli_cgroup_alloc(cgrp);
+	if (ret)
+		goto out_destroy;
+
 	if(sysctl_qos_mbuf_enable && cgroup_need_mbuf(cgrp))
 		cgrp->mbuf = mbuf_slot_alloc(cgrp);
+
+	if (cgroup_need_mbuf(cgrp))
+		cgrp->sctx = sctx_alloc();
 
 	TRACE_CGROUP_PATH(mkdir, cgrp);
 
@@ -5869,6 +5907,8 @@ static int cgroup_destroy_locked(struct cgroup *cgrp)
 	if (cgrp->mbuf)
 		mbuf_free(cgrp);
 
+	if (cgrp->sctx)
+		sctx_free(cgrp);
 	/* put the base reference */
 	percpu_ref_kill(&cgrp->self.refcnt);
 

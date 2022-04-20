@@ -3694,7 +3694,6 @@ void scheduler_tick(void)
 
 	update_rq_clock(rq);
 	curr->sched_class->task_tick(rq, curr, 0);
-	sli_check_longsys(curr);
 	calc_global_load_tick(rq);
 	psi_task_tick(rq);
 
@@ -3706,6 +3705,7 @@ void scheduler_tick(void)
 	rq->idle_balance = idle_cpu(cpu);
 	trigger_load_balance(rq);
 #endif
+	sli_update_tick(curr);
 }
 
 #ifdef CONFIG_NO_HZ_FULL
@@ -3798,6 +3798,8 @@ out_requeue:
 	WARN_ON_ONCE(os == TICK_SCHED_REMOTE_OFFLINE);
 	if (os == TICK_SCHED_REMOTE_RUNNING)
 		queue_delayed_work(system_unbound_wq, dwork, HZ);
+
+	sli_update_tick(curr);
 }
 
 static void sched_tick_start(int cpu)
