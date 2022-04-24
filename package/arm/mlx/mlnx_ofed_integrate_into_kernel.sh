@@ -213,9 +213,9 @@ cd MLNX_OFED_LINUX-*
 distro=$(cat distro 2>/dev/null)
 echo "This MLNX_OFED was built for distro: ${distro}"
 
-#this will cause error in chroot environment
-echo "%__os_install_post %{nil}" >> ~/.rpmmacros
-echo "%__brp_mangle_shebangs %{nil}" >> ~/.rpmmacros
+# This will cause error in chroot environment
+# echo "%__os_install_post %{nil}" >> ~/.rpmmacros
+# echo "%__brp_mangle_shebangs %{nil}" >> ~/.rpmmacros
 
 # compile modules against target kernel
 ./mlnxofedinstall \
@@ -228,8 +228,8 @@ echo "%__brp_mangle_shebangs %{nil}" >> ~/.rpmmacros
 	--skip-distro-check \
 	--skip-repo ${mlnxofedinstall_flags}
 
-sed -i '/__os_install_post/d' ~/.rpmmacros
-sed -i '/__brp_mangle_shebangs/d' ~/.rpmmacros
+# sed -i '/__os_install_post/d' ~/.rpmmacros
+# sed -i '/__brp_mangle_shebangs/d' ~/.rpmmacros
 
 # fix permissiosn
 chown -R ${USER} ${TMPD}
