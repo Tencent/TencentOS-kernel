@@ -69,9 +69,12 @@ BuildRequires: libcap-devel
 %endif
 %endif
 Requires(pre): linux-firmware >= 20100806-2
+%if 0%{?rhel} == 8
+Requires(post): systemd-udev
+%endif
 
 # for the 'hostname' command
-%if 0%{?rhel} == 7
+%if 0%{?rhel} >= 7
 BuildRequires: hostname
 %else
 BuildRequires: net-tools
@@ -570,10 +573,10 @@ fi;
 # post #########################################################################
 echo "Install OpenCloudOS kernel"
 %if 0%{?rhel} == 8
-cp -p /lib/modules/%{tagged_name}/dist_compat/config-%{tagged_name}%{?dist} /boot
-cp -p /lib/modules/%{tagged_name}/dist_compat/.vmlinuz-%{tagged_name}%{?dist}.hmac /boot
-cp -p /lib/modules/%{tagged_name}/dist_compat/System.map-%{tagged_name}%{?dist} /boot
-kernel-install add %{tagged_name} /lib/modules/%{tagged_name}/vmlinuz
+/bin/cp -p /lib/modules/%{tagged_name}/dist_compat/config-%{tagged_name}%{?dist} /boot
+/bin/cp -p /lib/modules/%{tagged_name}/dist_compat/.vmlinuz-%{tagged_name}%{?dist}.hmac /boot
+/bin/cp -p /lib/modules/%{tagged_name}/dist_compat/System.map-%{tagged_name}%{?dist} /boot
+/bin/kernel-install add %{tagged_name} /lib/modules/%{tagged_name}/vmlinuz
 %else
 %if 0%{?rhel} == 7
 /sbin/new-kernel-pkg --package kernel --install %{tagged_name}%{?dist} --make-default|| exit $?
@@ -584,7 +587,7 @@ echo -e "Set Grub default to \"%{tagged_name}%{?dist}\" Done."
 %preun
 # preun #######################################################################
 %if 0%{?rhel} == 8
-kernel-install remove  %{tagged_name}
+/bin/kernel-install remove  %{tagged_name}
 %else
 %if 0%{?rhel} == 7
 /sbin/new-kernel-pkg --rminitrd --dracut --remove %{tagged_name}%{?dist} || exit $?
