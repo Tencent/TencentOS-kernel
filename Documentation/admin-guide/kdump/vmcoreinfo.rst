@@ -393,6 +393,17 @@ KERNELOFFSET
 The kernel randomization offset. Used to compute the page offset. If
 KASLR is disabled, this value is zero.
 
+TCR_EL1.T1SZ
+------------
+
+Indicates the size offset of the memory region addressed by TTBR1_EL1.
+The region size is 2^(64-T1SZ) bytes.
+
+TTBR1_EL1 is the table base address register specified by ARMv8-A
+architecture which is used to lookup the page-tables for the Virtual
+addresses in the higher VA range (refer to ARMv8 ARM document for
+more details).
+
 arm
 ===
 
