@@ -266,7 +266,7 @@ void rq_qos_wait(struct rq_wait *rqw, void *private_data,
 	if (!has_sleeper && acquire_inflight_cb(rqw, private_data))
 		return;
 
-	has_sleeper = !prepare_to_wait_exclusive(&rqw->wait, &data.wq,
+	has_sleeper = !prepare_to_wait_exclusive_with_ret(&rqw->wait, &data.wq,
 						 TASK_UNINTERRUPTIBLE);
 	do {
 		/* The memory barrier in set_task_state saves us here. */
