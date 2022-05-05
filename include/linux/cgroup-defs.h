@@ -21,7 +21,6 @@
 #include <linux/workqueue.h>
 #include <linux/bpf-cgroup.h>
 #include <linux/psi_types.h>
-#include <linux/mbuf.h>
 
 #ifdef CONFIG_CGROUPS
 
