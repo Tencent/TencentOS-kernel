@@ -61,6 +61,7 @@ static int timer_cb1(void *map, int *key, struct hmap_elem *val)
 	return 0;
 }
 
+#include <bpf/bpf_tracing.h>
 SEC("fentry/bpf_fentry_test1")
 int BPF_PROG(test1, int a)
 {
