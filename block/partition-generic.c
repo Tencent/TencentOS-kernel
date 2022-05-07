@@ -123,6 +123,13 @@ ssize_t part_stat_show(struct device *dev,
 	unsigned int inflight;
 
 	inflight = part_in_flight(q, p);
+
+	if (inflight) {
+		part_stat_lock();
+		update_io_ticks(hd, jiffies, true);
+		part_stat_unlock();
+	}
+
 	return sprintf(buf,
 		"%8lu %8lu %8llu %8u "
 		"%8lu %8lu %8llu %8u "

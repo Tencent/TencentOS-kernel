@@ -1382,6 +1382,11 @@ static int diskstats_show(struct seq_file *seqf, void *v)
 	disk_part_iter_init(&piter, gp, DISK_PITER_INCL_EMPTY_PART0);
 	while ((hd = disk_part_iter_next(&piter))) {
 		inflight = part_in_flight(gp->queue, hd);
+		if (inflight) {
+			part_stat_lock();
+			update_io_ticks(hd, jiffies, true);
+			part_stat_unlock();
+		}
 		seq_printf(seqf, "%4d %7d %s "
 			   "%lu %lu %lu %u "
 			   "%lu %lu %lu %u "
