@@ -514,6 +514,9 @@ static struct ratelimit_state urandom_warning =
 
 static int ratelimit_disable __read_mostly;
 
+static int use_rdrand = 1;
+static unsigned long simulation_rdrand(void);
+
 module_param_named(ratelimit_disable, ratelimit_disable, int, 0644);
 MODULE_PARM_DESC(ratelimit_disable, "Disable random ratelimit suppression");
 
@@ -1048,6 +1051,7 @@ static void crng_reseed(struct crng_state *crng, struct entropy_store *r)
 	}
 }
 
+
 static void _extract_crng(struct crng_state *crng,
 			  __u8 out[CHACHA_BLOCK_SIZE])
 {
@@ -1057,9 +1061,16 @@ static void _extract_crng(struct crng_state *crng,
 	    (time_after(crng_global_init_time, crng->init_time) ||
 	     time_after(jiffies, crng->init_time + CRNG_RESEED_INTERVAL)))
 		crng_reseed(crng, crng == &primary_crng ? &input_pool : NULL);
+
 	spin_lock_irqsave(&crng->lock, flags);
-	if (arch_get_random_long(&v))
+	/* primary_crng is seldomly extracted */
+	if (!use_rdrand && crng != &primary_crng) {
+		v = simulation_rdrand();
 		crng->state[14] ^= v;
+	} else if (arch_get_random_long(&v)) {
+		crng->state[14] ^= v;
+	}
+
 	chacha20_block(&crng->state[0], out);
 	if (crng->state[12] == 0)
 		crng->state[13]++;
@@ -1268,6 +1279,21 @@ void add_input_randomness(unsigned int type, unsigned int code,
 EXPORT_SYMBOL_GPL(add_input_randomness);
 
 static DEFINE_PER_CPU(struct fast_pool, irq_randomness);
+static unsigned long simulation_rdrand()
+{
+	unsigned long entropy;
+	struct fast_pool *fast_pool;
+
+	entropy = random_get_entropy();
+	fast_pool = this_cpu_ptr(&irq_randomness);
+
+	entropy ^= fast_pool->pool[0];
+	entropy ^= fast_pool->pool[1];
+	entropy ^= fast_pool->pool[2];
+	entropy ^= fast_pool->pool[3];
+	entropy ^= jiffies;
+	return entropy;
+}
 
 #ifdef ADD_INTERRUPT_BENCH
 static unsigned long avg_cycles, avg_deviation;
@@ -2326,6 +2352,15 @@ struct ctl_table random_table[] = {
 		.maxlen		= 16,
 		.mode		= 0444,
 		.proc_handler	= proc_do_uuid,
+	},
+	{
+		.procname	= "tos_use_rdrand",
+		.data		= &use_rdrand,
+		.maxlen		= sizeof(use_rdrand),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE
 	},
 #ifdef ADD_INTERRUPT_BENCH
 	{
