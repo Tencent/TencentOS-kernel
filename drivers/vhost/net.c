@@ -744,6 +744,7 @@ static int vhost_net_build_xdp(struct vhost_net_virtqueue *nvq,
 	xdp->data_hard_start = buf;
 	xdp->data = buf + pad;
 	xdp->data_end = xdp->data + len;
+	xdp_set_data_meta_invalid(xdp);
 	hdr->buflen = buflen;
 
 	--net->refcnt_bias;
