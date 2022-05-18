@@ -17,7 +17,24 @@ extern int cpuacct_cgroupfs_uptime_show(struct seq_file *m, void *v);
 extern int cpuset_cgroupfs_loadavg_show(struct seq_file *m, void *v);
 extern int blkcg_cgroupfs_dkstats_show(struct seq_file *m, void *v);
 extern int mem_cgroupfs_vmstat_show(struct seq_file *m, void *v);
-extern int blkcg_cgroupfs_dkstats_show(struct seq_file *m, void *v);
+extern int cpu_get_max_cpus(struct task_struct *p);
+extern int cpuset_cgroupfs_get_cpu_count(void);
+
+static int cgroupfs_handle_online_cpu(struct seq_file *m, void *v)
+{
+	int cpu = cpu_get_max_cpus(current);
+	int cpu_set = cpuset_cgroupfs_get_cpu_count();
+	if (cpu > cpu_set)
+		cpu = cpu_set;
+	if (cpu > nr_cpu_ids)
+		cpu = nr_cpu_ids;
+	if (cpu == 1)
+		seq_printf(m, "0");
+	else
+		seq_printf(m, "0-%d", cpu - 1);
+	seq_putc(m, '\n');
+	return 0;
+}
 
 static int cgroup_fs_show(struct seq_file *m, void *v)
 {
@@ -37,6 +54,8 @@ static int cgroup_fs_show(struct seq_file *m, void *v)
 		return blkcg_cgroupfs_dkstats_show(m, v);
 	case CGROUPFS_TYPE_VMSTAT:
 		return mem_cgroupfs_vmstat_show(m, v);
+	case CGROUPFS_TYPE_CPU_ONLINE:
+		return cgroupfs_handle_online_cpu(m, v);
 	default:
 		break;
 	}
