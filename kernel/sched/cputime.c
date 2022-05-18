@@ -3,6 +3,7 @@
  * Simple CPU accounting cgroup controller
  */
 #include "sched.h"
+#include <linux/sli.h>
 
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
 
@@ -107,6 +108,10 @@ static inline void task_group_account_field(struct task_struct *p, int index,
 	__this_cpu_add(kernel_cpustat.cpustat[index], tmp);
 
 	cgroup_account_cputime_field(p, index, tmp);
+
+	/* Collect the irq cputime for cgroup(used for sli) */
+	if (index == CPUTIME_SOFTIRQ || index == CPUTIME_IRQ)
+		sli_schedlat_stat(p, SCHEDLAT_IRQTIME, tmp);
 }
 
 /*

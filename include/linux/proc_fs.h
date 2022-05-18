@@ -76,6 +76,9 @@ struct proc_dir_entry *proc_create_net_single_write(const char *name, umode_t mo
 						    void *data);
 extern struct pid *tgid_pidfd_to_pid(const struct file *file);
 
+extern struct net init_net;
+extern struct list_head sysctl_restrict_list;
+
 #ifdef CONFIG_PROC_PID_ARCH_STATUS
 /*
  * The architecture which selects CONFIG_PROC_PID_ARCH_STATUS must

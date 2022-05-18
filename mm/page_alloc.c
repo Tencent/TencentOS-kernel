@@ -4750,7 +4750,6 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 {
 	struct page *page;
 	unsigned int alloc_flags = ALLOC_WMARK_LOW;
-	unsigned long long alloc_entry_time;
 	gfp_t alloc_mask; /* The gfp_t that was actually used for allocation */
 	struct alloc_context ac = { };
 
@@ -4768,7 +4767,6 @@ __alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order, int preferred_nid,
 	if (!prepare_alloc_pages(gfp_mask, order, preferred_nid, nodemask, &ac, &alloc_mask, &alloc_flags))
 		return NULL;
 
-	sli_memlat_stat_start(&alloc_entry_time);
 	finalise_ac(gfp_mask, &ac);
 
 	/*
@@ -4809,7 +4807,6 @@ out:
 
 	trace_mm_page_alloc(page, order, alloc_mask, ac.migratetype);
 
-	sli_memlat_stat_end(MEM_LAT_PAGE_ALLOC, alloc_entry_time);
 	return page;
 }
 EXPORT_SYMBOL(__alloc_pages_nodemask);

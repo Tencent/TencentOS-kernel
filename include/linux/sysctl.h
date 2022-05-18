@@ -185,6 +185,12 @@ struct ctl_path {
 	const char *procname;
 };
 
+struct sysctl_restrict_record {
+	struct list_head list;
+	struct rcu_head  rcu;
+	char procname[PATH_MAX];
+};
+
 #ifdef CONFIG_SYSCTL
 
 void proc_sys_poll_notify(struct ctl_table_poll *poll);

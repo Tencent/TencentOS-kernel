@@ -59,6 +59,7 @@
 #include <linux/tracehook.h>
 #include <linux/psi.h>
 #include <linux/seq_buf.h>
+#include <linux/namei.h>
 #include "internal.h"
 #include <net/sock.h>
 #include <net/ip.h>
@@ -76,6 +77,8 @@ struct mem_cgroup *root_mem_cgroup __read_mostly;
 
 #define MEM_CGROUP_RECLAIM_RETRIES	5
 #define DEFAULT_PAGE_RECLAIM_RATIO	5
+#define PAGECACHE_MAX_RATIO_MIN 5
+#define PAGECACHE_MAX_RATIO_MAX 100
 
 /* Socket memory accounting disabled? */
 static bool cgroup_memory_nosocket;
@@ -448,7 +451,7 @@ struct cgroup_subsys_state *mem_cgroup_css_from_page(struct page *page)
 
 	memcg = page->mem_cgroup;
 
-	if (!memcg || !cgroup_subsys_on_dfl(memory_cgrp_subsys))
+	if (!memcg)
 		memcg = root_mem_cgroup;
 
 	return &memcg->css;
@@ -3437,14 +3440,19 @@ static int mem_cgroup_hierarchy_write(struct cgroup_subsys_state *css,
 
 #define MIN_PAGECACHE_PAGES 16
 
-unsigned int vm_pagecache_limit_retry_times;
+unsigned int vm_pagecache_limit_retry_times __read_mostly = MEM_CGROUP_RECLAIM_RETRIES;
 void mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask)
 {
 	unsigned long pages_used, pages_max, pages_reclaimed, goal_pages_used, pre_used;
 	unsigned int retry_times = 0;
 	unsigned int limit_retry_times;
+	u32 max_ratio;
 
 	if (!memcg || mem_cgroup_is_root(memcg))
+		return;
+
+	max_ratio = READ_ONCE(memcg->pagecache_max_ratio);
+	if (max_ratio == PAGECACHE_MAX_RATIO_MAX)
 		return;
 
 	pages_max = READ_ONCE(memcg->pagecache.max);
@@ -3471,34 +3479,30 @@ void mem_cgroup_shrink_pagecache(struct mem_cgroup *memcg, gfp_t gfp_mask)
 	goal_pages_used = (100 - READ_ONCE(memcg->pagecache_reclaim_ratio)) * pages_max / 100;
 	goal_pages_used = max_t(unsigned long, MIN_PAGECACHE_PAGES, goal_pages_used);
 
-	if (pages_used > pages_max) {
+	if (pages_used > pages_max)
 		memcg_memory_event(memcg, MEMCG_PAGECACHE_MAX);
-		while (pages_used > goal_pages_used) {
-			if (fatal_signal_pending(current))
-				break;
 
-			pre_used = pages_used;
-			pages_reclaimed = shrink_page_cache_memcg(gfp_mask, memcg, pages_used - goal_pages_used);
+	while (pages_used > goal_pages_used) {
+		if (fatal_signal_pending(current))
+			break;
 
-			if (limit_retry_times == 0)
-				goto next_shrink;
+		pre_used = pages_used;
+		pages_reclaimed = shrink_page_cache_memcg(gfp_mask, memcg, pages_used - goal_pages_used);
 
-			if (pages_reclaimed == 0) {
-				congestion_wait(BLK_RW_ASYNC, HZ/10);
-				retry_times++;
-			} else
-				retry_times = 0;
+		if (pages_reclaimed == 0) {
+			congestion_wait(BLK_RW_ASYNC, HZ/10);
+			retry_times++;
+		} else
+			retry_times = 0;
 
-			if (retry_times > limit_retry_times) {
-				memcg_memory_event(memcg, MEMCG_PAGECACHE_OOM);
-				mem_cgroup_out_of_memory(memcg, GFP_KERNEL, 0);
-				break;
-			}
-
-next_shrink:
-			pages_used = page_counter_read(&memcg->pagecache);
-			cond_resched();
+		if (retry_times > limit_retry_times) {
+			memcg_memory_event(memcg, MEMCG_PAGECACHE_OOM);
+			mem_cgroup_out_of_memory(memcg, GFP_KERNEL, 0);
+			break;
 		}
+
+		pages_used = page_counter_read(&memcg->pagecache);
+		cond_resched();
 	}
 }
 
@@ -3528,9 +3532,12 @@ static ssize_t pagecache_reclaim_ratio_write(struct kernfs_open_file *of,
 
 	if ((reclaim_ratio > 0) && (reclaim_ratio < 100)) {
 		memcg->pagecache_reclaim_ratio = reclaim_ratio;
+		mem_cgroup_shrink_pagecache(memcg, GFP_KERNEL);
 		return nbytes;
 	} else if (reclaim_ratio == 100) {
 		nr_pages = page_counter_read(&memcg->pagecache);
+
+		//try reclaim once
 		shrink_page_cache_memcg(GFP_KERNEL, memcg, nr_pages);
 		return nbytes;
 	}
@@ -3572,9 +3579,6 @@ unsigned long mem_cgroup_pagecache_get_reclaim_pages(struct mem_cgroup *memcg)
 	return pages_used > pages_max ? pages_used - goal_pages_used : 0;
 }
 
-#define PAGECACHE_MAX_RATIO_MIN 5
-#define PAGECACHE_MAX_RATIO_MAX 100
-
 static void pagecache_set_limit(struct mem_cgroup *memcg)
 {
 	unsigned long max, pre, pages_max;
@@ -3598,7 +3602,6 @@ static ssize_t memory_pagecache_max_write(struct kernfs_open_file *of,
 	if (!buf)
 		return -EINVAL;
 
-	xchg(&memcg->pagecache.max, max);
 	ret = kstrtou64(buf, 0, &max_ratio);
 	if (ret)
 		return ret;
@@ -3614,7 +3617,7 @@ static ssize_t memory_pagecache_max_write(struct kernfs_open_file *of,
 
 	memcg->pagecache_max_ratio = max_ratio;
 	pagecache_set_limit(memcg);
-	max = memcg->pagecache.max;
+	max = READ_ONCE(memcg->pagecache.max);
 
 	for (;;) {
 		unsigned long pages_used = page_counter_read(&memcg->pagecache);
@@ -5378,6 +5381,79 @@ static int mem_cgroup_vmstat_read_comm(struct seq_file *m, void *vv, struct mem_
 	return 0;
 }
 
+static ssize_t mem_cgroup_bind_blkio_write(struct kernfs_open_file *of,
+				char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	struct cgroup_subsys_state *css;
+	struct path path;
+	char *pbuf;
+	int ret;
+
+	if (!sysctl_io_qos_enabled)
+		return -EPERM;
+
+	buf = strstrip(buf);
+
+	/* alloc memory outside mutex */
+	pbuf = kzalloc(PATH_MAX, GFP_KERNEL);
+	if (!pbuf)
+		return -ENOMEM;
+	strncpy(pbuf, buf, PATH_MAX-1);
+
+	mutex_lock(&memcg_max_mutex);
+
+	if (memcg->bind_blkio) {
+		WARN_ON(!memcg->bind_blkio_path);
+		kfree(memcg->bind_blkio_path);
+		memcg->bind_blkio_path = NULL;
+		css_put(memcg->bind_blkio);
+		memcg->bind_blkio = NULL;
+
+		wb_memcg_offline(memcg);
+		INIT_LIST_HEAD(&memcg->cgwb_list);
+	}
+
+	if (!strnlen(buf, PATH_MAX)) {
+		mutex_unlock(&memcg_max_mutex);
+		kfree(pbuf);
+		return nbytes;
+	}
+
+	ret = kern_path(pbuf, LOOKUP_FOLLOW, &path);
+	if (ret)
+		goto err;
+
+	css = css_tryget_online_from_dir(path.dentry, &io_cgrp_subsys);
+	if (IS_ERR(css)) {
+		ret = PTR_ERR(css);
+		path_put(&path);
+		goto err;
+	}
+	path_put(&path);
+
+	memcg->bind_blkio_path = pbuf;
+	memcg->bind_blkio = css;
+	mutex_unlock(&memcg_max_mutex);
+	return nbytes;
+
+err:
+	if (pbuf)
+		kfree(pbuf);
+	mutex_unlock(&memcg_max_mutex);
+	return ret;
+}
+
+static int mem_cgroup_bind_blkio_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+
+	if (memcg->bind_blkio_path)
+		seq_printf(m, "%s\n", memcg->bind_blkio_path);
+
+	return 0;
+}
+
 static int mem_cgroup_sli_max_show(struct seq_file *m, void *v)
 {
 	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
@@ -5575,6 +5651,12 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.name = "sli_max",
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = mem_cgroup_sli_max_show,
+	},
+	{
+		.name = "bind_blkio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.write = mem_cgroup_bind_blkio_write,
+		.seq_show = mem_cgroup_bind_blkio_show,
 	},
 	{ },	/* terminate */
 };
@@ -5924,6 +6006,12 @@ static void mem_cgroup_css_free(struct cgroup_subsys_state *css)
 
 	if (!cgroup_subsys_on_dfl(memory_cgrp_subsys) && memcg->tcpmem_active)
 		static_branch_dec(&memcg_sockets_enabled_key);
+
+	if (memcg->bind_blkio) {
+		WARN_ON(!memcg->bind_blkio_path);
+		kfree(memcg->bind_blkio_path);
+		css_put(memcg->bind_blkio);
+	}
 
 	vmpressure_cleanup(&memcg->vmpressure);
 	cancel_work_sync(&memcg->high_work);
