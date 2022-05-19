@@ -142,7 +142,7 @@ prog_load_failure:
 
 static void test_send_signal_tracepoint(void)
 {
-	const char *id_path = "/sys/kernel/debug/tracing/events/syscalls/sys_enter_nanosleep/id";
+	const char *id_path = "/sys/kernel/debug/tracing/events/raw_syscalls/sys_enter/id";
 	struct perf_event_attr attr = {
 		.type = PERF_TYPE_TRACEPOINT,
 		.sample_type = PERF_SAMPLE_RAW | PERF_SAMPLE_CALLCHAIN,
@@ -155,14 +155,14 @@ static void test_send_signal_tracepoint(void)
 
 	efd = open(id_path, O_RDONLY, 0);
 	if (CHECK(efd < 0, "tracepoint",
-		  "open syscalls/sys_enter_nanosleep/id failure: %s\n",
+		  "open raw_syscalls/sys_enter/id failure: %s\n",
 		  strerror(errno)))
 		return;
 
 	bytes = read(efd, buf, sizeof(buf));
 	close(efd);
 	if (CHECK(bytes <= 0 || bytes >= sizeof(buf), "tracepoint",
-		  "read syscalls/sys_enter_nanosleep/id failure: %s\n",
+		  "read raw_syscalls/sys_enter/id failure: %s\n",
 		  strerror(errno)))
 		return;
 
