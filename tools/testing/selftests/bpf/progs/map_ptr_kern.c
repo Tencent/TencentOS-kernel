@@ -675,7 +675,7 @@ int cg_skb(void *ctx)
 		    check_percpu_cgroup_storage);
 	VERIFY_TYPE(BPF_MAP_TYPE_QUEUE, check_queue);
 	VERIFY_TYPE(BPF_MAP_TYPE_STACK, check_stack);
-	VERIFY_TYPE(BPF_MAP_TYPE_SK_STORAGE, check_sk_storage);
+	// VERIFY_TYPE(BPF_MAP_TYPE_SK_STORAGE, check_sk_storage);
 	VERIFY_TYPE(BPF_MAP_TYPE_DEVMAP_HASH, check_devmap_hash);
 	VERIFY_TYPE(BPF_MAP_TYPE_RINGBUF, check_ringbuf);
 
