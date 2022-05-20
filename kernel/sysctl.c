@@ -311,6 +311,8 @@ int sendto_info_flag;
 int recvfrom_info_flag;
 int execve_info_flag;
 extern int container_cpuquota_aware;
+extern int cgroupfs_stat_show_cpuacct_info;
+int cgroupfs_mounted = 0;
 
 /* The default sysctl tables: */
 
@@ -372,6 +374,20 @@ static struct ctl_table kern_table[] = {
 		.data           = &container_cpuquota_aware,
 		.maxlen         = sizeof(unsigned int),
 		.mode           = 0644,
+		.proc_handler   = proc_dointvec,
+	},
+	{
+		.procname       = "cgroupfs_stat_show_cpuacct_info",
+		.data           = &cgroupfs_stat_show_cpuacct_info,
+		.maxlen         = sizeof(unsigned int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec,
+	},
+	{
+		.procname       = "cgroupfs_mounted",
+		.data           = &cgroupfs_mounted,
+		.maxlen         = sizeof(unsigned int),
+		.mode           = 0444,
 		.proc_handler   = proc_dointvec,
 	},
 	{
