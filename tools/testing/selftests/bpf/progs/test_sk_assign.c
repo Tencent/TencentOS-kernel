@@ -12,6 +12,7 @@
 #include <linux/ipv6.h>
 #include <linux/pkt_cls.h>
 #include <linux/tcp.h>
+#include <linux/udp.h>
 #include <sys/socket.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
@@ -190,15 +191,29 @@ int bpf_sk_assign_test(struct __sk_buff *skb)
 	if (!tuple)
 		return TC_ACT_SHOT;
 
+#define TCP4_LEN (sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct tcphdr))
+#define TCP6_LEN (sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + sizeof(struct tcphdr))
+#define UDP4_LEN (sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr))
+#define UDP6_LEN (sizeof(struct ethhdr) + sizeof(struct ipv6hdr) + sizeof(struct udphdr))
+
 	/* Note that the verifier socket return type for bpf_skc_lookup_tcp()
 	 * differs from bpf_sk_lookup_udp(), so even though the C-level type is
 	 * the same here, if we try to share the implementations they will
 	 * fail to verify because we're crossing pointer types.
 	 */
-	if (tcp)
+	if (tcp) {
+		if (ipv4 && skb->data + TCP4_LEN > skb->data_end)
+			return 0;
+		if (!ipv4 && skb->data + TCP6_LEN > skb->data_end)
+			return 0;
 		ret = handle_tcp(skb, tuple, ipv4);
-	else
+	} else {
+		if (ipv4 && skb->data + UDP4_LEN > skb->data_end)
+			return 0;
+		if (!ipv4 && skb->data + UDP6_LEN> skb->data_end)
+			return 0;
 		ret = handle_udp(skb, tuple, ipv4);
+	}
 
 	return ret == 0 ? TC_ACT_OK : TC_ACT_SHOT;
 }
