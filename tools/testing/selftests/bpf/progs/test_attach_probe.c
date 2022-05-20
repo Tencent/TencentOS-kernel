@@ -12,7 +12,7 @@ struct {
 	__type(value, int);
 } results_map SEC(".maps");
 
-SEC("kprobe/common_nsleep")
+SEC("kprobe/hrtimer_nanosleep")
 int handle_sys_nanosleep_entry(struct pt_regs *ctx)
 {
 	const int key = 0, value = 1;
@@ -21,7 +21,7 @@ int handle_sys_nanosleep_entry(struct pt_regs *ctx)
 	return 0;
 }
 
-SEC("kretprobe/common_nsleep")
+SEC("kretprobe/hrtimer_nanosleep")
 int handle_sys_getpid_return(struct pt_regs *ctx)
 {
 	const int key = 1, value = 2;
