@@ -281,7 +281,7 @@ int sysctl_tstamp_allow_data __read_mostly = 1;
 DEFINE_STATIC_KEY_FALSE(memalloc_socks_key);
 EXPORT_SYMBOL_GPL(memalloc_socks_key);
 
-int sysctl_forced_caps_enabled __read_mostly = 0;
+int sysctl_forced_caps_enabled __read_mostly = 1;
 EXPORT_SYMBOL(sysctl_forced_caps_enabled);
 
 /**
