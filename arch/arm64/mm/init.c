@@ -62,7 +62,7 @@ phys_addr_t arm64_dma_phys_limit __ro_after_init;
  */
 static void __init reserve_crashkernel(void)
 {
-	unsigned long long crash_base, crash_size, addr_limit;
+	unsigned long long crash_base, crash_size;
 	int ret;
 
 	ret = parse_crashkernel(boot_command_line, memblock_phys_mem_size(),
@@ -74,9 +74,8 @@ static void __init reserve_crashkernel(void)
 	crash_size = PAGE_ALIGN(crash_size);
 
 	if (crash_base == 0) {
-		addr_limit = 0xFFFFFFFF;
 		/* Current arm64 boot protocol requires 2MB alignment */
-		crash_base = memblock_find_in_range(0, addr_limit,
+		crash_base = memblock_find_in_range(0, ARCH_LOW_ADDRESS_LIMIT,
 				crash_size, SZ_2M);
 		if (crash_base == 0) {
 			pr_warn("cannot allocate crashkernel (size:0x%llx)\n",
