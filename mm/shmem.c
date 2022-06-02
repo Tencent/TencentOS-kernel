@@ -1302,6 +1302,25 @@ int shmem_unuse(unsigned int type, bool frontswap,
 	return error;
 }
 
+#ifdef CONFIG_MIGRATION
+static int shmem_migrate_page(struct address_space *mapping,
+		struct page *newpage, struct page *page,
+		enum migrate_mode mode)
+{
+	int rc;
+
+	rc = migrate_page(mapping, newpage, page, mode);
+#ifdef CONFIG_SAFETY_SHMEM
+	if (likely(rc == MIGRATEPAGE_SUCCESS)) {
+		/* for safety, clear page */
+		clear_highpage(page);
+	}
+#endif
+
+	return rc;
+}
+#endif
+
 /*
  * Move the page from the page cache to the swap cache.
  */
@@ -1396,6 +1415,11 @@ static int shmem_writepage(struct page *page, struct writeback_control *wbc)
 		mutex_unlock(&shmem_swaplist_mutex);
 		BUG_ON(page_mapped(page));
 		swap_writepage(page, wbc);
+
+#ifdef CONFIG_SAFETY_SHMEM
+		/* for safety, clear page */
+		clear_highpage(page);
+#endif
 		return 0;
 	}
 
@@ -3801,7 +3825,7 @@ static const struct address_space_operations shmem_aops = {
 	.write_end	= shmem_write_end,
 #endif
 #ifdef CONFIG_MIGRATION
-	.migratepage	= migrate_page,
+	.migratepage	= shmem_migrate_page,
 #endif
 	.error_remove_page = generic_error_remove_page,
 };

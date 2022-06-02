@@ -484,6 +484,23 @@ config CMA
 
 	  If unsure, say "n".
 
+config SAFETY_MEM
+	bool "Safety Memory"
+	help
+	  This option provides safety support for memory free.
+
+config SAFETY_SWAP
+	bool "Safety swap"
+	depends on SWAP
+	help
+	  This option provides safety support for swap slot.
+
+config SAFETY_SHMEM
+	bool "Safety share memory"
+	depends on SHMEM
+	help
+	  This option provides safety support for share memory.
+
 config CMA_DEBUG
 	bool "CMA debug messages (DEVELOPMENT)"
 	depends on DEBUG_KERNEL && CMA

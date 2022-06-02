@@ -693,6 +693,22 @@ void prep_compound_page(struct page *page, unsigned int order)
 	atomic_set(compound_mapcount_ptr(page), -1);
 }
 
+#ifdef CONFIG_SAFETY_MEM
+static void clear_pages(struct page *page, unsigned int order)
+{
+	unsigned int loop;
+	struct page *p = page;
+	unsigned int nr_pages = 1 << order;
+
+	prefetchw(p);
+	for (loop = 0; loop < (nr_pages - 1); loop++, p++) {
+		prefetchw(p + 1);
+		clear_highpage(p);
+	}
+	clear_highpage(p);
+}
+#endif
+
 #ifdef CONFIG_DEBUG_PAGEALLOC
 unsigned int _debug_guardpage_minorder;
 
@@ -1340,6 +1356,9 @@ static void free_one_page(struct zone *zone,
 		is_migrate_isolate(migratetype))) {
 		migratetype = get_pfnblock_migratetype(page, pfn);
 	}
+#ifdef CONFIG_SAFETY_MEM
+	clear_pages(page, order);
+#endif
 	__free_one_page(page, pfn, zone, order, migratetype);
 	spin_unlock(&zone->lock);
 }
@@ -3052,6 +3071,9 @@ static void free_unref_page_commit(struct page *page, unsigned long pfn)
 		migratetype = MIGRATE_MOVABLE;
 	}
 
+#ifdef CONFIG_SAFETY_MEM
+	clear_pages(page, 0);
+#endif
 	pcp = &this_cpu_ptr(zone->pageset)->pcp;
 	list_add(&page->lru, &pcp->lists[migratetype]);
 	pcp->count++;

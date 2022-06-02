@@ -416,6 +416,56 @@ out:
 	return ret;
 }
 
+#ifdef CONFIG_SAFETY_SWAP
+static void swap_write_end(struct bio *bio)
+{
+	struct page *page = bio_first_page_all(bio);
+
+	__free_page(page);
+	bio_put(bio);
+}
+
+int swap_readpage_safety(struct page *page, bool synchronous)
+{
+	int rc;
+	struct page *zero_page;
+	struct writeback_control wbc = {
+		.sync_mode = WB_SYNC_NONE,
+		.nr_to_write = SWAP_CLUSTER_MAX,
+		.range_start = 0,
+		.range_end = LLONG_MAX,
+		.for_reclaim = 1,
+	};
+
+	rc = swap_readpage(page, synchronous);
+	if (rc < 0) {
+		return rc;
+	}
+
+	/* for safety, clear swap slot */
+	zero_page = alloc_page(GFP_NOIO|__GFP_HIGHMEM);
+	if (!zero_page)
+		return rc;
+
+	/*
+	 * The swap entry is ours to swap in. Prepare the zero page.
+	 */
+
+	__SetPageLocked(zero_page);
+	__SetPageSwapBacked(zero_page);
+
+	clear_highpage(zero_page);
+
+	/* it's just cheating, but it's not in swap */
+	SetPageSwapCache(zero_page);
+	set_page_private(zero_page, page_private(page));
+
+	__swap_writepage(zero_page, &wbc, swap_write_end);
+
+	return rc;
+}
+#endif
+
 int swap_set_page_dirty(struct page *page)
 {
 	struct swap_info_struct *sis = page_swap_info(page);
