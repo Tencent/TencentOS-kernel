@@ -320,10 +320,10 @@ int __init parse_crashkernel_low(char *cmdline,
 
 #ifdef CONFIG_KEXEC_CORE
 
-#ifdef CONFIG_X86
+#if defined(CONFIG_X86) || defined(CONFIG_ARM64)
 static int __init reserve_crashkernel_low(void)
 {
-#ifdef CONFIG_X86_64
+#ifdef CONFIG_64BIT
 	unsigned long long base, low_base = 0, low_size = 0;
 	unsigned long low_mem_limit;
 	int ret;
@@ -448,7 +448,7 @@ void __init reserve_crashkernel(void)
 	crashk_res.start = crash_base;
 	crashk_res.end   = crash_base + crash_size - 1;
 }
-#endif /* CONFIG_X86 */
+#endif
 #endif /* CONFIG_KEXEC_CORE */
 
 Elf_Word *append_elf_note(Elf_Word *buf, char *name, unsigned int type,
