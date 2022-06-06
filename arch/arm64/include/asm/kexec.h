@@ -28,11 +28,7 @@
 /* 2M alignment for crash kernel regions */
 #define CRASH_ALIGN	SZ_2M
 
-#ifdef CONFIG_ZONE_DMA
 #define CRASH_ADDR_LOW_MAX	arm64_dma_phys_limit
-#else
-#define CRASH_ADDR_LOW_MAX	arm64_dma32_phys_limit
-#endif
 
 #define CRASH_ADDR_HIGH_MAX	MEMBLOCK_ALLOC_ACCESSIBLE
 
