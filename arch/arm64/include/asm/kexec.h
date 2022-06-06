@@ -28,7 +28,12 @@
 /* 2M alignment for crash kernel regions */
 #define CRASH_ALIGN	SZ_2M
 
+#ifdef CONFIG_ZONE_DMA
+#define CRASH_ADDR_LOW_MAX	arm64_dma_phys_limit
+#else
 #define CRASH_ADDR_LOW_MAX	arm64_dma32_phys_limit
+#endif
+
 #define CRASH_ADDR_HIGH_MAX	MEMBLOCK_ALLOC_ACCESSIBLE
 
 #ifndef __ASSEMBLY__
@@ -94,6 +99,10 @@ extern void crash_post_resume(void);
 static inline bool crash_is_nosave(unsigned long pfn) {return false; }
 static inline void crash_prepare_suspend(void) {}
 static inline void crash_post_resume(void) {}
+#endif
+
+#ifdef CONFIG_KEXEC_CORE
+extern void __init reserve_crashkernel(void);
 #endif
 
 #ifdef CONFIG_KEXEC_FILE
