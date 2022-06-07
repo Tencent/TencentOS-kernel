@@ -5952,6 +5952,7 @@ static int tcp_rcv_synsent_state_process(struct sock *sk, struct sk_buff *skb,
 	struct tcp_fastopen_cookie foc = { .len = -1 };
 	int saved_clamp = tp->rx_opt.mss_clamp;
 	bool fastopen_fail;
+	SKB_DR(reason);
 
 	tcp_parse_options(sock_net(sk), skb, &tp->rx_opt, 0, &foc);
 	if (tp->rx_opt.saw_tstamp && tp->rx_opt.rcv_tsecr)
@@ -6001,6 +6002,7 @@ consume:
 		 *                                        --ANK(990513)
 		 */
 		if (!th->syn) {
+			SKB_DR_SET(reason, TCP_FLAGS);
 			NET_INC_DROPSTATS(sock_net(sk),
 					  LINUX_MIB_TCPNOSYNDROP);
 			goto discard_and_undo;
@@ -6096,6 +6098,7 @@ consume:
 		 *
 		 *      Otherwise (no ACK) drop the segment and return."
 		 */
+		SKB_DR_SET(reason, TCP_RESET);
 		NET_INC_DROPSTATS(sock_net(sk), LINUX_MIB_TCPRSTDROP);
 		goto discard_and_undo;
 	}
@@ -6103,6 +6106,7 @@ consume:
 	/* PAWS check. */
 	if (tp->rx_opt.ts_recent_stamp && tp->rx_opt.saw_tstamp &&
 	    tcp_paws_reject(&tp->rx_opt, 0)) {
+		SKB_DR_SET(reason, TCP_RFC7323_PAWS);
 		NET_INC_DROPSTATS(sock_net(sk), LINUX_MIB_TCPPAWSDROP);
 		goto discard_and_undo;
 	}
@@ -6165,7 +6169,7 @@ consume:
 discard_and_undo:
 	tcp_clear_options(&tp->rx_opt);
 	tp->rx_opt.mss_clamp = saved_clamp;
-	tcp_drop(sk, skb);
+	tcp_drop_reason(sk, skb, reason);
 	return 0;
 
 reset_and_undo:
