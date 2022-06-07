@@ -3624,7 +3624,7 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 		if (before(ack, prior_snd_una - tp->max_window)) {
 			if (!(flag & FLAG_NO_CHALLENGE_ACK))
 				tcp_send_challenge_ack(sk, skb);
-			return -1;
+			return -SKB_DROP_REASON_TCP_TOO_OLD_ACK;
 		}
 		goto old_ack;
 	}
@@ -3633,7 +3633,7 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 	 * this segment (RFC793 Section 3.9).
 	 */
 	if (after(ack, tp->snd_nxt))
-		return -1;
+		return -SKB_DROP_REASON_TCP_ACK_UNSENT_DATA;
 
 	if (after(ack, prior_snd_una)) {
 		flag |= FLAG_SND_UNA_ADVANCED;
@@ -5773,7 +5773,8 @@ slow_path:
 		return;
 
 step5:
-	if (tcp_ack(sk, skb, FLAG_SLOWPATH | FLAG_UPDATE_TS_RECENT) < 0) {
+	reason = tcp_ack(sk, skb, FLAG_SLOWPATH | FLAG_UPDATE_TS_RECENT);
+	if (reason < 0)
 		NET_INC_DROPSTATS(sock_net(sk), LINUX_MIB_TCPINVALIDACKDROP);
 		goto discard;
 	}
