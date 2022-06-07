@@ -5770,7 +5770,8 @@ slow_path:
 
 step5:
 	reason = tcp_ack(sk, skb, FLAG_SLOWPATH | FLAG_UPDATE_TS_RECENT);
-	if (reason < 0)
+	if ((int)reason < 0) {
+		reason = -reason;
 		NET_INC_DROPSTATS(sock_net(sk), LINUX_MIB_TCPINVALIDACKDROP);
 		goto discard;
 	}
