@@ -6390,7 +6390,7 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 			inet_csk_reset_keepalive_timer(sk, tmo);
 		} else {
 			tcp_time_wait(sk, TCP_FIN_WAIT2, tmo);
-			goto discard;
+			goto consume;
 		}
 		break;
 	}
@@ -6398,7 +6398,7 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 	case TCP_CLOSING:
 		if (tp->snd_una == tp->write_seq) {
 			tcp_time_wait(sk, TCP_TIME_WAIT, 0);
-			goto discard;
+			goto consume;
 		}
 		break;
 
@@ -6406,7 +6406,7 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 		if (tp->snd_una == tp->write_seq) {
 			tcp_update_metrics(sk);
 			tcp_done(sk);
-			goto discard;
+			goto consume;
 		}
 		break;
 	}
@@ -6453,6 +6453,10 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 discard:
 		tcp_drop(sk, skb);
 	}
+	return 0;
+
+consume:
+	__kfree_skb(skb);
 	return 0;
 }
 EXPORT_SYMBOL(tcp_rcv_state_process);
