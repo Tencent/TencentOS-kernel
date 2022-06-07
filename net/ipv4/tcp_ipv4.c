@@ -1907,6 +1907,8 @@ process:
 			iph = ip_hdr(skb);
 			tcp_v4_fill_cb(skb, iph, th);
 			nsk = tcp_check_req(sk, skb, req, false, &req_stolen);
+		} else {
+			drop_reason = SKB_DROP_REASON_SOCKET_FILTER;
 		}
 		if (!nsk) {
 			reqsk_put(req);
@@ -1939,6 +1941,7 @@ process:
 	}
 
 	if (!xfrm4_policy_check(sk, XFRM_POLICY_IN, skb)) {
+		drop_reason = SKB_DROP_REASON_XFRM_POLICY;
 		__NET_INC_DROPSTATS(net, LINUX_MIB_TCPXFRMDROP);
 		goto discard_and_relse;
 	}
@@ -2021,6 +2024,7 @@ discard_and_relse:
 
 do_time_wait:
 	if (!xfrm4_policy_check(NULL, XFRM_POLICY_IN, skb)) {
+		drop_reason = SKB_DROP_REASON_XFRM_POLICY;
 		inet_twsk_put(inet_twsk(sk));
 		__NET_INC_DROPSTATS(net, LINUX_MIB_TCPXFRMDROP);
 		goto discard_it;
