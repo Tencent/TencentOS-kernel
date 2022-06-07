@@ -966,8 +966,9 @@ EXPORT_SYMBOL_GPL(ping_queue_rcv_skb);
  *	All we need to do is get the socket.
  */
 
-bool ping_rcv(struct sk_buff *skb)
+enum skb_drop_reason ping_rcv(struct sk_buff *skb)
 {
+	enum skb_drop_reason reason = SKB_DROP_REASON_NO_SOCKET;
 	struct sock *sk;
 	struct net *net = dev_net(skb->dev);
 	struct icmphdr *icmph = icmp_hdr(skb);
@@ -986,13 +987,15 @@ bool ping_rcv(struct sk_buff *skb)
 
 		pr_debug("rcv on socket %p\n", sk);
 		if (skb2)
-			ping_queue_rcv_skb(sk, skb2);
+			reason = __ping_queue_rcv_skb(sk, skb2);
+		else
+			reason = SKB_DROP_REASON_NOMEM;
 		sock_put(sk);
-		return true;
+		return reason;
 	}
 	pr_debug("no socket, dropping\n");
 
-	return false;
+	return reason;
 }
 EXPORT_SYMBOL_GPL(ping_rcv);
 
