@@ -1629,7 +1629,7 @@ process:
 		sk->sk_rx_skb_cache = NULL;
 		ret = tcp_v6_do_rcv(sk, skb);
 	} else {
-		if (tcp_add_backlog(sk, skb))
+		if (tcp_add_backlog(sk, skb, &drop_reason))
 			goto discard_and_relse;
 		skb_to_free = NULL;
 	}
