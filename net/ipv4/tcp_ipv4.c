@@ -1298,9 +1298,8 @@ EXPORT_SYMBOL(tcp_v4_md5_hash_skb);
 #endif
 
 /* Called with rcu_read_lock() */
-static bool tcp_v4_inbound_md5_hash(const struct sock *sk,
-				    const struct sk_buff *skb,
-				    enum skb_drop_reason *reason)
+static enum skb_drop_reason
+tcp_v4_inbound_md5_hash(const struct sock *sk, const struct sk_buff *skb)
 {
 #ifdef CONFIG_TCP_MD5SIG
 	/*
@@ -1324,18 +1323,16 @@ static bool tcp_v4_inbound_md5_hash(const struct sock *sk,
 
 	/* We've parsed the options - do we have a hash? */
 	if (!hash_expected && !hash_location)
-		return false;
+		return SKB_NOT_DROPPED_YET;
 
 	if (hash_expected && !hash_location) {
-		*reason = SKB_DROP_REASON_TCP_MD5NOTFOUND;
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPMD5NOTFOUND);
-		return true;
+		return SKB_DROP_REASON_TCP_MD5NOTFOUND;
 	}
 
 	if (!hash_expected && hash_location) {
-		*reason = SKB_DROP_REASON_TCP_MD5UNEXPECTED;
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPMD5UNEXPECTED);
-		return true;
+		return SKB_DROP_REASON_TCP_MD5UNEXPECTED;
 	}
 
 	/* Okay, so this is hash_expected and hash_location -
@@ -1346,18 +1343,17 @@ static bool tcp_v4_inbound_md5_hash(const struct sock *sk,
 				      NULL, skb);
 
 	if (genhash || memcmp(hash_location, newhash, 16) != 0) {
-		*reason = SKB_DROP_REASON_TCP_MD5FAILURE;
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPMD5FAILURE);
 		net_info_ratelimited("MD5 Hash failed for (%pI4, %d)->(%pI4, %d)%s\n",
 				     &iph->saddr, ntohs(th->source),
 				     &iph->daddr, ntohs(th->dest),
 				     genhash ? " tcp_v4_calc_md5_hash failed"
 				     : "");
-		return true;
+		return SKB_DROP_REASON_TCP_MD5FAILURE;
 	}
-	return false;
+	return SKB_NOT_DROPPED_YET;
 #endif
-	return false;
+	return SKB_NOT_DROPPED_YET;
 }
 
 static void tcp_v4_init_req(struct request_sock *req,
@@ -1892,7 +1888,8 @@ process:
 		struct sock *nsk;
 
 		sk = req->rsk_listener;
-		if (unlikely(tcp_v4_inbound_md5_hash(sk, skb, &drop_reason))) {
+		drop_reason = tcp_v4_inbound_md5_hash(sk, skb);
+		if (unlikely(drop_reason)) {
 			sk_drops_add(sk, skb);
 			reqsk_put(req);
 			__NET_INC_DROPSTATS(net, LINUX_MIB_TCPMD5DROP);
@@ -1956,7 +1953,8 @@ process:
 		goto discard_and_relse;
 	}
 
-	if (tcp_v4_inbound_md5_hash(sk, skb, dif, sdif, &drop_reason))
+	drop_reason = tcp_v4_inbound_md5_hash(sk, skb);
+	if (drop_reason) {
 		__NET_INC_DROPSTATS(net, LINUX_MIB_TCPMD5DROP);
 		goto discard_and_relse;
 	}
