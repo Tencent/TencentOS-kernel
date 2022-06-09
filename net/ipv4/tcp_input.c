@@ -6219,13 +6219,13 @@ static void tcp_rcv_synrecv_state_fastopen(struct sock *sk)
  *	address independent.
  */
 
-int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
+enum skb_drop_reason tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	const struct tcphdr *th = tcp_hdr(skb);
 	struct request_sock *req;
-	int queued = 0;
+	int queued = 0, ret;
 	bool acceptable;
 	SKB_DR(reason);
 
@@ -6236,7 +6236,7 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 
 	case TCP_LISTEN:
 		if (th->ack)
-			return 1;
+			return SKB_DROP_REASON_TCP_FLAGS;
 
 		if (th->rst) {
 			SKB_DR_SET(reason, TCP_RESET);
@@ -6257,9 +6257,9 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 			rcu_read_unlock();
 
 			if (!acceptable)
-				return 1;
+				return SKB_DROP_REASON_NOT_SPECIFIED;
 			consume_skb(skb);
-			return 0;
+			return SKB_NOT_DROPPED_YET;
 		}
 		SKB_DR_SET(reason, TCP_FLAGS);
 		goto discard;
@@ -6269,13 +6269,13 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 		tcp_mstamp_refresh(tp);
 		queued = tcp_rcv_synsent_state_process(sk, skb, th);
 		if (queued >= 0)
-			return queued;
+			return (enum skb_drop_reason)queued;
 
 		/* Do step6 onward by hand. */
 		tcp_urg(sk, skb, th);
 		__kfree_skb(skb);
 		tcp_data_snd_check(sk);
-		return 0;
+		return SKB_NOT_DROPPED_YET;
 	}
 
 	tcp_mstamp_refresh(tp);
@@ -6302,15 +6302,19 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 		return 0;
 
 	/* step 5: check the ACK field */
-	acceptable = tcp_ack(sk, skb, FLAG_SLOWPATH |
-				      FLAG_UPDATE_TS_RECENT |
-				      FLAG_NO_CHALLENGE_ACK) > 0;
+	ret = tcp_ack(sk, skb, FLAG_SLOWPATH |
+			       FLAG_UPDATE_TS_RECENT |
+			       FLAG_NO_CHALLENGE_ACK);
+	acceptable = ret > 0;
 
 	if (!acceptable) {
 		if (sk->sk_state == TCP_SYN_RECV)
 			return 1;	/* send one RST */
 		tcp_send_challenge_ack(sk, skb);
-		SKB_DR_SET(reason, TCP_OLD_ACK);
+		if (ret == 0)
+			SKB_DR_SET(reason, TCP_OLD_ACK);
+		else
+			reason = -ret;
 		goto discard;
 	}
 	switch (sk->sk_state) {
@@ -6378,7 +6382,7 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 		if (tp->linger2 < 0) {
 			tcp_done(sk);
 			NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPABORTONDATA);
-			return 1;
+			return SKB_DROP_REASON_TCP_LINGER;
 		}
 		if (TCP_SKB_CB(skb)->end_seq != TCP_SKB_CB(skb)->seq &&
 		    after(TCP_SKB_CB(skb)->end_seq - th->fin, tp->rcv_nxt)) {
@@ -6387,7 +6391,7 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 				tcp_fastopen_active_disable(sk);
 			tcp_done(sk);
 			NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPABORTONDATA);
-			return 1;
+			return SKB_DROP_REASON_TCP_INVALID_SEQUENCE;
 		}
 
 		tmo = tcp_fin_time(sk);
@@ -6448,7 +6452,7 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 			    after(TCP_SKB_CB(skb)->end_seq - th->fin, tp->rcv_nxt)) {
 				NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPABORTONDATA);
 				tcp_reset(sk);
-				return 1;
+				return SKB_DROP_REASON_TCP_INVALID_SEQUENCE;
 			}
 		}
 		/* Fall through */
@@ -6468,11 +6472,11 @@ int tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 discard:
 		tcp_drop_reason(sk, skb, reason);
 	}
-	return 0;
+	return SKB_NOT_DROPPED_YET;
 
 consume:
 	__kfree_skb(skb);
-	return 0;
+	return SKB_NOT_DROPPED_YET;
 }
 EXPORT_SYMBOL(tcp_rcv_state_process);
 

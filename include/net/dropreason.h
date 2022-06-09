@@ -243,6 +243,12 @@ enum skb_drop_reason {
 	 */
 	SKB_DROP_REASON_TCP_PAWSACTIVEREJECTED,
 	/**
+	 * @SKB_DROP_REASON_TCP_LINGER: dropped because of the setting of
+	 * TCP socket option TCP_LINGER2, corresponding to
+	 * LINUX_MIB_TCPABORTONLINGER
+	 */
+	SKB_DROP_REASON_TCP_LINGER,
+	/**
 	 * @SKB_DROP_REASON_MAX: the maximum of drop reason, which shouldn't be
 	 * used as a real 'reason'
 	 */
