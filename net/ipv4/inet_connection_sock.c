@@ -877,7 +877,7 @@ void inet_csk_destroy_sock(struct sock *sk)
 
 	sk->sk_prot->destroy(sk);
 
-	sk_stream_kill_queues(sk);
+	sk_stream_kill_queues_reason(sk, SKB_DROP_REASON_SOCKET_DESTROYED);
 
 	xfrm_sk_free_policy(sk);
 
