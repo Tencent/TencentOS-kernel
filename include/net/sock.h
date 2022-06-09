@@ -1050,11 +1050,17 @@ int sk_stream_wait_connect(struct sock *sk, long *timeo_p);
 int sk_stream_wait_memory(struct sock *sk, long *timeo_p);
 void sk_stream_wait_close(struct sock *sk, long timeo_p);
 int sk_stream_error(struct sock *sk, int flags, int err);
-void sk_stream_kill_queues(struct sock *sk);
+void sk_stream_kill_queues_reason(struct sock *sk,
+				  enum skb_drop_reason reason);
 void sk_set_memalloc(struct sock *sk);
 void sk_clear_memalloc(struct sock *sk);
 
 void __sk_flush_backlog(struct sock *sk);
+
+static inline void sk_stream_kill_queues(struct sock *sk)
+{
+	sk_stream_kill_queues_reason(sk, SKB_DROP_REASON_NOT_SPECIFIED);
+}
 
 static inline bool sk_flush_backlog(struct sock *sk)
 {
