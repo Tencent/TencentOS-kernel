@@ -249,6 +249,16 @@ enum skb_drop_reason {
 	 */
 	SKB_DROP_REASON_TCP_LINGER,
 	/**
+	 * @SKB_DROP_REASON_LISTENOVERFLOWS: accept queue of the listen
+	 * socket is full, corresponding to LINUX_MIB_LISTENOVERFLOWS
+	 */
+	SKB_DROP_REASON_LISTENOVERFLOWS,
+	/**
+	 * @SKB_DROP_REASON_TCP_REQQFULLDROP: request queue of the listen
+	 * socket is full, corresponding to LINUX_MIB_TCPREQQFULLDROP
+	 */
+	SKB_DROP_REASON_TCP_REQQFULLDROP,
+	/**
 	 * @SKB_DROP_REASON_MAX: the maximum of drop reason, which shouldn't be
 	 * used as a real 'reason'
 	 */

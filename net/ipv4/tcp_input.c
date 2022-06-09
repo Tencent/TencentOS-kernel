@@ -6252,13 +6252,17 @@ enum skb_drop_reason tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 			 */
 			rcu_read_lock();
 			local_bh_disable();
-			acceptable = icsk->icsk_af_ops->conn_request(sk, skb) >= 0;
+			reason = SKB_NOT_DROPPED_YET;
+			acceptable = icsk->icsk_af_ops->conn_request(sk, skb, &reason) >= 0;
 			local_bh_enable();
 			rcu_read_unlock();
 
 			if (!acceptable)
-				return SKB_DROP_REASON_NOT_SPECIFIED;
-			consume_skb(skb);
+				return reason ?: SKB_DROP_REASON_NOT_SPECIFIED;
+			if (reason)
+				kfree_skb_reason(skb, reason);
+			else
+				consume_skb(skb);
 			return SKB_NOT_DROPPED_YET;
 		}
 		SKB_DR_SET(reason, TCP_FLAGS);
@@ -6663,9 +6667,9 @@ u16 tcp_get_syncookie_mss(struct request_sock_ops *rsk_ops,
 }
 EXPORT_SYMBOL_GPL(tcp_get_syncookie_mss);
 
-int tcp_conn_request(struct request_sock_ops *rsk_ops,
-		     const struct tcp_request_sock_ops *af_ops,
-		     struct sock *sk, struct sk_buff *skb)
+enum skb_drop_reason tcp_conn_request(struct request_sock_ops *rsk_ops,
+				      const struct tcp_request_sock_ops *af_ops,
+				      struct sock *sk, struct sk_buff *skb)
 {
 	struct tcp_fastopen_cookie foc = { .len = -1 };
 	__u32 isn = TCP_SKB_CB(skb)->tcp_tw_isn;
@@ -6677,6 +6681,7 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
 	bool want_cookie = false;
 	struct dst_entry *dst;
 	struct flowi fl;
+	SKB_DR(reason);
 
 	/* TW buckets are converted to open requests without
 	 * limitations, they conserve resources and peer is
@@ -6685,12 +6690,15 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
 	if ((net->ipv4.sysctl_tcp_syncookies == 2 ||
 	     inet_csk_reqsk_queue_is_full(sk)) && !isn) {
 		want_cookie = tcp_syn_flood_action(sk, rsk_ops->slab_name);
-		if (!want_cookie)
+		if (!want_cookie) {
+			SKB_DR_SET(reason, TCP_REQQFULLDROP);
 			goto drop;
+		}
 	}
 
 	if (sk_acceptq_is_full(sk)) {
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_LISTENOVERFLOWS);
+		SKB_DR_SET(reason, LISTENOVERFLOWS);
 		goto drop;
 	}
 
@@ -6757,6 +6765,7 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
 			 */
 			pr_drop_req(req, ntohs(tcp_hdr(skb)->source),
 				    rsk_ops->family);
+			SKB_DR_SET(reason, TCP_REQQFULLDROP);
 			goto drop_and_release;
 		}
 
@@ -6807,7 +6816,7 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
 		}
 	}
 	reqsk_put(req);
-	return 0;
+	return SKB_NOT_DROPPED_YET;
 
 drop_and_release:
 	dst_release(dst);
@@ -6815,6 +6824,6 @@ drop_and_free:
 	__reqsk_free(req);
 drop:
 	tcp_listendrop(sk);
-	return 0;
+	return reason;
 }
 EXPORT_SYMBOL(tcp_conn_request);

@@ -576,6 +576,7 @@ int dccp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 	const int old_state = sk->sk_state;
 	bool acceptable;
 	int queued = 0;
+	SKB_DR(reason);
 
 	/*
 	 *  Step 3: Process LISTEN state
@@ -606,7 +607,7 @@ int dccp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 			 */
 			rcu_read_lock();
 			local_bh_disable();
-			acceptable = inet_csk(sk)->icsk_af_ops->conn_request(sk, skb) >= 0;
+			acceptable = inet_csk(sk)->icsk_af_ops->conn_request(sk, skb, &reason) >= 0;
 			local_bh_enable();
 			rcu_read_unlock();
 			if (!acceptable)
