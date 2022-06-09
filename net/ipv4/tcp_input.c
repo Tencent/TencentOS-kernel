@@ -6385,7 +6385,7 @@ enum skb_drop_reason tcp_rcv_state_process(struct sock *sk, struct sk_buff *skb)
 
 		if (tp->linger2 < 0) {
 			tcp_done(sk);
-			NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPABORTONDATA);
+			NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPABORTONLINGER);
 			return SKB_DROP_REASON_TCP_LINGER;
 		}
 		if (TCP_SKB_CB(skb)->end_seq != TCP_SKB_CB(skb)->seq &&
