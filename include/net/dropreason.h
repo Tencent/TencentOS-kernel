@@ -259,6 +259,12 @@ enum skb_drop_reason {
 	 */
 	SKB_DROP_REASON_TCP_REQQFULLDROP,
 	/**
+	 * @SKB_DROP_REASON_TIMEWAIT: socket is in time-wait state and all
+	 * packet that received will be treated as 'drop', except a good
+	 * 'SYN' packet
+	 */
+	SKB_DROP_REASON_TIMEWAIT,
+	/**
 	 * @SKB_DROP_REASON_MAX: the maximum of drop reason, which shouldn't be
 	 * used as a real 'reason'
 	 */

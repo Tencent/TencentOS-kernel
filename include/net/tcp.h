@@ -386,9 +386,10 @@ enum tcp_tw_status {
 };
 
 
-enum tcp_tw_status tcp_timewait_state_process(struct inet_timewait_sock *tw,
-					      struct sk_buff *skb,
-					      const struct tcphdr *th);
+enum tcp_tw_status
+tcp_timewait_state_process(struct inet_timewait_sock *tw, struct sk_buff *skb,
+			   const struct tcphdr *th,
+			   enum skb_drop_reason *reason);
 struct sock *tcp_check_req(struct sock *sk, struct sk_buff *skb,
 			   struct request_sock *req, bool fastopen,
 			   bool *lost_race);
