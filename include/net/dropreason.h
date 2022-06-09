@@ -264,6 +264,8 @@ enum skb_drop_reason {
 	 * 'SYN' packet
 	 */
 	SKB_DROP_REASON_TIMEWAIT,
+	/** @SKB_DROP_REASON_LSM: dropped by LSM */
+	SKB_DROP_REASON_LSM,
 	/**
 	 * @SKB_DROP_REASON_MAX: the maximum of drop reason, which shouldn't be
 	 * used as a real 'reason'

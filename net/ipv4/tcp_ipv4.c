@@ -1370,9 +1370,15 @@ static void tcp_v4_init_req(struct request_sock *req,
 
 static struct dst_entry *tcp_v4_route_req(const struct sock *sk,
 					  struct flowi *fl,
-					  const struct request_sock *req)
+					  struct request_sock *req,
+					  enum skb_drop_reason *reason)
 {
-	return inet_csk_route_req(sk, &fl->u.ip4, req);
+	struct dst_entry *dst;
+
+	dst = inet_csk_route_req(sk, &fl->u.ip4, req);
+	if (!dst)
+		SKB_DR_SET(*reason, IP_OUTNOROUTES);
+	return dst;
 }
 
 struct request_sock_ops tcp_request_sock_ops __read_mostly = {
