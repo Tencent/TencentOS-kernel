@@ -24,6 +24,9 @@ config KEXEC_ELF
 config HAVE_IMA_KEXEC
 	bool
 
+config ARCH_WANT_RESERVE_CRASH_KERNEL
+	bool
+
 config HOTPLUG_SMT
 	bool
 
