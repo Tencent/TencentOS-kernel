@@ -642,12 +642,15 @@ void sli_update_tick(struct task_struct *tsk)
 {
 	struct cgroup *cgrp;
 
-	if (!static_branch_likely(&sli_monitor_enabled))
+	if (!static_branch_likely(&sli_enabled))
 		return;
 
 #ifdef CONFIG_SCHED_INFO
 	sli_check_longsys(tsk);
 #endif
+
+	if (!static_branch_likely(&sli_monitor_enabled))
+		return;
 
 	rcu_read_lock();
 
