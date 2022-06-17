@@ -184,7 +184,9 @@ static void sched_info_arrive(struct rq *rq, struct task_struct *t, struct task_
 	t->sched_info.last_arrival = now;
 	t->sched_info.pcount++;
 	rq_sched_info_arrive(rq, delta);
+#ifdef CONFIG_CGROUP_SLI
 	sli_schedlat_rundelay(t, prev, delta);
+#endif
 }
 
 /*

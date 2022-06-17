@@ -840,7 +840,9 @@ typedef enum {
 static pageout_t pageout(struct page *page, struct address_space *mapping,
 			 struct scan_control *sc)
 {
+#ifdef CONFIG_CGROUP_SLI
 	u64 start;
+#endif
 	/*
 	 * If the page is dirty, only perform writeback if that write
 	 * will be non-blocking.  To prevent this allocation from being
@@ -889,14 +891,18 @@ static pageout_t pageout(struct page *page, struct address_space *mapping,
 		};
 
 		SetPageReclaim(page);
+#ifdef CONFIG_CGROUP_SLI
 		if (!current_is_kswapd())
 			sli_memlat_stat_start(&start);
+#endif
 		res = mapping->a_ops->writepage(page, &wbc);
+#ifdef CONFIG_CGROUP_SLI
 		if (!current_is_kswapd())
 			sli_memlat_stat_end(global_reclaim(sc) ?
 					      MEM_LAT_GLOBAL_DIRECT_SWAPOUT :
 					      MEM_LAT_MEMCG_DIRECT_SWAPOUT,
 					      start);
+#endif
 		if (res < 0)
 			handle_write_error(mapping, page, res);
 		if (res == AOP_WRITEPAGE_ACTIVATE) {

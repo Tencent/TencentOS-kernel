@@ -3705,7 +3705,9 @@ void scheduler_tick(void)
 	rq->idle_balance = idle_cpu(cpu);
 	trigger_load_balance(rq);
 #endif
+#ifdef CONFIG_CGROUP_SLI
 	sli_update_tick(curr);
+#endif
 }
 
 #ifdef CONFIG_NO_HZ_FULL
@@ -3799,7 +3801,9 @@ out_requeue:
 	if (os == TICK_SCHED_REMOTE_RUNNING)
 		queue_delayed_work(system_unbound_wq, dwork, HZ);
 
+#ifdef CONFIG_CGROUP_SLI
 	sli_update_tick(curr);
+#endif
 }
 
 static void sched_tick_start(int cpu)

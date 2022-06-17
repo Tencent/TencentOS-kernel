@@ -3702,6 +3702,7 @@ static void cgroup_pressure_release(struct kernfs_open_file *of)
 }
 #endif /* CONFIG_PSI */
 
+#ifdef CONFIG_CGROUP_SLI
 static int cgroup_sli_memory_show(struct seq_file *seq, void *v)
 {
 	struct cgroup *cgroup = seq_css(seq)->cgroup;
@@ -3724,6 +3725,7 @@ static int cgroup_sli_max_show(struct seq_file *seq, void *v)
 	sli_schedlat_max_show(seq, cgroup);
 	return sli_memlat_max_show(seq, cgroup);
 }
+#endif
 
 void *cgroup_mbuf_start(struct seq_file *s, loff_t *pos)
 {
@@ -5046,6 +5048,7 @@ out_unlock:
 	return ret ?: nbytes;
 }
 
+#ifdef CONFIG_CGROUP_SLI
 int cgroup_sli_monitor_open(struct kernfs_open_file *of)
 {
 	return sli_monitor_open(of);
@@ -5075,6 +5078,7 @@ __poll_t cgroup_sli_monitor_poll(struct kernfs_open_file *of, poll_table *pt)
 {
 	return sli_monitor_poll(of, pt);
 }
+#endif
 
 /* cgroup core interface files for the default hierarchy */
 static struct cftype cgroup_base_files[] = {
@@ -5175,6 +5179,7 @@ static struct cftype cgroup_base_files[] = {
 		.seq_next = cgroup_mbuf_next,
 		.seq_stop = cgroup_mbuf_stop,
 	},
+#ifdef CONFIG_CGROUP_SLI
 	{
 		.name = "sli.memory",
 		.flags = CFTYPE_NOT_ON_ROOT,
@@ -5205,6 +5210,7 @@ static struct cftype cgroup_base_files[] = {
 		.seq_stop = cgroup_sli_monitor_stop,
 		.poll = cgroup_sli_monitor_poll,
 	},
+#endif
 	{ }	/* terminate */
 };
 
@@ -5266,7 +5272,9 @@ static void css_free_rwork_fn(struct work_struct *work)
 			cgroup_put(cgroup_parent(cgrp));
 			kernfs_put(cgrp->kn);
 			psi_cgroup_free(cgrp);
+#ifdef CONFIG_CGROUP_SLI
 			sli_cgroup_free(cgrp);
+#endif
 			if (cgroup_on_dfl(cgrp))
 				cgroup_rstat_exit(cgrp);
 			kfree(cgrp);
@@ -5712,15 +5720,19 @@ int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
 	if (ret)
 		goto out_destroy;
 
+#ifdef CONFIG_CGROUP_SLI
 	ret = sli_cgroup_alloc(cgrp);
 	if (ret)
 		goto out_destroy;
+#endif
 
 	if(sysctl_qos_mbuf_enable && cgroup_need_mbuf(cgrp))
 		cgrp->mbuf = mbuf_slot_alloc(cgrp);
 
-	if (cgroup_need_mbuf(cgrp))
+#ifdef CONFIG_CGROUP_SLI
+	if (cgroup_need_sli(cgrp))
 		cgrp->sctx = sctx_alloc();
+#endif
 
 	TRACE_CGROUP_PATH(mkdir, cgrp);
 
@@ -5907,8 +5919,10 @@ static int cgroup_destroy_locked(struct cgroup *cgrp)
 	if (cgrp->mbuf)
 		mbuf_free(cgrp);
 
+#ifdef CONFIG_CGROUP_SLI
 	if (cgrp->sctx)
 		sctx_free(cgrp);
+#endif
 	/* put the base reference */
 	percpu_ref_kill(&cgrp->self.refcnt);
 
