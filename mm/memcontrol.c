@@ -4092,10 +4092,12 @@ static int memcg_numa_stat_show(struct seq_file *m, void *v)
 	for (stat = stats; stat < stats + ARRAY_SIZE(stats); stat++) {
 		nr = mem_cgroup_nr_lru_pages(memcg, stat->lru_mask);
 		seq_printf(m, "%s=%lu", stat->name, nr);
+		cond_resched();
 		for_each_node_state(nid, N_MEMORY) {
 			nr = mem_cgroup_node_nr_lru_pages(memcg, nid,
 							  stat->lru_mask);
 			seq_printf(m, " N%d=%lu", nid, nr);
+			cond_resched();
 		}
 		seq_putc(m, '\n');
 	}
@@ -4104,14 +4106,18 @@ static int memcg_numa_stat_show(struct seq_file *m, void *v)
 		struct mem_cgroup *iter;
 
 		nr = 0;
-		for_each_mem_cgroup_tree(iter, memcg)
+		for_each_mem_cgroup_tree(iter, memcg) {
 			nr += mem_cgroup_nr_lru_pages(iter, stat->lru_mask);
+			cond_resched();
+		}
 		seq_printf(m, "hierarchical_%s=%lu", stat->name, nr);
 		for_each_node_state(nid, N_MEMORY) {
 			nr = 0;
-			for_each_mem_cgroup_tree(iter, memcg)
+			for_each_mem_cgroup_tree(iter, memcg) {
 				nr += mem_cgroup_node_nr_lru_pages(
 					iter, nid, stat->lru_mask);
+				cond_resched();
+			}
 			seq_printf(m, " N%d=%lu", nid, nr);
 		}
 		seq_putc(m, '\n');
