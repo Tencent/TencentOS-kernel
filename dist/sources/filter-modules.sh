@@ -17,7 +17,7 @@
 
 # Set the default dirs and modules to filter out as external modules
 
-driverdirs="atm auxdisplay bcma bluetooth firewire fmc fpga iio infiniband isdn leds media memstick message mfd mmc mtd nfc ntb pcmcia platform power powercap ssb soundwire staging thermal tty uio w1"
+driverdirs="atm auxdisplay bcma bluetooth firewire fmc fpga iio infiniband isdn leds media memstick message mfd mmc mtd nfc ntb pcmcia platform power powercap ssb soundwire staging thermal tty uio w1 ofed_addon"
 
 chardrvs="mwave pcmcia"
 
