@@ -855,24 +855,23 @@ static int vpc_vtoa_get(struct sk_buff *skb, struct genl_info *info)
 	}
 
 	req = nla_data(attrs[VTOA_ATTR_REQ]);
-
-	net = get_net_ns_by_pid(nlh->nlmsg_pid);
-	if (IS_ERR(net)){
-		TOA_INFO("get netns %u fail, if_idx:%u sip:%pI4 dip:%pI4 sport:%u dport:%u, err %ld\n",
+	if (skb->sk){
+		net = sock_net(skb->sk);
+	}
+	if (!net){
+		TOA_INFO("get netns %u fail, if_idx:%u sip:%pI4 dip:%pI4 sport:%u dport:%u.\n",
 			nlh->nlmsg_pid, req->if_idx, &req->sip, &req->dip,
-			ntohs(req->sport), ntohs(req->dport), PTR_ERR(net));
-		return PTR_ERR(net);
+			ntohs(req->sport), ntohs(req->dport));
+		return -EINVAL;
 	}
 
 	memset(&vinfo, 0, sizeof(vinfo));
 	err = vpc_inet_dump_one_sk(net, req, &vinfo);
 	if (err != 0){
-		put_net(net);
 		return err;
 	}
 	
 	err = vpc_vtoa_netlink_send(net, nlh, &vinfo);
-	put_net(net);
 	
 	TOA_DBG("pid %u req[if_idx:%u sip:%pI4 dip:%pI4 sport:%u dport:%u] info["
 		"vpcid:%u vmip:%pI4 sport:%u vip:%pI4 vport:%u] err:%d\n",
