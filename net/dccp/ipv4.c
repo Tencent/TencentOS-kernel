@@ -570,7 +570,8 @@ static struct request_sock_ops dccp_request_sock_ops __read_mostly = {
 	.syn_ack_timeout = dccp_syn_ack_timeout,
 };
 
-int dccp_v4_conn_request(struct sock *sk, struct sk_buff *skb)
+int dccp_v4_conn_request(struct sock *sk, struct sk_buff *skb,
+			 enum skb_drop_reason *reason)
 {
 	struct inet_request_sock *ireq;
 	struct request_sock *req;

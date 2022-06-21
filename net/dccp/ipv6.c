@@ -304,7 +304,8 @@ static struct request_sock_ops dccp6_request_sock_ops = {
 	.syn_ack_timeout = dccp_syn_ack_timeout,
 };
 
-static int dccp_v6_conn_request(struct sock *sk, struct sk_buff *skb)
+static int dccp_v6_conn_request(struct sock *sk, struct sk_buff *skb,
+				enum skb_drop_reason *reason)
 {
 	struct request_sock *req;
 	struct dccp_request_sock *dreq;
@@ -314,7 +315,7 @@ static int dccp_v6_conn_request(struct sock *sk, struct sk_buff *skb)
 	struct dccp_skb_cb *dcb = DCCP_SKB_CB(skb);
 
 	if (skb->protocol == htons(ETH_P_IP))
-		return dccp_v4_conn_request(sk, skb);
+		return dccp_v4_conn_request(sk, skb, reason);
 
 	if (!ipv6_unicast_destination(skb))
 		return 0;	/* discard, don't send a reset here */

@@ -190,10 +190,11 @@ int sk_stream_error(struct sock *sk, int flags, int err)
 }
 EXPORT_SYMBOL(sk_stream_error);
 
-void sk_stream_kill_queues(struct sock *sk)
+void sk_stream_kill_queues_reason(struct sock *sk,
+				  enum skb_drop_reason reason)
 {
 	/* First the read buffer. */
-	__skb_queue_purge(&sk->sk_receive_queue);
+	__skb_queue_purge_reason(&sk->sk_receive_queue, reason);
 
 	/* Next, the error queue. */
 	__skb_queue_purge(&sk->sk_error_queue);
@@ -212,4 +213,4 @@ void sk_stream_kill_queues(struct sock *sk)
 	 * have gone away, only the net layer knows can touch it.
 	 */
 }
-EXPORT_SYMBOL(sk_stream_kill_queues);
+EXPORT_SYMBOL(sk_stream_kill_queues_reason);
