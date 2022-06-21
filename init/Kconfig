@@ -1053,6 +1053,17 @@ config SOCK_CGROUP_DATA
 	bool
 	default n
 
+config CGROUP_SLI
+	bool "Service level indicator"
+	depends on MEMCG
+	default n
+	help
+	  This option enables the SLI feature for cgroups. SLI is a
+	  lightweight and high efficient mechanism that could help
+	  users to monitor the cgroup's performance. And we can
+	  combine SLI with mbuf, then we can acquire the detail
+	  stack information that figure out who cause this interference.
+
 endif # CGROUPS
 
 menuconfig NAMESPACES

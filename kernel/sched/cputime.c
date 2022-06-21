@@ -109,9 +109,11 @@ static inline void task_group_account_field(struct task_struct *p, int index,
 
 	cgroup_account_cputime_field(p, index, tmp);
 
+#ifdef CONFIG_CGROUP_SLI
 	/* Collect the irq cputime for cgroup(used for sli) */
 	if (index == CPUTIME_SOFTIRQ || index == CPUTIME_IRQ)
 		sli_schedlat_stat(p, SCHEDLAT_IRQTIME, tmp);
+#endif
 }
 
 /*

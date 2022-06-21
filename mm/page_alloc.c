@@ -3909,19 +3909,25 @@ __alloc_pages_direct_compact(gfp_t gfp_mask, unsigned int order,
 	struct page *page = NULL;
 	unsigned long pflags;
 	unsigned int noreclaim_flag;
+#ifdef CONFIG_CGROUP_SLI
 	u64 start;
+#endif
 
 	if (!order)
 		return NULL;
 
 	psi_memstall_enter(&pflags);
+#ifdef CONFIG_CGROUP_SLI
 	sli_memlat_stat_start(&start);
+#endif
 	noreclaim_flag = memalloc_noreclaim_save();
 	*compact_result = try_to_compact_pages(gfp_mask, order, alloc_flags, ac,
 								prio, &page);
 
 	memalloc_noreclaim_restore(noreclaim_flag);
+#ifdef CONFIG_CGROUP_SLI
 	sli_memlat_stat_end(MEM_LAT_DIRECT_COMPACT, start);
+#endif
 	psi_memstall_leave(&pflags);
 
 	/*
@@ -4132,14 +4138,18 @@ __perform_reclaim(gfp_t gfp_mask, unsigned int order,
 	int progress;
 	unsigned int noreclaim_flag;
 	unsigned long pflags;
+#ifdef CONFIG_CGROUP_SLI
 	u64 start;
+#endif
 
 	cond_resched();
 
 	/* We now go into synchronous reclaim */
 	cpuset_memory_pressure_bump();
 	psi_memstall_enter(&pflags);
+#ifdef CONFIG_CGROUP_SLI
 	sli_memlat_stat_start(&start);
+#endif
 	fs_reclaim_acquire(gfp_mask);
 	noreclaim_flag = memalloc_noreclaim_save();
 
@@ -4148,7 +4158,9 @@ __perform_reclaim(gfp_t gfp_mask, unsigned int order,
 
 	memalloc_noreclaim_restore(noreclaim_flag);
 	fs_reclaim_release(gfp_mask);
+#ifdef CONFIG_CGROUP_SLI
 	sli_memlat_stat_end(MEM_LAT_GLOBAL_DIRECT_RECLAIM, start);
+#endif
 	psi_memstall_leave(&pflags);
 
 	cond_resched();
