@@ -1053,6 +1053,17 @@ config SOCK_CGROUP_DATA
 	bool
 	default n
 
+config CGROUP_SLI
+	bool "Service level indicator"
+	depends on MEMCG
+	default n
+	help
+	  This option enables the SLI feature for cgroups. SLI is a
+	  lightweight and high efficient mechanism that could help
+	  users to monitor the cgroup's performance. And we can
+	  combine SLI with mbuf, then we can acquire the detail
+	  stack information that figure out who cause this interference.
+
 endif # CGROUPS
 
 menuconfig NAMESPACES
@@ -1603,6 +1614,18 @@ config KALLSYMS_BASE_RELATIVE
 # end of the "standard kernel features (expert users)" menu
 
 # syscall, maps, verifier
+
+config BPF_LSM
+	bool "LSM Instrumentation with BPF"
+	depends on BPF_SYSCALL
+	depends on SECURITY
+	depends on BPF_JIT
+	help
+	  Enables instrumentation of the security hooks with eBPF programs for
+	  implementing dynamic MAC and Audit Policies.
+
+	  If you are unsure how to answer this question, answer N.
+
 config BPF_SYSCALL
 	bool "Enable bpf() system call"
 	select BPF

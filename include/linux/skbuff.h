@@ -40,6 +40,7 @@
 #if IS_ENABLED(CONFIG_NF_CONNTRACK)
 #include <linux/netfilter/nf_conntrack_common.h>
 #endif
+#include <net/dropreason.h>
 
 /* The interface for checksum offload between the stack and networking drivers
  * is as follows...
@@ -1017,15 +1018,31 @@ static inline bool skb_unref(struct sk_buff *skb)
 	return true;
 }
 
+void kfree_skb_reason(struct sk_buff *skb, enum skb_drop_reason reason);
+
+/**
+ *	kfree_skb - free an sk_buff with 'NOT_SPECIFIED' reason
+ *	@skb: buffer to free
+ */
+static inline void kfree_skb(struct sk_buff *skb)
+{
+	kfree_skb_reason(skb, SKB_DROP_REASON_NOT_SPECIFIED);
+}
+
 void skb_release_head_state(struct sk_buff *skb);
-void kfree_skb(struct sk_buff *skb);
-void kfree_skb_list(struct sk_buff *segs);
+void kfree_skb_list_reason(struct sk_buff *segs,
+			   enum skb_drop_reason reason);
 void skb_dump(const char *level, const struct sk_buff *skb, bool full_pkt);
 void skb_tx_error(struct sk_buff *skb);
 void consume_skb(struct sk_buff *skb);
 void __consume_stateless_skb(struct sk_buff *skb);
 void  __kfree_skb(struct sk_buff *skb);
 extern struct kmem_cache *skbuff_head_cache;
+
+static inline void kfree_skb_list(struct sk_buff *segs)
+{
+	kfree_skb_list_reason(segs, SKB_DROP_REASON_NOT_SPECIFIED);
+}
 
 void kfree_skb_partial(struct sk_buff *skb, bool head_stolen);
 bool skb_try_coalesce(struct sk_buff *to, struct sk_buff *from,
@@ -1250,32 +1267,6 @@ static inline __be32 skb_flow_get_ports(const struct sk_buff *skb,
 void skb_flow_dissector_init(struct flow_dissector *flow_dissector,
 			     const struct flow_dissector_key *key,
 			     unsigned int key_count);
-
-#ifdef CONFIG_NET
-int skb_flow_dissector_prog_query(const union bpf_attr *attr,
-				  union bpf_attr __user *uattr);
-int skb_flow_dissector_bpf_prog_attach(const union bpf_attr *attr,
-				       struct bpf_prog *prog);
-
-int skb_flow_dissector_bpf_prog_detach(const union bpf_attr *attr);
-#else
-static inline int skb_flow_dissector_prog_query(const union bpf_attr *attr,
-						union bpf_attr __user *uattr)
-{
-	return -EOPNOTSUPP;
-}
-
-static inline int skb_flow_dissector_bpf_prog_attach(const union bpf_attr *attr,
-						     struct bpf_prog *prog)
-{
-	return -EOPNOTSUPP;
-}
-
-static inline int skb_flow_dissector_bpf_prog_detach(const union bpf_attr *attr)
-{
-	return -EOPNOTSUPP;
-}
-#endif
 
 struct bpf_flow_dissector;
 bool bpf_flow_dissect(struct bpf_prog *prog, struct bpf_flow_dissector *ctx,
@@ -2759,18 +2750,24 @@ static inline int skb_orphan_frags_rx(struct sk_buff *skb, gfp_t gfp_mask)
 }
 
 /**
- *	__skb_queue_purge - empty a list
+ *	__skb_queue_purge_reason - empty a list with specific drop reason
  *	@list: list to empty
+ *	@reason: drop reason
  *
  *	Delete all buffers on an &sk_buff list. Each buffer is removed from
  *	the list and one reference dropped. This function does not take the
  *	list lock and the caller must hold the relevant locks to use it.
  */
-static inline void __skb_queue_purge(struct sk_buff_head *list)
+static inline void __skb_queue_purge_reason(struct sk_buff_head *list,
+					    enum skb_drop_reason reason)
 {
 	struct sk_buff *skb;
 	while ((skb = __skb_dequeue(list)) != NULL)
-		kfree_skb(skb);
+		kfree_skb_reason(skb, reason);
+}
+static inline void __skb_queue_purge(struct sk_buff_head *list)
+{
+	__skb_queue_purge_reason(list, SKB_DROP_REASON_NOT_SPECIFIED);
 }
 void skb_queue_purge(struct sk_buff_head *list);
 

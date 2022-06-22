@@ -3694,7 +3694,6 @@ void scheduler_tick(void)
 
 	update_rq_clock(rq);
 	curr->sched_class->task_tick(rq, curr, 0);
-	sli_check_longsys(curr);
 	calc_global_load_tick(rq);
 	psi_task_tick(rq);
 
@@ -3705,6 +3704,9 @@ void scheduler_tick(void)
 #ifdef CONFIG_SMP
 	rq->idle_balance = idle_cpu(cpu);
 	trigger_load_balance(rq);
+#endif
+#ifdef CONFIG_CGROUP_SLI
+	sli_update_tick(curr);
 #endif
 }
 
@@ -3798,6 +3800,10 @@ out_requeue:
 	WARN_ON_ONCE(os == TICK_SCHED_REMOTE_OFFLINE);
 	if (os == TICK_SCHED_REMOTE_RUNNING)
 		queue_delayed_work(system_unbound_wq, dwork, HZ);
+
+#ifdef CONFIG_CGROUP_SLI
+	sli_update_tick(curr);
+#endif
 }
 
 static void sched_tick_start(int cpu)
@@ -7176,15 +7182,18 @@ int container_cpuquota_aware;
 int cpu_get_max_cpus(struct task_struct *p)
 {
 	int max_cpus = INT_MAX;
-	struct task_group *tg = task_group(p);
+	struct cgroup_subsys_state *css = task_get_css(p, cpu_cgrp_id);
+	struct task_group *tg = container_of(css, struct task_group, css);
 
 	if (!cpu_quota_aware_enabled(tg))
-		return max_cpus;
+		goto out;
 
 	if (tg->cfs_bandwidth.quota == RUNTIME_INF)
-		return max_cpus;
+		goto out;
 
 	max_cpus = DIV_ROUND_UP(tg->cfs_bandwidth.quota, tg->cfs_bandwidth.period);
+out:
+	css_put(css);
 
 	return max_cpus;
 }

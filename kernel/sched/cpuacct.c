@@ -323,6 +323,7 @@ static int cpuacct_uptime_show_comm(struct seq_file *sf, void *v, struct cpuacct
 	return 0;
 }
 
+#ifdef CONFIG_CGROUP_SLI
 static int cpuacct_sli_show(struct seq_file *sf, void *v)
 {
 	struct cgroup *cgrp = seq_css(sf)->cgroup;
@@ -336,11 +337,28 @@ static int cpuacct_sli_max_show(struct seq_file *sf, void *v)
 
 	return sli_schedlat_max_show(sf, cgrp);
 }
+#endif
 
 int cpuacct_cgroupfs_uptime_show(struct seq_file *m, void *v)
 {
-	struct cpuacct *ca = task_ca(current);
-	return cpuacct_uptime_show_comm(m, v, ca);
+	int ret;
+	struct cgroup_subsys_state *css;
+	struct cpuacct *ca;
+
+	css = task_get_css(current, cpuacct_cgrp_id);
+	ca = css_ca(css);
+	ret = cpuacct_uptime_show_comm(m, v, ca);
+	css_put(css);
+
+	return ret;
+}
+
+int cpuacct_cgroupfs_cpu_usage(struct cgroup_subsys_state *css, int cpu, u64 *sys, u64 *user)
+{
+	struct cpuacct *ca = css_ca(css);
+	*user = cpuacct_cpuusage_read(ca, cpu, CPUACCT_STAT_USER);
+	*sys = cpuacct_cpuusage_read(ca, cpu, CPUACCT_STAT_SYSTEM);
+	return 0;
 }
 
 static int cpuacct_uptime_show(struct seq_file *sf, void *v)
@@ -395,6 +413,7 @@ static struct cftype files[] = {
 		.seq_next = cgroup_mbuf_next,
 		.seq_stop = cgroup_mbuf_stop,
 	},
+#ifdef CONFIG_CGROUP_SLI
 	{
 		.name = "sli",
 		.flags = CFTYPE_NOT_ON_ROOT,
@@ -405,6 +424,22 @@ static struct cftype files[] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = cpuacct_sli_max_show,
 	},
+	{
+		.name = "sli.control",
+		.write = cgroup_sli_control_write,
+		.seq_show = cgroup_sli_control_show,
+	},
+	{
+		.name = "sli.monitor",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.open = cgroup_sli_monitor_open,
+		.seq_show = cgroup_sli_monitor_show,
+		.seq_start = cgroup_sli_monitor_start,
+		.seq_next = cgroup_sli_monitor_next,
+		.seq_stop = cgroup_sli_monitor_stop,
+		.poll = cgroup_sli_monitor_poll,
+	},
+#endif
 	{ }	/* terminate */
 };
 

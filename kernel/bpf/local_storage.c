@@ -159,7 +159,7 @@ static int cgroup_storage_update_elem(struct bpf_map *map, void *_key,
 		return -ENOMEM;
 
 	memcpy(&new->data[0], value, map->value_size);
-	check_and_init_map_lock(map, new->data);
+	check_and_init_map_value(map, new->data);
 
 	new = xchg(&storage->buf, new);
 	kfree_rcu(new, rcu);
@@ -409,6 +409,7 @@ static void cgroup_storage_seq_show_elem(struct bpf_map *map, void *_key,
 	rcu_read_unlock();
 }
 
+static int cgroup_storage_map_btf_id;
 const struct bpf_map_ops cgroup_storage_map_ops = {
 	.map_alloc = cgroup_storage_map_alloc,
 	.map_free = cgroup_storage_map_free,
@@ -418,6 +419,8 @@ const struct bpf_map_ops cgroup_storage_map_ops = {
 	.map_delete_elem = cgroup_storage_delete_elem,
 	.map_check_btf = cgroup_storage_check_btf,
 	.map_seq_show_elem = cgroup_storage_seq_show_elem,
+	.map_btf_name = "bpf_cgroup_storage_map",
+	.map_btf_id = &cgroup_storage_map_btf_id,
 };
 
 int bpf_cgroup_storage_assign(struct bpf_prog *prog, struct bpf_map *_map)
@@ -503,7 +506,7 @@ struct bpf_cgroup_storage *bpf_cgroup_storage_alloc(struct bpf_prog *prog,
 		storage->buf = kmalloc_node(size, flags, map->numa_node);
 		if (!storage->buf)
 			goto enomem;
-		check_and_init_map_lock(map, storage->buf->data);
+		check_and_init_map_value(map, storage->buf->data);
 	} else {
 		storage->percpu_buf = __alloc_percpu_gfp(size, 8, flags);
 		if (!storage->percpu_buf)

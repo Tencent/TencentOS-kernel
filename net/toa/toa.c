@@ -743,12 +743,12 @@ static const struct file_operations toa_stats_fops = {
 	.release = single_release,
 };
 
-static int vpc_inet_dump_one_sk(struct vtoa_req *req, struct vtoa_info *info)
+static int vpc_inet_dump_one_sk(struct net *net, struct vtoa_req *req, struct vtoa_info *info)
 {
 	struct sock *sk;
 	int err = -EINVAL;
 
-	sk = inet_lookup(&init_net, &tcp_hashinfo, NULL, 0, req->sip,
+	sk = inet_lookup(net, &tcp_hashinfo, NULL, 0, req->sip,
 			 req->sport, req->dip,
 			 req->dport, req->if_idx);
 	if (!sk){
@@ -786,7 +786,7 @@ out_nosk:
 }
 
 
-static int vpc_vtoa_netlink_send(struct nlmsghdr *nlh, struct vtoa_info *info)
+static int vpc_vtoa_netlink_send(struct net *net, struct nlmsghdr *nlh, struct vtoa_info *info)
 {
 	struct sk_buff *skb;
 	void *hdr;
@@ -818,7 +818,7 @@ static int vpc_vtoa_netlink_send(struct nlmsghdr *nlh, struct vtoa_info *info)
 	nla_put_u16(skb, VTOA_ATTR_I_VPORT, info->i_vport);
 	genlmsg_end(skb, hdr);
 
-	err = genlmsg_unicast(&init_net, skb, nlh->nlmsg_pid);
+	err = genlmsg_unicast(net, skb, nlh->nlmsg_pid);
 	if (err < 0){
 		TOA_INFO("genlmsg_unicast fail(%d), vpcid %d vmip %pI4 sport %u vip %pI4 vport %u.\n", 
 			err, 
@@ -833,6 +833,7 @@ static int vpc_vtoa_netlink_send(struct nlmsghdr *nlh, struct vtoa_info *info)
 
 static int vpc_vtoa_get(struct sk_buff *skb, struct genl_info *info)
 {
+	struct net *net = NULL;
 	struct nlattr **attrs = info->attrs;
 	struct nlmsghdr *nlh = nlmsg_hdr(skb);
 	struct vtoa_req *req;
@@ -854,18 +855,27 @@ static int vpc_vtoa_get(struct sk_buff *skb, struct genl_info *info)
 	}
 
 	req = nla_data(attrs[VTOA_ATTR_REQ]);
+	if (skb->sk){
+		net = sock_net(skb->sk);
+	}
+	if (!net){
+		TOA_INFO("get netns %u fail, if_idx:%u sip:%pI4 dip:%pI4 sport:%u dport:%u.\n",
+			nlh->nlmsg_pid, req->if_idx, &req->sip, &req->dip,
+			ntohs(req->sport), ntohs(req->dport));
+		return -EINVAL;
+	}
 
 	memset(&vinfo, 0, sizeof(vinfo));
-	err = vpc_inet_dump_one_sk(req, &vinfo);
+	err = vpc_inet_dump_one_sk(net, req, &vinfo);
 	if (err != 0){
 		return err;
 	}
 	
-	err = vpc_vtoa_netlink_send(nlh, &vinfo);
+	err = vpc_vtoa_netlink_send(net, nlh, &vinfo);
 	
-	TOA_DBG("req[if_idx:%u sip:%pI4 dip:%pI4 sport:%u dport:%u] info["
+	TOA_DBG("pid %u req[if_idx:%u sip:%pI4 dip:%pI4 sport:%u dport:%u] info["
 		"vpcid:%u vmip:%pI4 sport:%u vip:%pI4 vport:%u] err:%d\n",
-		req->if_idx, &req->sip, &req->dip,
+		nlh->nlmsg_pid, req->if_idx, &req->sip, &req->dip,
 		ntohs(req->sport), ntohs(req->dport), vinfo.i_vpcid, &vinfo.i_vmip,
 		ntohs(vinfo.i_sport), &vinfo.i_vip, ntohs(vinfo.i_vport), err);
 	
@@ -887,6 +897,7 @@ static struct genl_family vtoa_genl_family = {
 	.name = "VPC_VTOA",
 	.version = 1,
 	.maxattr = VTOA_ATTR_MAX,
+	.netnsok = 1,
 	.policy = vtoa_policy,
 	.module = THIS_MODULE,
 	.ops = vtoa_genl_ops,

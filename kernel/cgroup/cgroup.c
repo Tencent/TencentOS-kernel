@@ -182,7 +182,7 @@ static u16 cgrp_dfl_threaded_ss_mask;
 LIST_HEAD(cgroup_roots);
 static int cgroup_root_count;
 
-int sysctl_qos_mbuf_enable = 0;
+int sysctl_qos_mbuf_enable = 1;
 
 /* hierarchy ID allocation and mapping, protected by cgroup_mutex */
 static DEFINE_IDR(cgroup_hierarchy_idr);
@@ -2694,9 +2694,12 @@ void cgroup_migrate_add_src(struct css_set *src_cset,
  * using cgroup_migrate(), cgroup_migrate_finish() must be called on
  * @mgctx.
  */
+unsigned int sysctl_allow_memcg_migrate_ignore_blkio_bind;
+
 int cgroup_migrate_prepare_dst(struct cgroup_mgctx *mgctx)
 {
 	struct css_set *src_cset, *tmp_cset;
+	struct cgroup_subsys_state *css;
 
 	lockdep_assert_held(&cgroup_mutex);
 
@@ -2712,6 +2715,18 @@ int cgroup_migrate_prepare_dst(struct cgroup_mgctx *mgctx)
 			return -ENOMEM;
 
 		WARN_ON_ONCE(src_cset->mg_dst_cset || dst_cset->mg_dst_cset);
+
+		css = dst_cset->subsys[memory_cgrp_id];
+		if (!sysctl_allow_memcg_migrate_ignore_blkio_bind && css) {
+			struct mem_cgroup *memcg = mem_cgroup_from_css(css);
+
+			css = dst_cset->subsys[io_cgrp_id];
+			if (css && memcg->bind_blkio && css != blkcg_root_css &&
+				memcg->bind_blkio != css) {
+				pr_err("memcg already bind blkio, disallow migrate");
+				return -EPERM;
+			}
+		}
 
 		/*
 		 * If src cset equals dst, it's noop.  Drop the src.
@@ -3442,6 +3457,21 @@ static int cgroup_type_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
+int cgroup_id_show(struct seq_file *seq, void *v)
+{
+	struct cgroup *cgrp = seq_css(seq)->cgroup;
+	int ssid;
+	struct cgroup_subsys *ss;
+
+	for_each_subsys(ss, ssid) {
+		struct cgroup_subsys_state *css = cgroup_css(cgrp, ss);
+
+		if (css)
+			seq_printf(seq, "%s:%u\n", ss->name, css->id);
+	}
+	return 0;
+}
+
 static ssize_t cgroup_type_write(struct kernfs_open_file *of, char *buf,
 				 size_t nbytes, loff_t off)
 {
@@ -3687,6 +3717,7 @@ static void cgroup_pressure_release(struct kernfs_open_file *of)
 }
 #endif /* CONFIG_PSI */
 
+#ifdef CONFIG_CGROUP_SLI
 static int cgroup_sli_memory_show(struct seq_file *seq, void *v)
 {
 	struct cgroup *cgroup = seq_css(seq)->cgroup;
@@ -3709,6 +3740,7 @@ static int cgroup_sli_max_show(struct seq_file *seq, void *v)
 	sli_schedlat_max_show(seq, cgroup);
 	return sli_memlat_max_show(seq, cgroup);
 }
+#endif
 
 void *cgroup_mbuf_start(struct seq_file *s, loff_t *pos)
 {
@@ -5031,6 +5063,38 @@ out_unlock:
 	return ret ?: nbytes;
 }
 
+#ifdef CONFIG_CGROUP_SLI
+int cgroup_sli_monitor_open(struct kernfs_open_file *of)
+{
+	return sli_monitor_open(of);
+}
+
+void *cgroup_sli_monitor_start(struct seq_file *s, loff_t *pos)
+{
+	return sli_monitor_start(s, pos);
+}
+
+int cgroup_sli_monitor_show(struct seq_file *seq, void *v)
+{
+	return sli_monitor_show(seq, v);
+}
+
+void *cgroup_sli_monitor_next(struct seq_file *s, void *v, loff_t *pos)
+{
+	return sli_monitor_next(s, v, pos);
+}
+
+void cgroup_sli_monitor_stop(struct seq_file *seq, void *v)
+{
+	sli_monitor_stop(seq, v);
+}
+
+__poll_t cgroup_sli_monitor_poll(struct kernfs_open_file *of, poll_table *pt)
+{
+	return sli_monitor_poll(of, pt);
+}
+#endif
+
 /* cgroup core interface files for the default hierarchy */
 static struct cftype cgroup_base_files[] = {
 	{
@@ -5038,6 +5102,10 @@ static struct cftype cgroup_base_files[] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = cgroup_type_show,
 		.write = cgroup_type_write,
+	},
+	{
+		.name = "cgroup.id",
+		.seq_show = cgroup_id_show,
 	},
 	{
 		.name = "cgroup.procs",
@@ -5130,6 +5198,7 @@ static struct cftype cgroup_base_files[] = {
 		.seq_next = cgroup_mbuf_next,
 		.seq_stop = cgroup_mbuf_stop,
 	},
+#ifdef CONFIG_CGROUP_SLI
 	{
 		.name = "sli.memory",
 		.flags = CFTYPE_NOT_ON_ROOT,
@@ -5145,6 +5214,22 @@ static struct cftype cgroup_base_files[] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = cgroup_sli_max_show,
 	},
+	{
+		.name = "sli.control",
+		.write = cgroup_sli_control_write,
+		.seq_show = cgroup_sli_control_show,
+	},
+	{
+		.name = "sli.monitor",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.open = cgroup_sli_monitor_open,
+		.seq_show = cgroup_sli_monitor_show,
+		.seq_start = cgroup_sli_monitor_start,
+		.seq_next = cgroup_sli_monitor_next,
+		.seq_stop = cgroup_sli_monitor_stop,
+		.poll = cgroup_sli_monitor_poll,
+	},
+#endif
 	{ }	/* terminate */
 };
 
@@ -5206,7 +5291,9 @@ static void css_free_rwork_fn(struct work_struct *work)
 			cgroup_put(cgroup_parent(cgrp));
 			kernfs_put(cgrp->kn);
 			psi_cgroup_free(cgrp);
+#ifdef CONFIG_CGROUP_SLI
 			sli_cgroup_free(cgrp);
+#endif
 			if (cgroup_on_dfl(cgrp))
 				cgroup_rstat_exit(cgrp);
 			kfree(cgrp);
@@ -5469,13 +5556,9 @@ static struct cgroup *cgroup_create(struct cgroup *parent)
 	if (ret)
 		goto out_idr_free;
 
-	ret = sli_cgroup_alloc(cgrp);
-	if (ret)
-		goto out_psi_free;
-
 	ret = cgroup_bpf_inherit(cgrp);
 	if (ret)
-		goto out_sli_free;
+		goto out_psi_free;
 
 	/*
 	 * New cgroup inherits effective freeze counter, and
@@ -5541,8 +5624,6 @@ static struct cgroup *cgroup_create(struct cgroup *parent)
 
 	return cgrp;
 
-out_sli_free:
-	sli_cgroup_free(cgrp);
 out_psi_free:
 	psi_cgroup_free(cgrp);
 out_idr_free:
@@ -5586,35 +5667,27 @@ fail:
  */
 static inline bool cgroup_need_mbuf(struct cgroup *cgrp)
 {
-	if (cgroup_on_dfl(cgrp)){
-#if IS_ENABLED(CONFIG_CGROUP_SCHED)
-		if (cgroup_css(cgrp, cgroup_subsys[cpu_cgrp_id]))
-			return true;
-#endif
+	if (cgroup_on_dfl(cgrp))
+		return true;
 
-#if IS_ENABLED(CONFIG_BLK_CGROUP)
-		if (cgroup_css(cgrp, cgroup_subsys[io_cgrp_id]))
-			return true;
+#if IS_ENABLED(CONFIG_CGROUP_CPUACCT)
+	if (cgroup_css(cgrp, cgroup_subsys[cpuacct_cgrp_id]))
+		return true;
 #endif
 
 #if IS_ENABLED(CONFIG_MEMCG)
-		if (cgroup_css(cgrp, cgroup_subsys[memory_cgrp_id]))
-			return true;
-#endif
-
-#if IS_ENABLED(CONFIG_CGROUP_NET_CLASSID)
-		if (cgroup_css(cgrp, cgroup_subsys[net_cls_cgrp_id]))
-			return true;
-#endif
-	} else
-#if IS_ENABLED(CONFIG_CGROUP_CPUACCT)
-		if (cgroup_css(cgrp, cgroup_subsys[cpuacct_cgrp_id]))
-			return true;
+	if (cgroup_css(cgrp, cgroup_subsys[memory_cgrp_id]))
+		return true;
 #endif
 
 	return false;
 }
 
+/* Wrap the mbuf and export to the include file */
+bool cgroup_need_sli(struct cgroup *cgrp)
+{
+	return cgroup_need_mbuf(cgrp);
+}
 
 int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
 {
@@ -5666,8 +5739,19 @@ int cgroup_mkdir(struct kernfs_node *parent_kn, const char *name, umode_t mode)
 	if (ret)
 		goto out_destroy;
 
+#ifdef CONFIG_CGROUP_SLI
+	ret = sli_cgroup_alloc(cgrp);
+	if (ret)
+		goto out_destroy;
+#endif
+
 	if(sysctl_qos_mbuf_enable && cgroup_need_mbuf(cgrp))
 		cgrp->mbuf = mbuf_slot_alloc(cgrp);
+
+#ifdef CONFIG_CGROUP_SLI
+	if (cgroup_need_sli(cgrp))
+		cgrp->sctx = sctx_alloc();
+#endif
 
 	TRACE_CGROUP_PATH(mkdir, cgrp);
 
@@ -5854,6 +5938,10 @@ static int cgroup_destroy_locked(struct cgroup *cgrp)
 	if (cgrp->mbuf)
 		mbuf_free(cgrp);
 
+#ifdef CONFIG_CGROUP_SLI
+	if (cgrp->sctx)
+		sctx_free(cgrp);
+#endif
 	/* put the base reference */
 	percpu_ref_kill(&cgrp->self.refcnt);
 
@@ -6694,26 +6782,31 @@ void cgroup_sk_free(struct sock_cgroup_data *skcd)
 #endif	/* CONFIG_SOCK_CGROUP_DATA */
 
 #ifdef CONFIG_CGROUP_BPF
-int cgroup_bpf_attach(struct cgroup *cgrp, struct bpf_prog *prog,
-		      enum bpf_attach_type type, u32 flags)
+int cgroup_bpf_attach(struct cgroup *cgrp,
+		      struct bpf_prog *prog, struct bpf_prog *replace_prog,
+		      struct bpf_cgroup_link *link,
+		      enum bpf_attach_type type,
+		      u32 flags)
 {
 	int ret;
 
 	mutex_lock(&cgroup_mutex);
-	ret = __cgroup_bpf_attach(cgrp, prog, type, flags);
+	ret = __cgroup_bpf_attach(cgrp, prog, replace_prog, link, type, flags);
 	mutex_unlock(&cgroup_mutex);
 	return ret;
 }
+
 int cgroup_bpf_detach(struct cgroup *cgrp, struct bpf_prog *prog,
-		      enum bpf_attach_type type, u32 flags)
+		      enum bpf_attach_type type)
 {
 	int ret;
 
 	mutex_lock(&cgroup_mutex);
-	ret = __cgroup_bpf_detach(cgrp, prog, type);
+	ret = __cgroup_bpf_detach(cgrp, prog, NULL, type);
 	mutex_unlock(&cgroup_mutex);
 	return ret;
 }
+
 int cgroup_bpf_query(struct cgroup *cgrp, const union bpf_attr *attr,
 		     union bpf_attr __user *uattr)
 {

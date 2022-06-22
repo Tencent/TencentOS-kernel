@@ -697,8 +697,8 @@ clear_hash_noput:
 
 #endif
 
-static bool tcp_v6_inbound_md5_hash(const struct sock *sk,
-				    const struct sk_buff *skb)
+static enum skb_drop_reason
+tcp_v6_inbound_md5_hash(const struct sock *sk, const struct sk_buff *skb)
 {
 #ifdef CONFIG_TCP_MD5SIG
 	const __u8 *hash_location = NULL;
@@ -713,16 +713,16 @@ static bool tcp_v6_inbound_md5_hash(const struct sock *sk,
 
 	/* We've parsed the options - do we have a hash? */
 	if (!hash_expected && !hash_location)
-		return false;
+		return SKB_NOT_DROPPED_YET;
 
 	if (hash_expected && !hash_location) {
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPMD5NOTFOUND);
-		return true;
+		return SKB_DROP_REASON_TCP_MD5NOTFOUND;
 	}
 
 	if (!hash_expected && hash_location) {
 		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPMD5UNEXPECTED);
-		return true;
+		return SKB_DROP_REASON_TCP_MD5UNEXPECTED;
 	}
 
 	/* check the signature */
@@ -736,10 +736,10 @@ static bool tcp_v6_inbound_md5_hash(const struct sock *sk,
 				     genhash ? "failed" : "mismatch",
 				     &ip6h->saddr, ntohs(th->source),
 				     &ip6h->daddr, ntohs(th->dest));
-		return true;
+		return SKB_DROP_REASON_TCP_MD5FAILURE;
 	}
 #endif
-	return false;
+	return SKB_NOT_DROPPED_YET;
 }
 
 static void tcp_v6_init_req(struct request_sock *req,
@@ -770,9 +770,15 @@ static void tcp_v6_init_req(struct request_sock *req,
 
 static struct dst_entry *tcp_v6_route_req(const struct sock *sk,
 					  struct flowi *fl,
-					  const struct request_sock *req)
+					  struct request_sock *req,
+					  enum skb_drop_reason *reason)
 {
-	return inet6_csk_route_req(sk, &fl->u.ip6, req, IPPROTO_TCP);
+	struct dst_entry *dst;
+
+	dst = inet6_csk_route_req(sk, &fl->u.ip6, req, IPPROTO_TCP);
+	if (!dst)
+		SKB_DR_SET(*reason, IP_OUTNOROUTES);
+	return dst;
 }
 
 struct request_sock_ops tcp6_request_sock_ops __read_mostly = {
@@ -1085,24 +1091,28 @@ u16 tcp_v6_get_syncookie(struct sock *sk, struct ipv6hdr *iph,
 	return mss;
 }
 
-static int tcp_v6_conn_request(struct sock *sk, struct sk_buff *skb)
+static int tcp_v6_conn_request(struct sock *sk, struct sk_buff *skb,
+			       enum skb_drop_reason *reason)
 {
 	if (skb->protocol == htons(ETH_P_IP))
-		return tcp_v4_conn_request(sk, skb);
+		return tcp_v4_conn_request(sk, skb, reason);
 
 	if (!ipv6_unicast_destination(skb))
 		goto drop;
 
 	if (ipv6_addr_v4mapped(&ipv6_hdr(skb)->saddr)) {
 		__IP6_INC_STATS(sock_net(sk), NULL, IPSTATS_MIB_INHDRERRORS);
+		*reason = SKB_DROP_REASON_IP_INADDRERRORS;
 		return 0;
 	}
 
-	return tcp_conn_request(&tcp6_request_sock_ops,
-				&tcp_request_sock_ipv6_ops, sk, skb);
+	*reason = tcp_conn_request(&tcp6_request_sock_ops,
+				   &tcp_request_sock_ipv6_ops, sk, skb);
+	return *reason;
 
 drop:
 	tcp_listendrop(sk);
+	*reason = SKB_DROP_REASON_IP_INADDRERRORS;
 	return 0; /* don't send reset */
 }
 
@@ -1334,6 +1344,7 @@ static int tcp_v6_do_rcv(struct sock *sk, struct sk_buff *skb)
 {
 	struct ipv6_pinfo *np = tcp_inet6_sk(sk);
 	struct sk_buff *opt_skb = NULL;
+	enum skb_drop_reason reason;
 	struct tcp_sock *tp;
 
 	/* Imagine: socket is IPv6. IPv4 packet arrives,
@@ -1368,6 +1379,7 @@ static int tcp_v6_do_rcv(struct sock *sk, struct sk_buff *skb)
 	if (np->rxopt.all)
 		opt_skb = skb_clone(skb, sk_gfp_mask(sk, GFP_ATOMIC));
 
+	reason = SKB_DROP_REASON_NOT_SPECIFIED;
 	if (sk->sk_state == TCP_ESTABLISHED) { /* Fast path */
 		struct dst_entry *dst = sk->sk_rx_dst;
 
@@ -1397,7 +1409,8 @@ static int tcp_v6_do_rcv(struct sock *sk, struct sk_buff *skb)
 			goto discard;
 
 		if (nsk != sk) {
-			if (tcp_child_process(sk, nsk, skb))
+			reason = tcp_child_process(sk, nsk, skb);
+			if (reason)
 				goto reset;
 			if (opt_skb)
 				__kfree_skb(opt_skb);
@@ -1406,7 +1419,8 @@ static int tcp_v6_do_rcv(struct sock *sk, struct sk_buff *skb)
 	} else
 		sock_rps_save_rxhash(sk, skb);
 
-	if (tcp_rcv_state_process(sk, skb))
+	reason = tcp_rcv_state_process(sk, skb);
+	if (reason)
 		goto reset;
 	if (opt_skb)
 		goto ipv6_pktoptions;
@@ -1417,9 +1431,11 @@ reset:
 discard:
 	if (opt_skb)
 		__kfree_skb(opt_skb);
-	kfree_skb(skb);
+	SKB_DR_OR(reason, NOT_SPECIFIED);
+	kfree_skb_reason(skb, reason);
 	return 0;
 csum_err:
+	reason = SKB_DROP_REASON_TCP_CSUM;
 	TCP_INC_STATS(sock_net(sk), TCP_MIB_CSUMERRORS);
 	TCP_INC_STATS(sock_net(sk), TCP_MIB_INERRS);
 	goto discard;
@@ -1484,6 +1500,7 @@ static void tcp_v6_fill_cb(struct sk_buff *skb, const struct ipv6hdr *hdr,
 
 INDIRECT_CALLABLE_SCOPE int tcp_v6_rcv(struct sk_buff *skb)
 {
+	enum skb_drop_reason drop_reason;
 	struct sk_buff *skb_to_free;
 	int sdif = inet6_sdif(skb);
 	const struct tcphdr *th;
@@ -1493,6 +1510,7 @@ INDIRECT_CALLABLE_SCOPE int tcp_v6_rcv(struct sk_buff *skb)
 	int ret;
 	struct net *net = dev_net(skb->dev);
 
+	drop_reason = SKB_DROP_REASON_NOT_SPECIFIED;
 	if (skb->pkt_type != PACKET_HOST)
 		goto discard_it;
 
@@ -1506,8 +1524,10 @@ INDIRECT_CALLABLE_SCOPE int tcp_v6_rcv(struct sk_buff *skb)
 
 	th = (const struct tcphdr *)skb->data;
 
-	if (unlikely(th->doff < sizeof(struct tcphdr)/4))
+	if (unlikely(th->doff < sizeof(struct tcphdr) / 4)) {
+		drop_reason = SKB_DROP_REASON_PKT_TOO_SMALL;
 		goto bad_packet;
+	}
 	if (!pskb_may_pull(skb, th->doff*4))
 		goto discard_it;
 
@@ -1534,7 +1554,8 @@ process:
 		struct sock *nsk;
 
 		sk = req->rsk_listener;
-		if (tcp_v6_inbound_md5_hash(sk, skb)) {
+		drop_reason = tcp_v6_inbound_md5_hash(sk, skb);
+		if (drop_reason) {
 			sk_drops_add(sk, skb);
 			reqsk_put(req);
 			goto discard_it;
@@ -1555,6 +1576,8 @@ process:
 			hdr = ipv6_hdr(skb);
 			tcp_v6_fill_cb(skb, hdr, th);
 			nsk = tcp_check_req(sk, skb, req, false, &req_stolen);
+		} else {
+			drop_reason = SKB_DROP_REASON_SOCKET_FILTER;
 		}
 		if (!nsk) {
 			reqsk_put(req);
@@ -1573,12 +1596,15 @@ process:
 		if (nsk == sk) {
 			reqsk_put(req);
 			tcp_v6_restore_cb(skb);
-		} else if (tcp_child_process(sk, nsk, skb)) {
-			tcp_v6_send_reset(nsk, skb);
-			goto discard_and_relse;
 		} else {
-			sock_put(sk);
-			return 0;
+			drop_reason = tcp_child_process(sk, nsk, skb);
+			if (drop_reason) {
+				tcp_v6_send_reset(nsk, skb);
+				goto discard_and_relse;
+			} else {
+				sock_put(sk);
+				return 0;
+			}
 		}
 	}
 	if (hdr->hop_limit < tcp_inet6_sk(sk)->min_hopcount) {
@@ -1586,14 +1612,19 @@ process:
 		goto discard_and_relse;
 	}
 
-	if (!xfrm6_policy_check(sk, XFRM_POLICY_IN, skb))
+	if (!xfrm6_policy_check(sk, XFRM_POLICY_IN, skb)) {
+		drop_reason = SKB_DROP_REASON_XFRM_POLICY;
+		goto discard_and_relse;
+	}
+
+	drop_reason = tcp_v6_inbound_md5_hash(sk, skb);
+	if (drop_reason)
 		goto discard_and_relse;
 
-	if (tcp_v6_inbound_md5_hash(sk, skb))
+	if (tcp_filter(sk, skb)) {
+		drop_reason = SKB_DROP_REASON_SOCKET_FILTER;
 		goto discard_and_relse;
-
-	if (tcp_filter(sk, skb))
-		goto discard_and_relse;
+	}
 	th = (const struct tcphdr *)skb->data;
 	hdr = ipv6_hdr(skb);
 	tcp_v6_fill_cb(skb, hdr, th);
@@ -1615,7 +1646,7 @@ process:
 		sk->sk_rx_skb_cache = NULL;
 		ret = tcp_v6_do_rcv(sk, skb);
 	} else {
-		if (tcp_add_backlog(sk, skb))
+		if (tcp_add_backlog(sk, skb, &drop_reason))
 			goto discard_and_relse;
 		skb_to_free = NULL;
 	}
@@ -1628,6 +1659,7 @@ put_and_return:
 	return ret ? -1 : 0;
 
 no_tcp_socket:
+	drop_reason = SKB_DROP_REASON_NO_SOCKET;
 	if (!xfrm6_policy_check(NULL, XFRM_POLICY_IN, skb))
 		goto discard_it;
 
@@ -1635,6 +1667,7 @@ no_tcp_socket:
 
 	if (tcp_checksum_complete(skb)) {
 csum_error:
+		drop_reason = SKB_DROP_REASON_TCP_CSUM;
 		__TCP_INC_STATS(net, TCP_MIB_CSUMERRORS);
 bad_packet:
 		__TCP_INC_STATS(net, TCP_MIB_INERRS);
@@ -1643,7 +1676,7 @@ bad_packet:
 	}
 
 discard_it:
-	kfree_skb(skb);
+	kfree_skb_reason(skb, drop_reason);
 	return 0;
 
 discard_and_relse:
@@ -1654,6 +1687,7 @@ discard_and_relse:
 
 do_time_wait:
 	if (!xfrm6_policy_check(NULL, XFRM_POLICY_IN, skb)) {
+		drop_reason = SKB_DROP_REASON_XFRM_POLICY;
 		inet_twsk_put(inet_twsk(sk));
 		goto discard_it;
 	}
@@ -1665,7 +1699,8 @@ do_time_wait:
 		goto csum_error;
 	}
 
-	switch (tcp_timewait_state_process(inet_twsk(sk), skb, th)) {
+	switch (tcp_timewait_state_process(inet_twsk(sk), skb, th,
+					   &drop_reason)) {
 	case TCP_TW_SYN:
 	{
 		struct sock *sk2;
@@ -1685,11 +1720,16 @@ do_time_wait:
 			refcounted = false;
 			goto process;
 		}
+		SKB_DR_SET(drop_reason, TCP_FLAGS);
 	}
 		/* to ACK */
 		/* fall through */
 	case TCP_TW_ACK:
 		tcp_v6_timewait_ack(sk, skb);
+		if (!drop_reason) {
+			consume_skb(skb);
+			return 0;
+		}
 		break;
 	case TCP_TW_RST:
 		tcp_v6_send_reset(sk, skb);

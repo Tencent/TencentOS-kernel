@@ -3963,9 +3963,13 @@ static vm_fault_t handle_pte_fault(struct vm_fault *vmf)
 		vm_fault_t retval;
 		u64 start;
 
+#ifdef CONFIG_CGROUP_SLI
 		sli_memlat_stat_start(&start);
+#endif
 		retval = do_swap_page(vmf);
+#ifdef CONFIG_CGROUP_SLI
 		sli_memlat_stat_end(MEM_LAT_DIRECT_SWAPIN, start);
+#endif
 		return retval;
 	}
 

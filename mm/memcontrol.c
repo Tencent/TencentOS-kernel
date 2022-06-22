@@ -59,6 +59,7 @@
 #include <linux/tracehook.h>
 #include <linux/psi.h>
 #include <linux/seq_buf.h>
+#include <linux/namei.h>
 #include "internal.h"
 #include <net/sock.h>
 #include <net/ip.h>
@@ -450,7 +451,7 @@ struct cgroup_subsys_state *mem_cgroup_css_from_page(struct page *page)
 
 	memcg = page->mem_cgroup;
 
-	if (!memcg || !cgroup_subsys_on_dfl(memory_cgrp_subsys))
+	if (!memcg)
 		memcg = root_mem_cgroup;
 
 	return &memcg->css;
@@ -2564,12 +2565,16 @@ void mem_cgroup_handle_over_high(void)
 	unsigned long pflags;
 	unsigned int nr_pages = current->memcg_nr_pages_over_high;
 	struct mem_cgroup *memcg;
+#ifdef CONFIG_CGROUP_SLI
 	u64 start;
+#endif
 
 	if (likely(!nr_pages))
 		return;
 
+#ifdef CONFIG_CGROUP_SLI
 	sli_memlat_stat_start(&start);
+#endif
 	memcg = get_mem_cgroup_from_mm(current->mm);
 	reclaim_high(memcg, nr_pages, GFP_KERNEL);
 	current->memcg_nr_pages_over_high = 0;
@@ -2599,7 +2604,9 @@ void mem_cgroup_handle_over_high(void)
 	psi_memstall_leave(&pflags);
 
 out:
+#ifdef CONFIG_CGROUP_SLI
 	sli_memlat_stat_end(MEM_LAT_MEMCG_DIRECT_RECLAIM, start);
+#endif
 	css_put(&memcg->css);
 }
 
@@ -2614,7 +2621,9 @@ static int try_charge(struct mem_cgroup *memcg, gfp_t gfp_mask,
 	bool may_swap = true;
 	bool drained = false;
 	enum oom_status oom_status;
+#ifdef CONFIG_CGROUP_SLI
 	u64 start;
+#endif
 
 	if (mem_cgroup_is_root(memcg))
 		return 0;
@@ -2674,11 +2683,15 @@ retry:
 
 	memcg_memory_event(mem_over_limit, MEMCG_MAX);
 
+#ifdef CONFIG_CGROUP_SLI
 	sli_memlat_stat_start(&start);
+#endif
 	nr_reclaimed = try_to_free_mem_cgroup_pages(mem_over_limit, nr_pages,
 						    gfp_mask, may_swap);
 
+#ifdef CONFIG_CGROUP_SLI
 	sli_memlat_stat_end(MEM_LAT_MEMCG_DIRECT_RECLAIM, start);
+#endif
 	if (mem_cgroup_margin(mem_over_limit) >= nr_pages)
 		goto retry;
 
@@ -4091,10 +4104,12 @@ static int memcg_numa_stat_show(struct seq_file *m, void *v)
 	for (stat = stats; stat < stats + ARRAY_SIZE(stats); stat++) {
 		nr = mem_cgroup_nr_lru_pages(memcg, stat->lru_mask);
 		seq_printf(m, "%s=%lu", stat->name, nr);
+		cond_resched();
 		for_each_node_state(nid, N_MEMORY) {
 			nr = mem_cgroup_node_nr_lru_pages(memcg, nid,
 							  stat->lru_mask);
 			seq_printf(m, " N%d=%lu", nid, nr);
+			cond_resched();
 		}
 		seq_putc(m, '\n');
 	}
@@ -4103,14 +4118,18 @@ static int memcg_numa_stat_show(struct seq_file *m, void *v)
 		struct mem_cgroup *iter;
 
 		nr = 0;
-		for_each_mem_cgroup_tree(iter, memcg)
+		for_each_mem_cgroup_tree(iter, memcg) {
 			nr += mem_cgroup_nr_lru_pages(iter, stat->lru_mask);
+			cond_resched();
+		}
 		seq_printf(m, "hierarchical_%s=%lu", stat->name, nr);
 		for_each_node_state(nid, N_MEMORY) {
 			nr = 0;
-			for_each_mem_cgroup_tree(iter, memcg)
+			for_each_mem_cgroup_tree(iter, memcg) {
 				nr += mem_cgroup_node_nr_lru_pages(
 					iter, nid, stat->lru_mask);
+				cond_resched();
+			}
 			seq_printf(m, " N%d=%lu", nid, nr);
 		}
 		seq_putc(m, '\n');
@@ -5302,8 +5321,16 @@ static int mem_cgroup_meminfo_read_comm(struct seq_file *m, void *v, struct mem_
 
 int mem_cgroupfs_meminfo_show(struct seq_file *m, void *v)
 {
-	struct mem_cgroup *memcg = mem_cgroup_from_task(current);
-	return mem_cgroup_meminfo_read_comm(m, v, memcg);
+	int ret;
+	struct cgroup_subsys_state *css;
+	struct mem_cgroup *memcg;
+
+	css = task_get_css(current, memory_cgrp_id);
+	memcg = mem_cgroup_from_css(css);
+	ret = mem_cgroup_meminfo_read_comm(m, v, memcg);
+	css_put(css);
+
+	return ret;
 }
 
 static int mem_cgroup_meminfo_read(struct seq_file *m, void *v)
@@ -5380,6 +5407,80 @@ static int mem_cgroup_vmstat_read_comm(struct seq_file *m, void *vv, struct mem_
 	return 0;
 }
 
+static ssize_t mem_cgroup_bind_blkio_write(struct kernfs_open_file *of,
+				char *buf, size_t nbytes, loff_t off)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_css(of_css(of));
+	struct cgroup_subsys_state *css;
+	struct path path;
+	char *pbuf;
+	int ret;
+
+	if (!sysctl_io_qos_enabled)
+		return -EPERM;
+
+	buf = strstrip(buf);
+
+	/* alloc memory outside mutex */
+	pbuf = kzalloc(PATH_MAX, GFP_KERNEL);
+	if (!pbuf)
+		return -ENOMEM;
+	strncpy(pbuf, buf, PATH_MAX-1);
+
+	mutex_lock(&memcg_max_mutex);
+
+	if (memcg->bind_blkio) {
+		WARN_ON(!memcg->bind_blkio_path);
+		kfree(memcg->bind_blkio_path);
+		memcg->bind_blkio_path = NULL;
+		css_put(memcg->bind_blkio);
+		memcg->bind_blkio = NULL;
+
+		wb_memcg_offline(memcg);
+		INIT_LIST_HEAD(&memcg->cgwb_list);
+	}
+
+	if (!strnlen(buf, PATH_MAX)) {
+		mutex_unlock(&memcg_max_mutex);
+		kfree(pbuf);
+		return nbytes;
+	}
+
+	ret = kern_path(pbuf, LOOKUP_FOLLOW, &path);
+	if (ret)
+		goto err;
+
+	css = css_tryget_online_from_dir(path.dentry, &io_cgrp_subsys);
+	if (IS_ERR(css)) {
+		ret = PTR_ERR(css);
+		path_put(&path);
+		goto err;
+	}
+	path_put(&path);
+
+	memcg->bind_blkio_path = pbuf;
+	memcg->bind_blkio = css;
+	mutex_unlock(&memcg_max_mutex);
+	return nbytes;
+
+err:
+	if (pbuf)
+		kfree(pbuf);
+	mutex_unlock(&memcg_max_mutex);
+	return ret;
+}
+
+static int mem_cgroup_bind_blkio_show(struct seq_file *m, void *v)
+{
+	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
+
+	if (memcg->bind_blkio_path)
+		seq_printf(m, "%s\n", memcg->bind_blkio_path);
+
+	return 0;
+}
+
+#ifdef CONFIG_CGROUP_SLI
 static int mem_cgroup_sli_max_show(struct seq_file *m, void *v)
 {
 	struct mem_cgroup *memcg = mem_cgroup_from_seq(m);
@@ -5397,11 +5498,20 @@ static int mem_cgroup_sli_show(struct seq_file *m, void *v)
 
 	return sli_memlat_stat_show(m, cgrp);
 }
+#endif
 
 int mem_cgroupfs_vmstat_show(struct seq_file *m, void *v)
 {
-	struct mem_cgroup *memcg = mem_cgroup_from_task(current);
-	return mem_cgroup_vmstat_read_comm(m, v, memcg);
+	int ret;
+	struct cgroup_subsys_state *css;
+	struct mem_cgroup *memcg;
+
+	css = task_get_css(current, memory_cgrp_id);
+	memcg = mem_cgroup_from_css(css);
+	ret = mem_cgroup_vmstat_read_comm(m, v, memcg);
+	css_put(css);
+
+	return ret;
 }
 
 static int mem_cgroup_vmstat_read(struct seq_file *m, void *vv)
@@ -5568,6 +5678,7 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.write = mem_cgroup_reset,
 		.read_u64 = mem_cgroup_read_u64,
 	},
+#ifdef CONFIG_CGROUP_SLI
 	{
 		.name = "sli",
 		.flags = CFTYPE_NOT_ON_ROOT,
@@ -5577,6 +5688,13 @@ static struct cftype mem_cgroup_legacy_files[] = {
 		.name = "sli_max",
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = mem_cgroup_sli_max_show,
+	},
+#endif
+	{
+		.name = "bind_blkio",
+		.flags = CFTYPE_NOT_ON_ROOT,
+		.write = mem_cgroup_bind_blkio_write,
+		.seq_show = mem_cgroup_bind_blkio_show,
 	},
 	{ },	/* terminate */
 };
@@ -5926,6 +6044,12 @@ static void mem_cgroup_css_free(struct cgroup_subsys_state *css)
 
 	if (!cgroup_subsys_on_dfl(memory_cgrp_subsys) && memcg->tcpmem_active)
 		static_branch_dec(&memcg_sockets_enabled_key);
+
+	if (memcg->bind_blkio) {
+		WARN_ON(!memcg->bind_blkio_path);
+		kfree(memcg->bind_blkio_path);
+		css_put(memcg->bind_blkio);
+	}
 
 	vmpressure_cleanup(&memcg->vmpressure);
 	cancel_work_sync(&memcg->high_work);

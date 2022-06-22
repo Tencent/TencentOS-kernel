@@ -26,6 +26,8 @@
 #include <linux/kernel_stat.h>
 
 #include <linux/cgroup-defs.h>
+#include <linux/sli.h>
+#include <linux/poll.h>
 
 #ifdef CONFIG_CGROUPS
 
@@ -696,6 +698,9 @@ static inline union kernfs_node_id *cgroup_get_kernfs_id(struct cgroup *cgrp)
 
 void cgroup_path_from_kernfs_id(const union kernfs_node_id *id,
 					char *buf, size_t buflen);
+
+bool cgroup_need_sli(struct cgroup *cgrp);
+
 #else /* !CONFIG_CGROUPS */
 
 struct cgroup_subsys_state;
@@ -966,5 +971,12 @@ void *cgroup_mbuf_start(struct seq_file *s, loff_t *pos);
 void *cgroup_mbuf_next(struct seq_file *s, void *v, loff_t *pos);
 void cgroup_mbuf_stop(struct seq_file *s, void *v);
 int cgroup_mbuf_show(struct seq_file *s, void *v);
+
+int cgroup_sli_monitor_open(struct kernfs_open_file *of);
+void *cgroup_sli_monitor_start(struct seq_file *s, loff_t *pos);
+int cgroup_sli_monitor_show(struct seq_file *seq, void *v);
+void *cgroup_sli_monitor_next(struct seq_file *s, void *v, loff_t *pos);
+void cgroup_sli_monitor_stop(struct seq_file *seq, void *v);
+__poll_t cgroup_sli_monitor_poll(struct kernfs_open_file *of, poll_table *pt);
 
 #endif /* _LINUX_CGROUP_H */

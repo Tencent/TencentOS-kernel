@@ -3926,7 +3926,7 @@ ext4_mb_release_group_pa(struct ext4_buddy *e4b,
  */
 static noinline_for_stack int
 ext4_mb_discard_group_preallocations(struct super_block *sb,
-					ext4_group_t group, int needed)
+				     ext4_group_t group, int *busy)
 {
 	struct ext4_group_info *grp = ext4_get_group_info(sb, group);
 	struct buffer_head *bitmap_bh = NULL;
@@ -3934,7 +3934,6 @@ ext4_mb_discard_group_preallocations(struct super_block *sb,
 	struct list_head list;
 	struct ext4_buddy e4b;
 	int err;
-	int busy = 0;
 	int free = 0;
 
 	mb_debug(1, "discard preallocation for group %u\n", group);
@@ -3958,18 +3957,15 @@ ext4_mb_discard_group_preallocations(struct super_block *sb,
 		return 0;
 	}
 
-	if (needed == 0)
-		needed = EXT4_CLUSTERS_PER_GROUP(sb) + 1;
-
 	INIT_LIST_HEAD(&list);
-repeat:
+
 	ext4_lock_group(sb, group);
 	list_for_each_entry_safe(pa, tmp,
 				&grp->bb_prealloc_list, pa_group_list) {
 		spin_lock(&pa->pa_lock);
 		if (atomic_read(&pa->pa_count)) {
 			spin_unlock(&pa->pa_lock);
-			busy = 1;
+			*busy = 1;
 			continue;
 		}
 		if (pa->pa_deleted) {
@@ -3987,14 +3983,6 @@ repeat:
 
 		list_del(&pa->pa_group_list);
 		list_add(&pa->u.pa_tmp_list, &list);
-	}
-
-	/* if we still need more blocks and some PAs were used, try again */
-	if (free < needed && busy) {
-		busy = 0;
-		ext4_unlock_group(sb, group);
-		cond_resched();
-		goto repeat;
 	}
 
 	/* found anything to free? */
@@ -4530,13 +4518,24 @@ static int ext4_mb_discard_preallocations(struct super_block *sb, int needed)
 {
 	ext4_group_t i, ngroups = ext4_get_groups_count(sb);
 	int ret;
-	int freed = 0;
+	int freed = 0, busy = 0;
+	int retry = 0;
 
 	trace_ext4_mb_discard_preallocations(sb, needed);
+
+	if (needed == 0)
+		needed = EXT4_CLUSTERS_PER_GROUP(sb) + 1;
+ repeat:
 	for (i = 0; i < ngroups && needed > 0; i++) {
-		ret = ext4_mb_discard_group_preallocations(sb, i, needed);
+		ret = ext4_mb_discard_group_preallocations(sb, i, &busy);
 		freed += ret;
 		needed -= ret;
+		cond_resched();
+	}
+
+	if (needed > 0 && busy && ++retry < 3) {
+		busy = 0;
+		goto repeat;
 	}
 
 	return freed;

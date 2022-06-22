@@ -11,8 +11,8 @@ struct {
 	__uint(value_size, sizeof(int));
 } perf_buf_map SEC(".maps");
 
-SEC("kprobe/sys_nanosleep")
-int handle_sys_nanosleep_entry(struct pt_regs *ctx)
+SEC("tp/raw_syscalls/sys_enter")
+int handle_sys_enter(void *ctx)
 {
 	int cpu = bpf_get_smp_processor_id();
 

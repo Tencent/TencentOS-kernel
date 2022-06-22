@@ -69,6 +69,7 @@
 #include <linux/mount.h>
 #include <linux/userfaultfd_k.h>
 #include <linux/trackgpu.h>
+#include <linux/blkdev.h>
 
 #include "../lib/kstrtox.h"
 
@@ -132,6 +133,8 @@ extern int max_softirq_accel_mask;
 #ifdef CONFIG_LOCKUP_DETECTOR
 static int sixty = 60;
 #endif
+
+extern unsigned int sysctl_allow_memcg_migrate_ignore_blkio_bind;
 
 static int __maybe_unused neg_one = -1;
 static int __maybe_unused two = 2;
@@ -308,6 +311,8 @@ int sendto_info_flag;
 int recvfrom_info_flag;
 int execve_info_flag;
 extern int container_cpuquota_aware;
+extern int cgroupfs_stat_show_cpuacct_info;
+int cgroupfs_mounted = 0;
 
 /* The default sysctl tables: */
 
@@ -363,12 +368,61 @@ static int min_extfrag_threshold;
 static int max_extfrag_threshold = 1000;
 #endif
 
+
+#ifdef CONFIG_BPF_SYSCALL
+static int bpf_stats_handler(struct ctl_table *table, int write,
+			     void __user *buffer, size_t *lenp,
+			     loff_t *ppos)
+{
+	struct static_key *key = (struct static_key *)table->data;
+	static int saved_val;
+	int val, ret;
+	struct ctl_table tmp = {
+		.data   = &val,
+		.maxlen = sizeof(val),
+		.mode   = table->mode,
+		.extra1 = SYSCTL_ZERO,
+		.extra2 = SYSCTL_ONE,
+	};
+
+	if (write && !capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	mutex_lock(&bpf_stats_enabled_mutex);
+	val = saved_val;
+	ret = proc_dointvec_minmax(&tmp, write, buffer, lenp, ppos);
+	if (write && !ret && val != saved_val) {
+		if (val)
+			static_key_slow_inc(key);
+		else
+			static_key_slow_dec(key);
+		saved_val = val;
+	}
+	mutex_unlock(&bpf_stats_enabled_mutex);
+	return ret;
+}
+#endif
+
 static struct ctl_table kern_table[] = {
 	{
 		.procname       = "container_cpuquota_aware",
 		.data           = &container_cpuquota_aware,
 		.maxlen         = sizeof(unsigned int),
 		.mode           = 0644,
+		.proc_handler   = proc_dointvec,
+	},
+	{
+		.procname       = "cgroupfs_stat_show_cpuacct_info",
+		.data           = &cgroupfs_stat_show_cpuacct_info,
+		.maxlen         = sizeof(unsigned int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec,
+	},
+	{
+		.procname       = "cgroupfs_mounted",
+		.data           = &cgroupfs_mounted,
+		.maxlen         = sizeof(unsigned int),
+		.mode           = 0444,
 		.proc_handler   = proc_dointvec,
 	},
 	{
@@ -1423,7 +1477,7 @@ static struct ctl_table kern_table[] = {
 		.data		= &bpf_stats_enabled_key.key,
 		.maxlen		= sizeof(bpf_stats_enabled_key),
 		.mode		= 0644,
-		.proc_handler	= proc_do_static_key,
+		.proc_handler	= bpf_stats_handler,
 	},
 #endif
 #if defined(CONFIG_TREE_RCU) || defined(CONFIG_PREEMPT_RCU)
@@ -1467,10 +1521,28 @@ static struct ctl_table kern_table[] = {
 		.extra2         = SYSCTL_ONE,
 	},
 	{
+		.procname	= "allow_memcg_migrate_ignore_blkio_bind",
+		.data		= &sysctl_allow_memcg_migrate_ignore_blkio_bind,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+	{
 		.procname	= "qos_mbuf_enable",
 		.data		= &sysctl_qos_mbuf_enable,
 		.maxlen		= sizeof(int),
 		.mode		= 0600,
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+	{
+		.procname	= "io_qos",
+		.data		= &sysctl_io_qos_enabled,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= SYSCTL_ONE,

@@ -60,6 +60,8 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(block_unplug);
 
 DEFINE_IDA(blk_queue_ida);
 
+unsigned int sysctl_io_qos_enabled = 0;
+
 /*
  * For queue allocation
  */

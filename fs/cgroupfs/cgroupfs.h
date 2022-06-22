@@ -6,10 +6,13 @@
 #define CGROUPFS_TYPE_UPTIME		(1 << 3)
 #define CGROUPFS_TYPE_LOADAVG		(1 << 4)
 #define CGROUPFS_TYPE_DKSTATS		(1 << 5)
-#define CGROUPFS_TYPE_VMSTAT		(1 << 6)
-#define CGROUPFS_TYPE_CPUDIR		(1 << 7)
-#define CGROUPFS_TYPE_NORMAL_DIR	(1 << 8)
-#define CGROUPFS_TYPE_AUTO_MOUNT	(1 << 9)
+#define CGROUPFS_TYPE_CPU_ONLINE	(1 << 6)
+#define CGROUPFS_TYPE_VMSTAT		(1 << 20)
+
+
+#define CGROUPFS_TYPE_CPUDIR		(1 << 21)
+#define CGROUPFS_TYPE_NORMAL_DIR	(1 << 22)
+#define CGROUPFS_TYPE_AUTO_MOUNT	(1 << 23)
 
 typedef struct cgroupfs_entry {
 	struct rb_root subdir;

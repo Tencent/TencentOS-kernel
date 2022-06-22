@@ -211,8 +211,16 @@ static int __init smp_read_mpc(struct mpc_table *mpc, unsigned early)
 		return 0;
 
 	/* Initialize the lapic mapping */
-	if (!acpi_lapic)
+	if (!acpi_lapic) {
+		/*
+		 * If MPS is in use with pre-enabled x2apic (eg. kexec), we need
+		 * to switch to the right apic driver early
+		 */
+		if (x2apic_mode)
+			default_setup_apic_routing();
+
 		register_lapic_address(mpc->lapic);
+	}
 
 	if (early)
 		return 1;

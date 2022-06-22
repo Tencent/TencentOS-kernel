@@ -171,7 +171,7 @@ static int c_show(struct seq_file *m, void *v)
 		 * rather than attempting to parse this, but there's a body of
 		 * software which does already (at least for 32-bit).
 		 */
-		seq_puts(m, "flags\t\t:");
+		seq_puts(m, "Features\t:");
 		if (compat) {
 #ifdef CONFIG_COMPAT
 			for (j = 0; compat_hwcap_str[j]; j++)

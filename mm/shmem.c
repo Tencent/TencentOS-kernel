@@ -1674,7 +1674,9 @@ static int shmem_swapin_page(struct inode *inode, pgoff_t index,
 	struct page *page;
 	swp_entry_t swap;
 	int error;
+#ifdef CONFIG_CGROUP_SLI
 	u64 start;
+#endif
 
 	VM_BUG_ON(!*pagep || !xa_is_value(*pagep));
 	swap = radix_to_swp_entry(*pagep);
@@ -1690,9 +1692,13 @@ static int shmem_swapin_page(struct inode *inode, pgoff_t index,
 			count_memcg_event_mm(charge_mm, PGMAJFAULT);
 		}
 		/* Here we actually start the io */
+#ifdef CONFIG_CGROUP_SLI
 		sli_memlat_stat_start(&start);
+#endif
 		page = shmem_swapin(swap, gfp, info, index);
+#ifdef CONFIG_CGROUP_SLI
 		sli_memlat_stat_end(MEM_LAT_DIRECT_SWAPIN, start);
+#endif
 		if (!page) {
 			error = -ENOMEM;
 			goto failed;

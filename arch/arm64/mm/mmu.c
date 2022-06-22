@@ -474,6 +474,10 @@ static void __init map_mem(pgd_t *pgdp)
 	 */
 	memblock_mark_nomap(kernel_start, kernel_end - kernel_start);
 #ifdef CONFIG_KEXEC_CORE
+	if (crashk_low_res.end)
+		memblock_mark_nomap(crashk_low_res.start,
+				    resource_size(&crashk_low_res));
+
 	if (crashk_res.end)
 		memblock_mark_nomap(crashk_res.start,
 				    resource_size(&crashk_res));
