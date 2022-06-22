@@ -47,7 +47,7 @@ static void dump_test_log(const struct prog_test_def *test, bool failed)
 
 	fflush(stdout); /* exports env.log_buf & env.log_cnt */
 
-	if (env.verbose || test->force_log || failed) {
+	if (env.verbosity > VERBOSE_NONE || test->force_log || failed) {
 		if (env.log_cnt) {
 			env.log_buf[env.log_cnt] = '\0';
 			fprintf(env.stdout, "%s", env.log_buf);
@@ -165,23 +165,6 @@ int test__join_cgroup(const char *path)
 
 	return fd;
 }
-
-struct ipv4_packet pkt_v4 = {
-	.eth.h_proto = __bpf_constant_htons(ETH_P_IP),
-	.iph.ihl = 5,
-	.iph.protocol = IPPROTO_TCP,
-	.iph.tot_len = __bpf_constant_htons(MAGIC_BYTES),
-	.tcp.urg_ptr = 123,
-	.tcp.doff = 5,
-};
-
-struct ipv6_packet pkt_v6 = {
-	.eth.h_proto = __bpf_constant_htons(ETH_P_IPV6),
-	.iph.nexthdr = IPPROTO_TCP,
-	.iph.payload_len = __bpf_constant_htons(MAGIC_BYTES),
-	.tcp.urg_ptr = 123,
-	.tcp.doff = 5,
-};
 
 int bpf_find_map(const char *test, struct bpf_object *obj, const char *name)
 {
@@ -302,19 +285,6 @@ err:
 	return -1;
 }
 
-void *spin_lock_thread(void *arg)
-{
-	__u32 duration, retval;
-	int err, prog_fd = *(u32 *) arg;
-
-	err = bpf_prog_test_run(prog_fd, 10000, &pkt_v4, sizeof(pkt_v4),
-				NULL, NULL, &retval, &duration);
-	CHECK(err || retval, "",
-	      "err %d errno %d retval %d duration %d\n",
-	      err, errno, retval, duration);
-	pthread_exit(arg);
-}
-
 /* extern declarations for test funcs */
 #define DEFINE_TEST(name) extern void test_##name();
 #include <prog_tests/tests.h>
@@ -349,14 +319,14 @@ static const struct argp_option opts[] = {
 	{ "verifier-stats", ARG_VERIFIER_STATS, NULL, 0,
 	  "Output verifier statistics", },
 	{ "verbose", ARG_VERBOSE, "LEVEL", OPTION_ARG_OPTIONAL,
-	  "Verbose output (use -vv for extra verbose output)" },
+	  "Verbose output (use -vv or -vvv for progressively verbose output)" },
 	{},
 };
 
 static int libbpf_print_fn(enum libbpf_print_level level,
 			   const char *format, va_list args)
 {
-	if (!env.very_verbose && level == LIBBPF_DEBUG)
+	if (env.verbosity < VERBOSE_VERY && level == LIBBPF_DEBUG)
 		return 0;
 	vprintf(format, args);
 	return 0;
@@ -422,6 +392,8 @@ int parse_num_list(const char *s, struct test_selector *sel)
 	return 0;
 }
 
+extern int extra_prog_load_log_flags;
+
 static error_t parse_arg(int key, char *arg, struct argp_state *state)
 {
 	struct test_env *env = state->input;
@@ -463,9 +435,14 @@ static error_t parse_arg(int key, char *arg, struct argp_state *state)
 		env->verifier_stats = true;
 		break;
 	case ARG_VERBOSE:
+		env->verbosity = VERBOSE_NORMAL;
 		if (arg) {
 			if (strcmp(arg, "v") == 0) {
-				env->very_verbose = true;
+				env->verbosity = VERBOSE_VERY;
+				extra_prog_load_log_flags = 1;
+			} else if (strcmp(arg, "vv") == 0) {
+				env->verbosity = VERBOSE_SUPER;
+				extra_prog_load_log_flags = 2;
 			} else {
 				fprintf(stderr,
 					"Unrecognized verbosity setting ('%s'), only -v and -vv are supported\n",
@@ -473,7 +450,6 @@ static error_t parse_arg(int key, char *arg, struct argp_state *state)
 				return -EINVAL;
 			}
 		}
-		env->verbose = true;
 		break;
 	case ARGP_KEY_ARG:
 		argp_usage(state);
@@ -492,7 +468,7 @@ static void stdio_hijack(void)
 	env.stdout = stdout;
 	env.stderr = stderr;
 
-	if (env.verbose) {
+	if (env.verbosity > VERBOSE_NONE) {
 		/* nothing to do, output to stdout by default */
 		return;
 	}

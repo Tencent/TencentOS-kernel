@@ -543,7 +543,7 @@ static struct bpf_map *trie_alloc(union bpf_attr *attr)
 	u64 cost = sizeof(*trie), cost_per_node;
 	int ret;
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (!bpf_capable())
 		return ERR_PTR(-EPERM);
 
 	/* check sanity of attributes */
@@ -735,6 +735,7 @@ static int trie_check_btf(const struct bpf_map *map,
 	       -EINVAL : 0;
 }
 
+static int trie_map_btf_id;
 const struct bpf_map_ops trie_map_ops = {
 	.map_alloc = trie_alloc,
 	.map_free = trie_free,
@@ -743,4 +744,6 @@ const struct bpf_map_ops trie_map_ops = {
 	.map_update_elem = trie_update_elem,
 	.map_delete_elem = trie_delete_elem,
 	.map_check_btf = trie_check_btf,
+	.map_btf_name = "lpm_trie",
+	.map_btf_id = &trie_map_btf_id,
 };

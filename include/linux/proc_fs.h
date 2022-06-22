@@ -79,6 +79,10 @@ extern struct pid *tgid_pidfd_to_pid(const struct file *file);
 extern struct net init_net;
 extern struct list_head sysctl_restrict_list;
 
+struct bpf_iter_aux_info;
+extern int bpf_iter_init_seq_net(void *priv_data, struct bpf_iter_aux_info *aux);
+extern void bpf_iter_fini_seq_net(void *priv_data);
+
 #ifdef CONFIG_PROC_PID_ARCH_STATUS
 /*
  * The architecture which selects CONFIG_PROC_PID_ARCH_STATUS must

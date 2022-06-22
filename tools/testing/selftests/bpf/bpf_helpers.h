@@ -233,6 +233,8 @@ static int (*bpf_send_signal)(unsigned sig) = (void *)BPF_FUNC_send_signal;
 static long long (*bpf_tcp_gen_syncookie)(struct bpf_sock *sk, void *ip,
 					  int ip_len, void *tcp, int tcp_len) =
 	(void *) BPF_FUNC_tcp_gen_syncookie;
+static long (*bpf_tcp_send_ack)(void *tp, __u32 rcv_nxt) =
+	(void *)BPF_FUNC_tcp_send_ack;
 
 /* llvm builtin functions that eBPF C program may use to
  * emit BPF_LD_ABS and BPF_LD_IND instructions
@@ -498,20 +500,6 @@ struct pt_regs;
 
 #endif
 
-#if defined(bpf_target_powerpc)
-#define BPF_KPROBE_READ_RET_IP(ip, ctx)		({ (ip) = (ctx)->link; })
-#define BPF_KRETPROBE_READ_RET_IP		BPF_KPROBE_READ_RET_IP
-#elif defined(bpf_target_sparc)
-#define BPF_KPROBE_READ_RET_IP(ip, ctx)		({ (ip) = PT_REGS_RET(ctx); })
-#define BPF_KRETPROBE_READ_RET_IP		BPF_KPROBE_READ_RET_IP
-#else
-#define BPF_KPROBE_READ_RET_IP(ip, ctx)		({				\
-		bpf_probe_read(&(ip), sizeof(ip), (void *)PT_REGS_RET(ctx)); })
-#define BPF_KRETPROBE_READ_RET_IP(ip, ctx)	({				\
-		bpf_probe_read(&(ip), sizeof(ip),				\
-				(void *)(PT_REGS_FP(ctx) + sizeof(ip))); })
-#endif
-
 /*
  * BPF_CORE_READ abstracts away bpf_probe_read() call and captures offset
  * relocation for source address using __builtin_preserve_access_index()
@@ -531,5 +519,18 @@ struct pt_regs;
 #define BPF_CORE_READ(dst, src)						\
 	bpf_probe_read((dst), sizeof(*(src)),				\
 		       __builtin_preserve_access_index(src))
+
+/* The following types should be used by BPF_PROG_TYPE_TRACING program to
+ * access kernel function arguments. BPF trampoline and raw tracepoints
+ * typecast arguments to 'unsigned long long'.
+ */
+typedef int __attribute__((aligned(8))) ks32;
+typedef char __attribute__((aligned(8))) ks8;
+typedef short __attribute__((aligned(8))) ks16;
+typedef long long __attribute__((aligned(8))) ks64;
+typedef unsigned int __attribute__((aligned(8))) ku32;
+typedef unsigned char __attribute__((aligned(8))) ku8;
+typedef unsigned short __attribute__((aligned(8))) ku16;
+typedef unsigned long long __attribute__((aligned(8))) ku64;
 
 #endif

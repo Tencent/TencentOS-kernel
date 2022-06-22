@@ -84,7 +84,7 @@ static struct bpf_map *cpu_map_alloc(union bpf_attr *attr)
 	int ret, cpu;
 	u64 cost;
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (!bpf_capable())
 		return ERR_PTR(-EPERM);
 
 	/* check sanity of attributes */
@@ -589,6 +589,7 @@ static int cpu_map_get_next_key(struct bpf_map *map, void *key, void *next_key)
 	return 0;
 }
 
+static int cpu_map_btf_id;
 const struct bpf_map_ops cpu_map_ops = {
 	.map_alloc		= cpu_map_alloc,
 	.map_free		= cpu_map_free,
@@ -597,6 +598,8 @@ const struct bpf_map_ops cpu_map_ops = {
 	.map_lookup_elem	= cpu_map_lookup_elem,
 	.map_get_next_key	= cpu_map_get_next_key,
 	.map_check_btf		= map_check_no_btf,
+	.map_btf_name		= "bpf_cpu_map",
+	.map_btf_id		= &cpu_map_btf_id,
 };
 
 static int bq_flush_to_queue(struct xdp_bulk_queue *bq, bool in_napi_ctx)

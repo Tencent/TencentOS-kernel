@@ -10,17 +10,34 @@
 
 #include <stdbool.h>
 #include <stddef.h>
-#ifdef __GLIBC__
-#include <bits/wordsize.h>
-#else
-#include <bits/reg.h>
-#endif
-#include "libbpf_internal.h"
+#include <limits.h>
 
 static inline size_t hash_bits(size_t h, int bits)
 {
 	/* shuffle bits and return requested number of upper bits */
-	return (h * 11400714819323198485llu) >> (__WORDSIZE - bits);
+	if (bits == 0)
+		return 0;
+
+#if (__SIZEOF_SIZE_T__ == __SIZEOF_LONG_LONG__)
+	/* LP64 case */
+	return (h * 11400714819323198485llu) >> (__SIZEOF_LONG_LONG__ * 8 - bits);
+#elif (__SIZEOF_SIZE_T__ <= __SIZEOF_LONG__)
+	return (h * 2654435769lu) >> (__SIZEOF_LONG__ * 8 - bits);
+#else
+#	error "Unsupported size_t size"
+#endif
+}
+
+/* generic C-string hashing function */
+static inline size_t str_hash(const char *s)
+{
+	size_t h = 0;
+
+	while (*s) {
+		h = h * 31 + *s;
+		s++;
+	}
+	return h;
 }
 
 typedef size_t (*hashmap_hash_fn)(const void *key, void *ctx);
@@ -160,17 +177,17 @@ bool hashmap__find(const struct hashmap *map, const void *key, void **value);
  * @key: key to iterate entries for
  */
 #define hashmap__for_each_key_entry(map, cur, _key)			    \
-	for (cur = ({ size_t bkt = hash_bits(map->hash_fn((_key), map->ctx),\
-					     map->cap_bits);		    \
-		     map->buckets ? map->buckets[bkt] : NULL; });	    \
+	for (cur = map->buckets						    \
+		     ? map->buckets[hash_bits(map->hash_fn((_key), map->ctx), map->cap_bits)] \
+		     : NULL;						    \
 	     cur;							    \
 	     cur = cur->next)						    \
 		if (map->equal_fn(cur->key, (_key), map->ctx))
 
 #define hashmap__for_each_key_entry_safe(map, cur, tmp, _key)		    \
-	for (cur = ({ size_t bkt = hash_bits(map->hash_fn((_key), map->ctx),\
-					     map->cap_bits);		    \
-		     cur = map->buckets ? map->buckets[bkt] : NULL; });	    \
+	for (cur = map->buckets						    \
+		     ? map->buckets[hash_bits(map->hash_fn((_key), map->ctx), map->cap_bits)] \
+		     : NULL;						    \
 	     cur && ({ tmp = cur->next; true; });			    \
 	     cur = tmp)							    \
 		if (map->equal_fn(cur->key, (_key), map->ctx))

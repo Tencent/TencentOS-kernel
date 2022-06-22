@@ -77,7 +77,7 @@ static struct bpf_map *array_map_alloc(union bpf_attr *attr)
 	bool percpu = attr->map_type == BPF_MAP_TYPE_PERCPU_ARRAY;
 	int ret, numa_node = bpf_map_attr_numa_node(attr);
 	u32 elem_size, index_mask, max_entries;
-	bool unpriv = !capable(CAP_SYS_ADMIN);
+	bool bypass_spec_v1 = bpf_bypass_spec_v1();
 	u64 cost, array_size, mask64;
 	struct bpf_map_memory mem;
 	struct bpf_array *array;
@@ -95,7 +95,7 @@ static struct bpf_map *array_map_alloc(union bpf_attr *attr)
 	mask64 -= 1;
 
 	index_mask = mask64;
-	if (unpriv) {
+	if (!bypass_spec_v1) {
 		/* round up array size to nearest power of 2,
 		 * since cpu will speculate within index_mask limits
 		 */
@@ -149,7 +149,7 @@ static struct bpf_map *array_map_alloc(union bpf_attr *attr)
 		return ERR_PTR(-ENOMEM);
 	}
 	array->index_mask = index_mask;
-	array->map.unpriv_array = unpriv;
+	array->map.bypass_spec_v1 = bypass_spec_v1;
 
 	/* copy mandatory map attributes */
 	bpf_map_init_from_attr(&array->map, attr);
@@ -219,7 +219,7 @@ static u32 array_map_gen_lookup(struct bpf_map *map, struct bpf_insn *insn_buf)
 
 	*insn++ = BPF_ALU64_IMM(BPF_ADD, map_ptr, offsetof(struct bpf_array, value));
 	*insn++ = BPF_LDX_MEM(BPF_W, ret, index, 0);
-	if (map->unpriv_array) {
+	if (!map->bypass_spec_v1) {
 		*insn++ = BPF_JMP_IMM(BPF_JGE, ret, map->max_entries, 4);
 		*insn++ = BPF_ALU32_IMM(BPF_AND, ret, array->index_mask);
 	} else {
@@ -294,6 +294,12 @@ static int array_map_get_next_key(struct bpf_map *map, void *key, void *next_key
 	return 0;
 }
 
+static void check_and_free_timer_in_array(struct bpf_array *arr, void *val)
+{
+	if (unlikely(map_value_has_timer(&arr->map)))
+		bpf_timer_cancel_and_free(val + arr->map.timer_off);
+}
+
 /* Called from syscall or from eBPF program */
 static int array_map_update_elem(struct bpf_map *map, void *key, void *value,
 				 u64 map_flags)
@@ -328,6 +334,7 @@ static int array_map_update_elem(struct bpf_map *map, void *key, void *value,
 			copy_map_value_locked(map, val, value, false);
 		else
 			copy_map_value(map, val, value);
+		check_and_free_timer_in_array(array, val);
 	}
 	return 0;
 }
@@ -379,6 +386,19 @@ static int array_map_delete_elem(struct bpf_map *map, void *key)
 static void *array_map_vmalloc_addr(struct bpf_array *array)
 {
 	return (void *)round_down((unsigned long)array, PAGE_SIZE);
+}
+
+static void array_map_free_timers(struct bpf_map *map)
+{
+	struct bpf_array *array = container_of(map, struct bpf_array, map);
+	int i;
+
+	if (likely(!map_value_has_timer(map)))
+		return;
+
+	for (i = 0; i < array->map.max_entries; i++)
+		bpf_timer_cancel_and_free(array->value + array->elem_size * i +
+					  map->timer_off);
 }
 
 /* Called when map->refcnt goes to zero, either from workqueue or from syscall */
@@ -494,11 +514,181 @@ int array_map_mmap(struct bpf_map *map, struct vm_area_struct *vma)
 				   vma->vm_pgoff + pgoff);
 }
 
+static int bpf_for_each_array_elem(struct bpf_map *map, void *callback_fn,
+				   void *callback_ctx, u64 flags)
+{
+	u32 i, key, num_elems = 0;
+	struct bpf_array *array;
+	bool is_percpu;
+	u64 ret = 0;
+	void *val;
+
+	if (flags != 0)
+		return -EINVAL;
+
+	is_percpu = map->map_type == BPF_MAP_TYPE_PERCPU_ARRAY;
+	array = container_of(map, struct bpf_array, map);
+	for (i = 0; i < map->max_entries; i++) {
+		if (is_percpu)
+			val = this_cpu_ptr(array->pptrs[i]);
+		else
+			val = array->value + array->elem_size * i;
+		num_elems++;
+		key = i;
+		ret = BPF_CAST_CALL(callback_fn)((u64)(long)map,
+					(u64)(long)&key, (u64)(long)val,
+					(u64)(long)callback_ctx, 0);
+		/* return value: 0 - continue, 1 - stop and return */
+		if (ret)
+			break;
+	}
+
+	return num_elems;
+}
+
+static int array_map_btf_id;
+struct bpf_iter_seq_array_map_info {
+	struct bpf_map *map;
+	void *percpu_value_buf;
+	u32 index;
+};
+
+static void *bpf_array_map_seq_start(struct seq_file *seq, loff_t *pos)
+{
+	struct bpf_iter_seq_array_map_info *info = seq->private;
+	struct bpf_map *map = info->map;
+	struct bpf_array *array;
+	u32 index;
+
+	if (info->index >= map->max_entries)
+		return NULL;
+
+	if (*pos == 0)
+		++*pos;
+	array = container_of(map, struct bpf_array, map);
+	index = info->index & array->index_mask;
+	if (info->percpu_value_buf)
+	       return array->pptrs[index];
+	return array->value + array->elem_size * index;
+}
+
+static void *bpf_array_map_seq_next(struct seq_file *seq, void *v, loff_t *pos)
+{
+	struct bpf_iter_seq_array_map_info *info = seq->private;
+	struct bpf_map *map = info->map;
+	struct bpf_array *array;
+	u32 index;
+
+	++*pos;
+	++info->index;
+	if (info->index >= map->max_entries)
+		return NULL;
+
+	array = container_of(map, struct bpf_array, map);
+	index = info->index & array->index_mask;
+	if (info->percpu_value_buf)
+	       return array->pptrs[index];
+	return array->value + array->elem_size * index;
+}
+
+static int __bpf_array_map_seq_show(struct seq_file *seq, void *v)
+{
+	struct bpf_iter_seq_array_map_info *info = seq->private;
+	struct bpf_iter__bpf_map_elem ctx = {};
+	struct bpf_map *map = info->map;
+	struct bpf_iter_meta meta;
+	struct bpf_prog *prog;
+	int off = 0, cpu = 0;
+	void __percpu **pptr;
+	u32 size;
+
+	meta.seq = seq;
+	prog = bpf_iter_get_info(&meta, v == NULL);
+	if (!prog)
+		return 0;
+
+	ctx.meta = &meta;
+	ctx.map = info->map;
+	if (v) {
+		ctx.key = &info->index;
+
+		if (!info->percpu_value_buf) {
+			ctx.value = v;
+		} else {
+			pptr = v;
+			size = round_up(map->value_size, 8);
+			for_each_possible_cpu(cpu) {
+				bpf_long_memcpy(info->percpu_value_buf + off,
+						per_cpu_ptr(pptr, cpu),
+						size);
+				off += size;
+			}
+			ctx.value = info->percpu_value_buf;
+		}
+	}
+
+	return bpf_iter_run_prog(prog, &ctx);
+}
+
+static int bpf_array_map_seq_show(struct seq_file *seq, void *v)
+{
+	return __bpf_array_map_seq_show(seq, v);
+}
+
+static void bpf_array_map_seq_stop(struct seq_file *seq, void *v)
+{
+	if (!v)
+		(void)__bpf_array_map_seq_show(seq, NULL);
+}
+
+static int bpf_iter_init_array_map(void *priv_data,
+				   struct bpf_iter_aux_info *aux)
+{
+	struct bpf_iter_seq_array_map_info *seq_info = priv_data;
+	struct bpf_map *map = aux->map;
+	void *value_buf;
+	u32 buf_size;
+
+	if (map->map_type == BPF_MAP_TYPE_PERCPU_ARRAY) {
+		buf_size = round_up(map->value_size, 8) * num_possible_cpus();
+		value_buf = kmalloc(buf_size, GFP_USER | __GFP_NOWARN);
+		if (!value_buf)
+			return -ENOMEM;
+
+		seq_info->percpu_value_buf = value_buf;
+	}
+
+	seq_info->map = map;
+	return 0;
+}
+
+static void bpf_iter_fini_array_map(void *priv_data)
+{
+	struct bpf_iter_seq_array_map_info *seq_info = priv_data;
+
+	kfree(seq_info->percpu_value_buf);
+}
+
+static const struct seq_operations bpf_array_map_seq_ops = {
+	.start	= bpf_array_map_seq_start,
+	.next	= bpf_array_map_seq_next,
+	.stop	= bpf_array_map_seq_stop,
+	.show	= bpf_array_map_seq_show,
+};
+
+static const struct bpf_iter_seq_info iter_seq_info = {
+	.seq_ops		= &bpf_array_map_seq_ops,
+	.init_seq_private	= bpf_iter_init_array_map,
+	.fini_seq_private	= bpf_iter_fini_array_map,
+	.seq_priv_size		= sizeof(struct bpf_iter_seq_array_map_info),
+};
+
 const struct bpf_map_ops array_map_ops = {
 	.map_alloc_check = array_map_alloc_check,
 	.map_alloc = array_map_alloc,
 	.map_free = array_map_free,
 	.map_get_next_key = array_map_get_next_key,
+	.map_release_uref = array_map_free_timers,
 	.map_lookup_elem = array_map_lookup_elem,
 	.map_update_elem = array_map_update_elem,
 	.map_delete_elem = array_map_delete_elem,
@@ -508,8 +698,14 @@ const struct bpf_map_ops array_map_ops = {
 	.map_mmap = array_map_mmap,
 	.map_seq_show_elem = array_map_seq_show_elem,
 	.map_check_btf = array_map_check_btf,
+	.map_set_for_each_callback_args = map_set_for_each_callback_args,
+	.map_for_each_callback = bpf_for_each_array_elem,
+	.map_btf_name = "bpf_array",
+	.map_btf_id = &array_map_btf_id,
+	.iter_seq_info = &iter_seq_info,
 };
 
+static int percpu_array_map_btf_id;
 const struct bpf_map_ops percpu_array_map_ops = {
 	.map_alloc_check = array_map_alloc_check,
 	.map_alloc = array_map_alloc,
@@ -520,6 +716,11 @@ const struct bpf_map_ops percpu_array_map_ops = {
 	.map_delete_elem = array_map_delete_elem,
 	.map_seq_show_elem = percpu_array_map_seq_show_elem,
 	.map_check_btf = array_map_check_btf,
+	.map_set_for_each_callback_args = map_set_for_each_callback_args,
+	.map_for_each_callback = bpf_for_each_array_elem,
+	.map_btf_name = "bpf_array",
+	.map_btf_id = &percpu_array_map_btf_id,
+	.iter_seq_info = &iter_seq_info,
 };
 
 static int fd_array_map_alloc_check(union bpf_attr *attr)
@@ -591,10 +792,17 @@ int bpf_fd_array_map_update_elem(struct bpf_map *map, struct file *map_file,
 	if (IS_ERR(new_ptr))
 		return PTR_ERR(new_ptr);
 
-	old_ptr = xchg(array->ptrs + index, new_ptr);
+	if (map->ops->map_poke_run) {
+		mutex_lock(&array->aux->poke_mutex);
+		old_ptr = xchg(array->ptrs + index, new_ptr);
+		map->ops->map_poke_run(map, index, old_ptr, new_ptr);
+		mutex_unlock(&array->aux->poke_mutex);
+	} else {
+		old_ptr = xchg(array->ptrs + index, new_ptr);
+	}
+
 	if (old_ptr)
 		map->ops->map_fd_put_ptr(old_ptr);
-
 	return 0;
 }
 
@@ -607,7 +815,15 @@ static int fd_array_map_delete_elem(struct bpf_map *map, void *key)
 	if (index >= array->map.max_entries)
 		return -E2BIG;
 
-	old_ptr = xchg(array->ptrs + index, NULL);
+	if (map->ops->map_poke_run) {
+		mutex_lock(&array->aux->poke_mutex);
+		old_ptr = xchg(array->ptrs + index, NULL);
+		map->ops->map_poke_run(map, index, old_ptr, NULL);
+		mutex_unlock(&array->aux->poke_mutex);
+	} else {
+		old_ptr = xchg(array->ptrs + index, NULL);
+	}
+
 	if (old_ptr) {
 		map->ops->map_fd_put_ptr(old_ptr);
 		return 0;
@@ -676,18 +892,199 @@ static void prog_array_map_seq_show_elem(struct bpf_map *map, void *key,
 	rcu_read_unlock();
 }
 
+struct prog_poke_elem {
+	struct list_head list;
+	struct bpf_prog_aux *aux;
+};
+
+static int prog_array_map_poke_track(struct bpf_map *map,
+				     struct bpf_prog_aux *prog_aux)
+{
+	struct prog_poke_elem *elem;
+	struct bpf_array_aux *aux;
+	int ret = 0;
+
+	aux = container_of(map, struct bpf_array, map)->aux;
+	mutex_lock(&aux->poke_mutex);
+	list_for_each_entry(elem, &aux->poke_progs, list) {
+		if (elem->aux == prog_aux)
+			goto out;
+	}
+
+	elem = kmalloc(sizeof(*elem), GFP_KERNEL);
+	if (!elem) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	INIT_LIST_HEAD(&elem->list);
+	/* We must track the program's aux info at this point in time
+	 * since the program pointer itself may not be stable yet, see
+	 * also comment in prog_array_map_poke_run().
+	 */
+	elem->aux = prog_aux;
+
+	list_add_tail(&elem->list, &aux->poke_progs);
+out:
+	mutex_unlock(&aux->poke_mutex);
+	return ret;
+}
+
+static void prog_array_map_poke_untrack(struct bpf_map *map,
+					struct bpf_prog_aux *prog_aux)
+{
+	struct prog_poke_elem *elem, *tmp;
+	struct bpf_array_aux *aux;
+
+	aux = container_of(map, struct bpf_array, map)->aux;
+	mutex_lock(&aux->poke_mutex);
+	list_for_each_entry_safe(elem, tmp, &aux->poke_progs, list) {
+		if (elem->aux == prog_aux) {
+			list_del_init(&elem->list);
+			kfree(elem);
+			break;
+		}
+	}
+	mutex_unlock(&aux->poke_mutex);
+}
+
+static void prog_array_map_poke_run(struct bpf_map *map, u32 key,
+				    struct bpf_prog *old,
+				    struct bpf_prog *new)
+{
+	struct prog_poke_elem *elem;
+	struct bpf_array_aux *aux;
+
+	aux = container_of(map, struct bpf_array, map)->aux;
+	WARN_ON_ONCE(!mutex_is_locked(&aux->poke_mutex));
+
+	list_for_each_entry(elem, &aux->poke_progs, list) {
+		struct bpf_jit_poke_descriptor *poke;
+		int i, ret;
+
+		for (i = 0; i < elem->aux->size_poke_tab; i++) {
+			poke = &elem->aux->poke_tab[i];
+
+			/* Few things to be aware of:
+			 *
+			 * 1) We can only ever access aux in this context, but
+			 *    not aux->prog since it might not be stable yet and
+			 *    there could be danger of use after free otherwise.
+			 * 2) Initially when we start tracking aux, the program
+			 *    is not JITed yet and also does not have a kallsyms
+			 *    entry. We skip these as poke->ip_stable is not
+			 *    active yet. The JIT will do the final fixup before
+			 *    setting it stable. The various poke->ip_stable are
+			 *    successively activated, so tail call updates can
+			 *    arrive from here while JIT is still finishing its
+			 *    final fixup for non-activated poke entries.
+			 * 3) On program teardown, the program's kallsym entry gets
+			 *    removed out of RCU callback, but we can only untrack
+			 *    from sleepable context, therefore bpf_arch_text_poke()
+			 *    might not see that this is in BPF text section and
+			 *    bails out with -EINVAL. As these are unreachable since
+			 *    RCU grace period already passed, we simply skip them.
+			 * 4) Also programs reaching refcount of zero while patching
+			 *    is in progress is okay since we're protected under
+			 *    poke_mutex and untrack the programs before the JIT
+			 *    buffer is freed. When we're still in the middle of
+			 *    patching and suddenly kallsyms entry of the program
+			 *    gets evicted, we just skip the rest which is fine due
+			 *    to point 3).
+			 * 5) Any other error happening below from bpf_arch_text_poke()
+			 *    is a unexpected bug.
+			 */
+			if (!READ_ONCE(poke->ip_stable))
+				continue;
+			if (poke->reason != BPF_POKE_REASON_TAIL_CALL)
+				continue;
+			if (poke->tail_call.map != map ||
+			    poke->tail_call.key != key)
+				continue;
+
+			ret = bpf_arch_text_poke(poke->ip, BPF_MOD_JUMP,
+						 old ? (u8 *)old->bpf_func +
+						 poke->adj_off : NULL,
+						 new ? (u8 *)new->bpf_func +
+						 poke->adj_off : NULL);
+			BUG_ON(ret < 0 && ret != -EINVAL);
+		}
+	}
+}
+
+static void prog_array_map_clear_deferred(struct work_struct *work)
+{
+	struct bpf_map *map = container_of(work, struct bpf_array_aux,
+					   work)->map;
+	bpf_fd_array_map_clear(map);
+	bpf_map_put(map);
+}
+
+static void prog_array_map_clear(struct bpf_map *map)
+{
+	struct bpf_array_aux *aux = container_of(map, struct bpf_array,
+						 map)->aux;
+	bpf_map_inc(map);
+	schedule_work(&aux->work);
+}
+
+static struct bpf_map *prog_array_map_alloc(union bpf_attr *attr)
+{
+	struct bpf_array_aux *aux;
+	struct bpf_map *map;
+
+	aux = kzalloc(sizeof(*aux), GFP_KERNEL);
+	if (!aux)
+		return ERR_PTR(-ENOMEM);
+
+	INIT_WORK(&aux->work, prog_array_map_clear_deferred);
+	INIT_LIST_HEAD(&aux->poke_progs);
+	mutex_init(&aux->poke_mutex);
+
+	map = array_map_alloc(attr);
+	if (IS_ERR(map)) {
+		kfree(aux);
+		return map;
+	}
+
+	container_of(map, struct bpf_array, map)->aux = aux;
+	aux->map = map;
+
+	return map;
+}
+
+static void prog_array_map_free(struct bpf_map *map)
+{
+	struct prog_poke_elem *elem, *tmp;
+	struct bpf_array_aux *aux;
+
+	aux = container_of(map, struct bpf_array, map)->aux;
+	list_for_each_entry_safe(elem, tmp, &aux->poke_progs, list) {
+		list_del_init(&elem->list);
+		kfree(elem);
+	}
+	kfree(aux);
+	fd_array_map_free(map);
+}
+
+static int prog_array_map_btf_id;
 const struct bpf_map_ops prog_array_map_ops = {
 	.map_alloc_check = fd_array_map_alloc_check,
-	.map_alloc = array_map_alloc,
-	.map_free = fd_array_map_free,
+	.map_alloc = prog_array_map_alloc,
+	.map_free = prog_array_map_free,
+	.map_poke_track = prog_array_map_poke_track,
+	.map_poke_untrack = prog_array_map_poke_untrack,
+	.map_poke_run = prog_array_map_poke_run,
 	.map_get_next_key = array_map_get_next_key,
 	.map_lookup_elem = fd_array_map_lookup_elem,
 	.map_delete_elem = fd_array_map_delete_elem,
 	.map_fd_get_ptr = prog_fd_array_get_ptr,
 	.map_fd_put_ptr = prog_fd_array_put_ptr,
 	.map_fd_sys_lookup_elem = prog_fd_array_sys_lookup_elem,
-	.map_release_uref = bpf_fd_array_map_clear,
+	.map_release_uref = prog_array_map_clear,
 	.map_seq_show_elem = prog_array_map_seq_show_elem,
+	.map_btf_name = "bpf_array",
+	.map_btf_id = &prog_array_map_btf_id,
 };
 
 static struct bpf_event_entry *bpf_event_entry_gen(struct file *perf_file,
@@ -766,6 +1163,7 @@ static void perf_event_fd_array_release(struct bpf_map *map,
 	rcu_read_unlock();
 }
 
+static int perf_event_array_map_btf_id;
 const struct bpf_map_ops perf_event_array_map_ops = {
 	.map_alloc_check = fd_array_map_alloc_check,
 	.map_alloc = array_map_alloc,
@@ -777,6 +1175,8 @@ const struct bpf_map_ops perf_event_array_map_ops = {
 	.map_fd_put_ptr = perf_event_fd_array_put_ptr,
 	.map_release = perf_event_fd_array_release,
 	.map_check_btf = map_check_no_btf,
+	.map_btf_name = "bpf_array",
+	.map_btf_id = &perf_event_array_map_btf_id,
 };
 
 #ifdef CONFIG_CGROUPS
@@ -799,6 +1199,7 @@ static void cgroup_fd_array_free(struct bpf_map *map)
 	fd_array_map_free(map);
 }
 
+static int cgroup_array_map_btf_id;
 const struct bpf_map_ops cgroup_array_map_ops = {
 	.map_alloc_check = fd_array_map_alloc_check,
 	.map_alloc = array_map_alloc,
@@ -809,6 +1210,8 @@ const struct bpf_map_ops cgroup_array_map_ops = {
 	.map_fd_get_ptr = cgroup_fd_array_get_ptr,
 	.map_fd_put_ptr = cgroup_fd_array_put_ptr,
 	.map_check_btf = map_check_no_btf,
+	.map_btf_name = "bpf_array",
+	.map_btf_id = &cgroup_array_map_btf_id,
 };
 #endif
 
@@ -863,7 +1266,7 @@ static u32 array_of_map_gen_lookup(struct bpf_map *map,
 
 	*insn++ = BPF_ALU64_IMM(BPF_ADD, map_ptr, offsetof(struct bpf_array, value));
 	*insn++ = BPF_LDX_MEM(BPF_W, ret, index, 0);
-	if (map->unpriv_array) {
+	if (!map->bypass_spec_v1) {
 		*insn++ = BPF_JMP_IMM(BPF_JGE, ret, map->max_entries, 6);
 		*insn++ = BPF_ALU32_IMM(BPF_AND, ret, array->index_mask);
 	} else {
@@ -882,6 +1285,7 @@ static u32 array_of_map_gen_lookup(struct bpf_map *map,
 	return insn - insn_buf;
 }
 
+static int array_of_maps_map_btf_id;
 const struct bpf_map_ops array_of_maps_map_ops = {
 	.map_alloc_check = fd_array_map_alloc_check,
 	.map_alloc = array_of_map_alloc,
@@ -894,4 +1298,6 @@ const struct bpf_map_ops array_of_maps_map_ops = {
 	.map_fd_sys_lookup_elem = bpf_map_fd_sys_lookup_elem,
 	.map_gen_lookup = array_of_map_gen_lookup,
 	.map_check_btf = map_check_no_btf,
+	.map_btf_name = "bpf_array",
+	.map_btf_id = &array_of_maps_map_btf_id,
 };
