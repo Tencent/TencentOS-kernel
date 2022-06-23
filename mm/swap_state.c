@@ -465,11 +465,7 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 			vma, addr, &page_was_allocated);
 
 	if (page_was_allocated)
-#ifdef CONFIG_SAFETY_SWAP
-		swap_readpage_safety(retpage, do_poll);
-#else
 		swap_readpage(retpage, do_poll);
-#endif
 
 	return retpage;
 }
@@ -596,11 +592,7 @@ struct page *swap_cluster_readahead(swp_entry_t entry, gfp_t gfp_mask,
 		if (!page)
 			continue;
 		if (page_allocated) {
-#ifdef CONFIG_SAFETY_SWAP
-			swap_readpage_safety(page, false);
-#else
 			swap_readpage(page, false);
-#endif
 			if (offset != entry_offset) {
 				SetPageReadahead(page);
 				count_vm_event(SWAP_RA);
@@ -772,11 +764,7 @@ static struct page *swap_vma_readahead(swp_entry_t fentry, gfp_t gfp_mask,
 		if (!page)
 			continue;
 		if (page_allocated) {
-#ifdef CONFIG_SAFETY_SWAP
-			swap_readpage_safety(page, false);
-#else
 			swap_readpage(page, false);
-#endif
 			if (i != ra_info.offset) {
 				SetPageReadahead(page);
 				count_vm_event(SWAP_RA);

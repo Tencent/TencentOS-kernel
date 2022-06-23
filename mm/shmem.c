@@ -1417,8 +1417,11 @@ static int shmem_writepage(struct page *page, struct writeback_control *wbc)
 		swap_writepage(page, wbc);
 
 #ifdef CONFIG_SAFETY_SHMEM
-		/* for safety, clear page */
-		clear_highpage(page);
+		wait_on_page_writeback(page);
+		if (!PageSwapCache(page)) {
+			/* for safety, clear page */
+			clear_highpage(page);
+		}
 #endif
 		return 0;
 	}
@@ -1757,6 +1760,9 @@ static int shmem_swapin_page(struct inode *inode, pgoff_t index,
 	if (sgp == SGP_WRITE)
 		mark_page_accessed(page);
 
+#ifdef CONFIG_SAFETY_SWAP
+	swap_zero_slot(page);
+#endif
 	delete_from_swap_cache(page);
 	set_page_dirty(page);
 	swap_free(swap);

@@ -134,6 +134,7 @@ atomic_long_t _totalram_pages __read_mostly;
 EXPORT_SYMBOL(_totalram_pages);
 unsigned long totalreserve_pages __read_mostly;
 unsigned long totalcma_pages __read_mostly;
+static bool safemem_enable __read_mostly = false;
 
 int percpu_pagelist_fraction;
 gfp_t gfp_allowed_mask __read_mostly = GFP_BOOT_MASK;
@@ -8786,4 +8787,64 @@ bool set_hwpoison_free_buddy_page(struct page *page)
 
 	return hwpoisoned;
 }
+#endif
+
+#ifdef CONFIG_SYSFS
+#ifdef CONFIG_SAFETY_MEM
+static ssize_t safemem_enabled_show(struct kobject *kobj,
+				     struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%s\n", safemem_enable? "true" : "false");
+}
+
+static ssize_t safemem_enabled_store(struct kobject *kobj,
+				      struct kobj_attribute *attr,
+				      const char *buf, size_t count)
+{
+	if (!strncmp(buf, "true", 4) || !strncmp(buf, "1", 1))
+		safemem_enable = true;
+	else if (!strncmp(buf, "false", 5) || !strncmp(buf, "0", 1))
+		safemem_enable = false;
+	else
+		return -EINVAL;
+
+	return count;
+}
+
+static struct kobj_attribute safemem_enabled_attr =
+	__ATTR(safemem_enabled, 0644, safemem_enabled_show,
+	       safemem_enabled_store);
+
+static struct attribute *safemem_attrs[] = {
+	&safemem_enabled_attr.attr,
+	NULL,
+};
+
+static struct attribute_group safemem_attr_group = {
+	.attrs = safemem_attrs,
+};
+
+static int __init safemem_init_sysfs(void)
+{
+	int err;
+	struct kobject *safemem_kobj;
+
+	safemem_kobj = kobject_create_and_add("safemem", mm_kobj);
+	if (!safemem_kobj) {
+		pr_err("failed to create safemem kobject\n");
+		return -ENOMEM;
+	}
+	err = sysfs_create_group(safemem_kobj, &safemem_attr_group);
+	if (err) {
+		pr_err("failed to register safemem group\n");
+		goto delete_obj;
+	}
+	return 0;
+
+delete_obj:
+	kobject_put(safemem_kobj);
+	return err;
+}
+subsys_initcall(safemem_init_sysfs);
+#endif
 #endif

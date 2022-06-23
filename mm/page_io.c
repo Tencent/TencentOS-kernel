@@ -25,6 +25,7 @@
 #include <linux/uio.h>
 #include <linux/sched/task.h>
 #include <asm/pgtable.h>
+#include <linux/blkdev.h>
 
 static struct bio *get_swap_bio(gfp_t gfp_flags,
 				struct page *page, bio_end_io_t end_io)
@@ -417,52 +418,27 @@ out:
 }
 
 #ifdef CONFIG_SAFETY_SWAP
-static void swap_write_end(struct bio *bio)
+int swap_zero_slot(struct page *page)
 {
-	struct page *page = bio_first_page_all(bio);
+	int ret = 0;
+	struct bio *bio;
+	struct swap_info_struct *sis = page_swap_info(page);
 
-	__free_page(page);
-	bio_put(bio);
-}
-
-int swap_readpage_safety(struct page *page, bool synchronous)
-{
-	int rc;
-	struct page *zero_page;
-	struct writeback_control wbc = {
-		.sync_mode = WB_SYNC_NONE,
-		.nr_to_write = SWAP_CLUSTER_MAX,
-		.range_start = 0,
-		.range_end = LLONG_MAX,
-		.for_reclaim = 1,
-	};
-
-	rc = swap_readpage(page, synchronous);
-	if (rc < 0) {
-		return rc;
+	bio = bio_alloc(GFP_NOIO, 1);
+	if (bio == NULL) {
+		ret = -ENOMEM;
+		goto out;
 	}
 
-	/* for safety, clear swap slot */
-	zero_page = alloc_page(GFP_NOIO|__GFP_HIGHMEM);
-	if (!zero_page)
-		return rc;
+	bio_set_dev(bio, sis->bdev);
+	bio->bi_opf = REQ_OP_WRITE | REQ_SWAP | REQ_SYNC;
+	bio->bi_iter.bi_sector = swap_page_sector(page);
+	bio_add_page(bio, ZERO_PAGE(0), PAGE_SIZE, 0);
 
-	/*
-	 * The swap entry is ours to swap in. Prepare the zero page.
-	 */
-
-	__SetPageLocked(zero_page);
-	__SetPageSwapBacked(zero_page);
-
-	clear_highpage(zero_page);
-
-	/* it's just cheating, but it's not in swap */
-	SetPageSwapCache(zero_page);
-	set_page_private(zero_page, page_private(page));
-
-	__swap_writepage(zero_page, &wbc, swap_write_end);
-
-	return rc;
+	submit_bio_wait(bio);
+	bio_put(bio);
+out:
+	return ret;
 }
 #endif
 

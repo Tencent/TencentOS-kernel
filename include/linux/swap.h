@@ -405,7 +405,7 @@ extern void kswapd_stop(int nid);
 
 /* linux/mm/page_io.c */
 #ifdef CONFIG_SAFETY_SWAP
-extern int swap_readpage_safety(struct page *page, bool do_poll);
+extern int swap_zero_slot(struct page *page);
 #endif
 extern int swap_readpage(struct page *page, bool do_poll);
 extern int swap_writepage(struct page *page, struct writeback_control *wbc);
@@ -504,7 +504,7 @@ static inline void put_swap_device(struct swap_info_struct *si)
 
 #else /* CONFIG_SWAP */
 #ifdef CONFIG_SAFETY_SWAP
-static inline int swap_readpage_safety(struct page *page, bool do_poll)
+static int swap_zero_slot(struct page *page)
 {
 	return 0;
 }
