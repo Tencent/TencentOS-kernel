@@ -11,6 +11,7 @@
 
 #include "ext4_jbd2.h"
 #include "mballoc.h"
+#include <linux/blkdev.h>
 #include <linux/log2.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -4892,6 +4893,11 @@ do_more:
 			EXT4_BLOCKS_PER_GROUP(sb);
 		count -= overflow;
 	}
+
+	/* don't need to care about the result */
+	if (!IS_ENCRYPTED(inode))
+		sb_issue_zeroout(inode->i_sb, block, count, GFP_NOFS);
+
 	count_clusters = EXT4_NUM_B2C(sbi, count);
 	bitmap_bh = ext4_read_block_bitmap(sb, block_group);
 	if (IS_ERR(bitmap_bh)) {
