@@ -30,7 +30,7 @@ kernel_default_types=(default)
 #funcitons
 usage()
 {
-	echo "generate-rpms [-t \$tag_name ] [-j \$jobs ][-h]" 
+	echo "generate-rpms [-t \$tag_name ] [-j \$jobs ] [-k \$config_type][-h]" 
 	echo "     -t tag_name"
 	echo "        Tagged name in the git tree."
 	echo "     -j jobs"
@@ -41,6 +41,8 @@ usage()
 	echo "        build perf and other kernel tools rpm only."
 	echo "     -c"
 	echo "        enable kabi check."
+        echo "     -k config_type"
+	echo "        build kasan or nosign config, config type is 'kasan' or 'nosign'."
 
 	echo -e "\n"
 	echo "     Note:By default, we only generate latest tag kernel for standard kernels" 
@@ -151,10 +153,55 @@ prepare_tlinux_spec()
 	fi
 }
 
+build_kasan_config()
+{
+    # 默认配置路径
+    default_file="./config.default"
+    default_kasan_file="./config.default_kasan"
+
+    # 如果默认配置不存在，则直接退出
+    if [ ! -f "${default_file}" ]; then
+        echo "Please confirm that ${default_file} exists !"
+        exit 1
+    fi
+
+    # 如果kasan配置已存在，则直接删除
+    if [ -f "${default_kasan_file}" ]; then
+        mv ${default_kasan_file} ${default_kasan_file}.bak.$(date +"%Y-%m-%d")
+    fi
+
+    # 复制默认配置为kasan配置
+    cp ${default_file} ${default_kasan_file}
+    # 删除已有的KASAN配置
+    sed -i '/KASAN\w*=/d' ${default_kasan_file}
+    # 删除KASAN配置开关项
+    sed -i '/^# CONFIG_KASAN is not set/d' ${default_kasan_file}
+
+    # 加载kasan配置项
+    source ./kasan_parameters.cnf
+
+    # kasan配置添加kasan配置项
+    for tmp_item in ${kasan_parameters[@]}
+    do
+        item=(${tmp_item//#/ })
+        next_key=`awk -F'=' "/^${item[0]}=/{getline ;print \\\$1}"  ${default_kasan_file}`
+        if [ "${item[1]}" != "${next_key}" ]
+        then
+           sed -i "/^${item[0]}=/a\\${item[1]}=${item[2]}" ${default_kasan_file}
+        else
+           sed -i "s/${item[1]}=\w*/${item[1]}=${item[2]}/g" ${default_kasan_file}
+        fi    
+    done
+
+    # 特殊添加kasan配置注释项
+    sed -i "/CONFIG_KASAN_OUTLINE=/a\\\# CONFIG_KASAN_INLINE is not set" ${default_kasan_file}
+    sed -i "/CONFIG_KASAN_STACK=/a\\\# CONFIG_TEST_KASAN is not set" ${default_kasan_file}
+}
+
 #main function
 
 #Parse Parameters
-while getopts ":t:k:j:hdcpx:" option "$@"
+while getopts ":t:j:hdcpx:k:" option "$@"
 do
 	case $option in 
 	"t" )
@@ -174,6 +221,22 @@ do
 		echo "-c kabi check enabled!"
 		check_kabi="yes"
 		;;
+        "k" )
+		case ${OPTARG} in
+                "kasan" )
+                            echo "build kasan config."
+                            build_kasan_config
+                            ;;
+                "nosign" )
+                            echo "build nosign config."
+                            echo "function to be developed !"
+                            ;;
+                * )
+                            echo "[-k \$config_type] config type is 'kasan' or 'nosign'."
+                            ;;
+                esac
+                exit 0
+                ;;
 	"?" )  
 		usage
 		exit 1
