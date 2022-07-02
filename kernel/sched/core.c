@@ -3697,6 +3697,9 @@ void scheduler_tick(void)
 	calc_global_load_tick(rq);
 	psi_task_tick(rq);
 
+#ifdef CONFIG_CGROUP_SLI
+	sli_check_longsys(curr);
+#endif
 	rq_unlock(rq, &rf);
 
 	perf_event_task_tick();
@@ -3786,6 +3789,9 @@ static void sched_tick_remote(struct work_struct *work)
 	curr->sched_class->task_tick(rq, curr, 0);
 
 	calc_load_nohz_remote(rq);
+#ifdef CONFIG_CGROUP_SLI
+	sli_check_longsys(curr);
+#endif
 out_unlock:
 	rq_unlock_irq(rq, &rf);
 out_requeue:
