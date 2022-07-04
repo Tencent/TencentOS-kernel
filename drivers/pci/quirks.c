@@ -3817,6 +3817,150 @@ static int reset_chelsio_generic_dev(struct pci_dev *dev, int probe)
 	return 0;
 }
 
+
+#define DEFAULT_PCI_RESET_WAIT_TIMEOUT 0
+#define MIN_PCI_RESET_WAIT_TIMEOUT DEFAULT_PCI_RESET_WAIT_TIMEOUT
+#define MAX_PCI_RESET_WAIT_TIMEOUT 4
+
+struct pci_reset_quirk_config {
+	unsigned short	vendor;
+	unsigned short	device;
+	union {   /* 4 bytes in size. */
+	    unsigned int timeout;
+	    unsigned int reserve;
+	};
+	int (*reset)(struct pci_dev *dev, struct pci_reset_quirk_config *cfg, int probe);
+};
+
+#define MAX_PCI_RESET_CONFIG_NUM 20
+static int pci_reset_quirk_config_num = 0;
+static struct pci_reset_quirk_config pci_reset_quirk_config[MAX_PCI_RESET_CONFIG_NUM] = {
+	{ 0 }
+};
+
+static int pci_reset_quirk_no_reset(struct pci_dev *dev, 
+		struct pci_reset_quirk_config *cfg, int probe)
+{
+	pci_info(dev, "do no reset the device\n");
+	return 0;
+}
+
+static void pci_no_reset_quirk_get_opt(char *str)
+{
+	unsigned short vid, did;
+	struct pci_reset_quirk_config *cfg;
+
+	while (str) {
+		char *k = strchr(str, ',');
+		if (k)
+			*k++ = 0;
+
+		if (str) {
+			vid = (unsigned short)simple_strtoul(str, &str, 16);
+			did = (unsigned short)simple_strtoul(str + 1, &str, 16);
+
+			cfg = &pci_reset_quirk_config[pci_reset_quirk_config_num++ % MAX_PCI_RESET_CONFIG_NUM];
+			cfg->vendor = vid;
+			cfg->device = did;
+			cfg->reserve = 0;
+			cfg->reset = pci_reset_quirk_no_reset;
+			pr_info("add no reset quirk success: %x:%x\n", vid, did);
+		}
+		str = k;
+	}
+}
+
+static int pci_reset_quirk_ssleep_after_sbr(struct pci_dev *dev, 
+		struct pci_reset_quirk_config *cfg, int probe)
+{
+	struct pci_dev *slot = dev->bus->self;
+	u16 reg, timeout = cfg->timeout;
+
+	if (probe)
+		return -ENOTTY;
+
+	if (!timeout)
+		return -ENOTTY;
+
+	pcie_capability_read_word(slot, PCI_EXP_SLTCTL, &reg);
+	reg &= (~PCI_EXP_SLTCTL_DLLSCE);
+	pcie_capability_write_word(slot, PCI_EXP_SLTCTL, reg);
+
+	pci_reset_secondary_bus(slot);
+
+	ssleep(timeout);
+
+	pcie_capability_write_word(slot, PCI_EXP_SLTSTA, PCI_EXP_SLTSTA_DLLSC);
+	pcie_capability_read_word(slot, PCI_EXP_SLTCTL, &reg);
+	reg |= PCI_EXP_SLTCTL_DLLSCE;
+	pcie_capability_write_word(slot, PCI_EXP_SLTCTL, reg);
+
+	pci_info(dev, "do sleep %ds after device reset\n", timeout);
+	return 0;
+}
+
+static void pci_reset_timeout_quirk_get_opt(char *str)
+{
+	unsigned short vid, did;
+	unsigned int t;
+	struct pci_reset_quirk_config *cfg;
+		
+	while (str) {
+		char *k = strchr(str, ',');
+		if (k)
+			*k++ = 0;
+
+		if (str) {
+			vid = (unsigned short)simple_strtoul(str, &str, 16);
+			did = (unsigned short)simple_strtoul(str + 1, &str, 16);
+			t = (unsigned int)simple_strtoul(str + 1, &str, 10);
+
+			if (t > MAX_PCI_RESET_WAIT_TIMEOUT	
+					|| t < MIN_PCI_RESET_WAIT_TIMEOUT)
+					t = MIN_PCI_RESET_WAIT_TIMEOUT;
+
+			cfg = &pci_reset_quirk_config[pci_reset_quirk_config_num++ % MAX_PCI_RESET_CONFIG_NUM];
+			cfg->vendor = vid;
+			cfg->device = did;
+			cfg->timeout = t;
+			cfg->reset = pci_reset_quirk_ssleep_after_sbr;
+			pr_info("add reset timeout quirk success: %x:%x timeout:%x\n", vid, did, t);
+		}
+		str = k;
+	}
+}
+
+/* 
+ * cmdline e.g.: pcireset_quirk=timeout,1ea0:2a16=4,1ea0:2a17=3 pcireset_quirk=noreset,1ea0:2a16,1ea0:2a17
+*/
+static int __init pci_reset_quirk_setup(char *str)
+{
+	if (!strncmp(str, "timeout,", 8)) {
+		pci_reset_timeout_quirk_get_opt(str + 8);
+	} else if (!strncmp(str, "noreset,", 8)) {
+		pci_no_reset_quirk_get_opt(str + 8);
+	} else {
+		pr_err("PCI: Unknown option in pcireset_quirk. '%s'\n", str);
+	}
+	return 0;
+}
+__setup("pcireset_quirk=", pci_reset_quirk_setup);
+
+static int pci_reset_quirk_cmdline(struct pci_dev *dev, int probe)
+{
+	int i;
+	struct pci_reset_quirk_config *cfg;
+
+	for (i = 0; i < pci_reset_quirk_config_num && i < MAX_PCI_RESET_CONFIG_NUM; i++){
+		cfg = &pci_reset_quirk_config[i];
+		if (cfg->vendor == dev->vendor &&
+			cfg->device == dev->device &&
+			cfg->reset)
+			return cfg->reset(dev, cfg, probe);
+	}
+	return -ENOTTY;
+}
+
 #define PCI_DEVICE_ID_INTEL_82599_SFP_VF   0x10ed
 #define PCI_DEVICE_ID_INTEL_IVB_M_VGA      0x0156
 #define PCI_DEVICE_ID_INTEL_IVB_M2_VGA     0x0166
@@ -3830,6 +3974,7 @@ static const struct pci_dev_reset_methods pci_dev_reset_methods[] = {
 		reset_ivb_igd },
 	{ PCI_VENDOR_ID_CHELSIO, PCI_ANY_ID,
 		reset_chelsio_generic_dev },
+	{ PCI_ANY_ID, PCI_ANY_ID, pci_reset_quirk_cmdline },
 	{ 0 }
 };
 
