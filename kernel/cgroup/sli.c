@@ -531,10 +531,12 @@ out:
 	rcu_read_unlock();
 }
 
-#ifdef CONFIG_SCHED_INFO
 void sli_check_longsys(struct task_struct *tsk)
 {
 	long delta;
+
+	if (!static_branch_likely(&sli_enabled))
+		return;
 
 	if (tsk->sched_class != &fair_sched_class)
 		return ;
@@ -559,7 +561,6 @@ void sli_check_longsys(struct task_struct *tsk)
 	delta = rq_clock(task_rq(tsk)) - tsk->sched_info.kernel_exec_start;
 	sli_schedlat_stat(tsk, SCHEDLAT_LONGSYS, delta);
 }
-#endif
 
 static void sli_proactive_monitor_work(struct work_struct *work)
 {
@@ -641,13 +642,6 @@ static void sli_proactive_monitor_work(struct work_struct *work)
 void sli_update_tick(struct task_struct *tsk)
 {
 	struct cgroup *cgrp;
-
-	if (!static_branch_likely(&sli_enabled))
-		return;
-
-#ifdef CONFIG_SCHED_INFO
-	sli_check_longsys(tsk);
-#endif
 
 	if (!static_branch_likely(&sli_monitor_enabled))
 		return;

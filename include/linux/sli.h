@@ -132,6 +132,7 @@ int  sli_schedlat_max_show(struct seq_file *m, struct cgroup *cgrp);
 ssize_t cgroup_sli_control_write(struct kernfs_open_file *of, char *buf,
 				 size_t nbytes, loff_t off);
 int cgroup_sli_control_show(struct seq_file *sf, void *v);
+void sli_check_longsys(struct task_struct *tsk);
 void sli_update_tick(struct task_struct *tsk);
 
 struct sli_notify_ctx* sctx_alloc(void);
