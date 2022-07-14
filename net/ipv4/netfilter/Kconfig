@@ -299,6 +299,27 @@ config IP_NF_TARGET_TTL
 	(e.g. when running oldconfig). It selects
 	CONFIG_NETFILTER_XT_TARGET_HL.
 
+config IP_NF_TARGET_WH
+        tristate "Write target ip:port into tcp option header"
+        default m
+        help
+          This option adds WH to iptables, for write target ip:port info into
+          tcp option header before dnat , it's used in the traffic proxy scenario,
+          eg: iptables -t mangle -A OUTPUT -p tcp --dst 10.1.0.0/255.255.255.0 -j WH
+
+          If unsure, say N.
+
+config IP_NF_TARGET_DNATLB
+        tristate "Support DNAT to multiple dest, with weight support"
+        depends on NF_NAT
+        default m
+        help
+          modify from iptables DNAT, support multiple dest,with weight specified.
+          eg: iptables -t nat -A OUTPUT -p tcp --dst 10.1.0.0/255.255.255.0 --dport 4001 -j DNATLB
+           --to-destination 192.168.0.1:4001:10 --to-destination 192.168.0.1:4002:20
+
+          If unsure, say N.
+
 # raw + specific targets
 config IP_NF_RAW
 	tristate  'raw table support (required for NOTRACK/TRACE)'
