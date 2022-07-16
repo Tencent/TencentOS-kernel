@@ -182,7 +182,7 @@ static u16 cgrp_dfl_threaded_ss_mask;
 LIST_HEAD(cgroup_roots);
 static int cgroup_root_count;
 
-int sysctl_qos_mbuf_enable = 1;
+int sysctl_qos_mbuf_enable = 0;
 
 /* hierarchy ID allocation and mapping, protected by cgroup_mutex */
 static DEFINE_IDR(cgroup_hierarchy_idr);

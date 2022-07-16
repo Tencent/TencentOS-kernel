@@ -21,7 +21,7 @@
 /* Define max mbuf len is 8M, and min is 2M */
 #define MBUF_LEN_MAX (1 << 23)
 #define MBUF_LEN_MIN (1 << 21)
-#define MBUF_LEN_DEF MBUF_LEN_MAX
+#define MBUF_LEN_DEF MBUF_LEN_MIN
 
 #define MBUF_MSG_LEN_MAX 1024
 
