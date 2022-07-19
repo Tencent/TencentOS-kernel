@@ -2361,7 +2361,8 @@ out:
 
 /* Internal, non-exposed redirect flags. */
 enum {
-	BPF_F_NEIGH = (1ULL << 1),
+	BPF_F_NEIGH	= (1ULL << 1),
+	BPF_F_PEER	= (1ULL << 2),
 	BPF_F_NEXTHOP	= (1ULL << 3),
 #define BPF_F_REDIRECT_INTERNAL	(BPF_F_NEIGH | BPF_F_PEER | BPF_F_NEXTHOP)
 };
