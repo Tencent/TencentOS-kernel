@@ -617,7 +617,7 @@ else ifneq ($(shell grep -o "ndo_xdp" $(LINUXSRC)/include/linux/netdevice.h),)
   ifneq ($(shell ls $(LINUXSRC)/include/net/bpf_trace.h > /dev/null 2>&1 && echo bpf_trace),)
     DISTRO_CFLAG += -DHAVE_BPF_TRACE
   endif
-  ifneq ($(shell grep -o "xdp_set_data_meta_invalid" $(LINUXSRC)/include/linux/filter.h),)
+  ifneq ($(shell grep -o "xdp_set_data_meta_invalid" $(LINUXSRC)/include/net/xdp.h),)
     DISTRO_CFLAG += -DHAVE_XDP_SET_DATA_META_INVALID
   endif
   ifneq ($(shell grep -o "void bpf_prog_add" $(LINUXSRC)/include/linux/bpf.h),)
