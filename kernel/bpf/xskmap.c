@@ -161,7 +161,7 @@ struct xdp_sock *__xsk_map_lookup_elem(struct bpf_map *map, u32 key)
 	return xs;
 }
 
-static u32 xsk_map_gen_lookup(struct bpf_map *map, struct bpf_insn *insn_buf)
+static int xsk_map_gen_lookup(struct bpf_map *map, struct bpf_insn *insn_buf)
 {
 	const int ret = BPF_REG_0, mp = BPF_REG_1, index = BPF_REG_2;
 	struct bpf_insn *insn = insn_buf;
