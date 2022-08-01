@@ -10541,27 +10541,6 @@ static int fixup_bpf_calls(struct bpf_verifier_env *env)
 			insn->code = BPF_JMP | BPF_TAIL_CALL;
 
 			aux = &env->insn_aux_data[i + delta];
-			if (env->bpf_capable && !expect_blinding &&
-			    prog->jit_requested &&
-			    !bpf_map_key_poisoned(aux) &&
-			    !bpf_map_ptr_poisoned(aux) &&
-			    !bpf_map_ptr_unpriv(aux)) {
-				struct bpf_jit_poke_descriptor desc = {
-					.reason = BPF_POKE_REASON_TAIL_CALL,
-					.tail_call.map = BPF_MAP_PTR(aux->map_ptr_state),
-					.tail_call.key = bpf_map_key_immediate(aux),
-				};
-
-				ret = bpf_jit_add_poke_descriptor(prog, &desc);
-				if (ret < 0) {
-					verbose(env, "adding tail call poke descriptor failed\n");
-					return ret;
-				}
-
-				insn->imm = ret + 1;
-				continue;
-			}
-
 			if (!bpf_map_ptr_unpriv(aux))
 				continue;
 
