@@ -8426,9 +8426,6 @@ static int dev_xdp_install(struct net_device *dev, bpf_op_t bpf_op,
 	xdp.prog = prog;
 
 	err = bpf_op(dev, &xdp);
-	if (!err && non_hw)
-		bpf_prog_change_xdp(prev_prog, prog);
-
 	if (prev_prog)
 		bpf_prog_put(prev_prog);
 
