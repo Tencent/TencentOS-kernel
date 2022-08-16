@@ -1,0 +1,10 @@
+RPM based dist Makefile and build system for the Linux kernel.
+
+Run `make dist-help` to see the usage.
+
+Authors:
+Kairui Song <kasong@tencent.com>
+Katrin Zhou <katrinzhou@tencent.com>
+Kaixu Xia <kaixuxia@tencent.com>
+
+Bundle with the Linux Kernel, licensed under the GPLv2
