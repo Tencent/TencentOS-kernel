@@ -4549,7 +4549,7 @@ EXPORT_SYMBOL_GPL(br_fdb_test_addr_hook);
 
 static inline struct sk_buff *
 sch_handle_ingress(struct sk_buff *skb, struct packet_type **pt_prev, int *ret,
-		   struct net_device *orig_dev)
+		   struct net_device *orig_dev, bool *another)
 {
 #ifdef CONFIG_NET_CLS_ACT
 	struct mini_Qdisc *miniq = rcu_dereference_bh(skb->dev->miniq_ingress);
@@ -4592,7 +4592,11 @@ sch_handle_ingress(struct sk_buff *skb, struct packet_type **pt_prev, int *ret,
 		 * redirecting to another netdev
 		 */
 		__skb_push(skb, skb->mac_len);
-		skb_do_redirect(skb);
+		if (skb_do_redirect(skb) == -EAGAIN) {
+			__skb_pull(skb, skb->mac_len);
+			*another = true;
+			break;
+		}
 		return NULL;
 	case TC_ACT_CONSUMED:
 		return NULL;
@@ -4783,7 +4787,12 @@ another_round:
 skip_taps:
 #ifdef CONFIG_NET_INGRESS
 	if (static_branch_unlikely(&ingress_needed_key)) {
-		skb = sch_handle_ingress(skb, &pt_prev, &ret, orig_dev);
+		bool another = false;
+
+		skb = sch_handle_ingress(skb, &pt_prev, &ret, orig_dev,
+					 &another);
+		if (another)
+			goto another_round;
 		if (!skb)
 			goto out;
 
@@ -8390,7 +8399,17 @@ static int dev_xdp_install(struct net_device *dev, bpf_op_t bpf_op,
 			   struct netlink_ext_ack *extack, u32 flags,
 			   struct bpf_prog *prog)
 {
+	bool non_hw = !(flags & XDP_FLAGS_HW_MODE);
+	struct bpf_prog *prev_prog = NULL;
 	struct netdev_bpf xdp;
+	int err;
+
+	if (non_hw) {
+		prev_prog = bpf_prog_by_id(__dev_xdp_query(dev, bpf_op,
+							   XDP_QUERY_PROG));
+		if (IS_ERR(prev_prog))
+			prev_prog = NULL;
+	}
 
 	memset(&xdp, 0, sizeof(xdp));
 	if (flags & XDP_FLAGS_HW_MODE)
@@ -8401,7 +8420,11 @@ static int dev_xdp_install(struct net_device *dev, bpf_op_t bpf_op,
 	xdp.flags = flags;
 	xdp.prog = prog;
 
-	return bpf_op(dev, &xdp);
+	err = bpf_op(dev, &xdp);
+	if (prev_prog)
+		bpf_prog_put(prev_prog);
+
+	return err;
 }
 
 static void dev_xdp_uninstall(struct net_device *dev)

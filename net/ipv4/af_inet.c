@@ -451,12 +451,12 @@ int inet_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	if (err)
 		return err;
 
-	return __inet_bind(sk, uaddr, addr_len, false, true);
+	return __inet_bind(sk, uaddr, addr_len, BIND_WITH_LOCK);
 }
 EXPORT_SYMBOL(inet_bind);
 
 int __inet_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len,
-		bool force_bind_address_no_port, bool with_lock)
+		u32 flags)
 {
 	struct sockaddr_in *addr = (struct sockaddr_in *)uaddr;
 	struct inet_sock *inet = inet_sk(sk);
@@ -507,7 +507,7 @@ int __inet_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len,
 	 *      would be illegal to use them (multicast/broadcast) in
 	 *      which case the sending device address is used.
 	 */
-	if (with_lock)
+	if (flags & BIND_WITH_LOCK)
 		lock_sock(sk);
 
 	/* Check these errors (active socket, double bind). */
@@ -521,16 +521,18 @@ int __inet_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len,
 
 	/* Make sure we are allowed to bind here. */
 	if (snum || !(inet->bind_address_no_port ||
-		      force_bind_address_no_port)) {
+		      (flags & BIND_FORCE_ADDRESS_NO_PORT))) {
 		if (sk->sk_prot->get_port(sk, snum)) {
 			inet->inet_saddr = inet->inet_rcv_saddr = 0;
 			err = -EADDRINUSE;
 			goto out_release_sock;
 		}
-		err = BPF_CGROUP_RUN_PROG_INET4_POST_BIND(sk);
-		if (err) {
-			inet->inet_saddr = inet->inet_rcv_saddr = 0;
-			goto out_release_sock;
+		if (!(flags & BIND_FROM_BPF)) {
+			err = BPF_CGROUP_RUN_PROG_INET4_POST_BIND(sk);
+			if (err) {
+				inet->inet_saddr = inet->inet_rcv_saddr = 0;
+				goto out_release_sock;
+			}
 		}
 	}
 
@@ -544,7 +546,7 @@ int __inet_bind(struct sock *sk, struct sockaddr *uaddr, int addr_len,
 	sk_dst_reset(sk);
 	err = 0;
 out_release_sock:
-	if (with_lock)
+	if (flags & BIND_WITH_LOCK)
 		release_sock(sk);
 out:
 	return err;
@@ -754,12 +756,11 @@ do_err:
 }
 EXPORT_SYMBOL(inet_accept);
 
-
 /*
  *	This does both peername and sockname.
  */
 int inet_getname(struct socket *sock, struct sockaddr *uaddr,
-			int peer)
+		 int peer)
 {
 	struct sock *sk		= sock->sk;
 	struct inet_sock *inet	= inet_sk(sk);
@@ -780,6 +781,11 @@ int inet_getname(struct socket *sock, struct sockaddr *uaddr,
 		sin->sin_port = inet->inet_sport;
 		sin->sin_addr.s_addr = addr;
 	}
+	if (cgroup_bpf_enabled)
+		BPF_CGROUP_RUN_SA_PROG_LOCK(sk, (struct sockaddr *)sin,
+					    peer ? BPF_CGROUP_INET4_GETPEERNAME :
+						   BPF_CGROUP_INET4_GETSOCKNAME,
+					    NULL);
 	memset(sin->sin_zero, 0, sizeof(sin->sin_zero));
 	return sizeof(*sin);
 }

@@ -3442,6 +3442,21 @@ static int cgroup_type_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
+int cgroup_id_show(struct seq_file *seq, void *v)
+{
+	struct cgroup *cgrp = seq_css(seq)->cgroup;
+	int ssid;
+	struct cgroup_subsys *ss;
+
+	for_each_subsys(ss, ssid) {
+		struct cgroup_subsys_state *css = cgroup_css(cgrp, ss);
+
+		if (css)
+			seq_printf(seq, "%s:%u\n", ss->name, css->id);
+	}
+	return 0;
+}
+
 static ssize_t cgroup_type_write(struct kernfs_open_file *of, char *buf,
 				 size_t nbytes, loff_t off)
 {
@@ -5038,6 +5053,10 @@ static struct cftype cgroup_base_files[] = {
 		.flags = CFTYPE_NOT_ON_ROOT,
 		.seq_show = cgroup_type_show,
 		.write = cgroup_type_write,
+	},
+	{
+		.name = "cgroup.id",
+		.seq_show = cgroup_id_show,
 	},
 	{
 		.name = "cgroup.procs",
@@ -6688,26 +6707,31 @@ void cgroup_sk_free(struct sock_cgroup_data *skcd)
 #endif	/* CONFIG_SOCK_CGROUP_DATA */
 
 #ifdef CONFIG_CGROUP_BPF
-int cgroup_bpf_attach(struct cgroup *cgrp, struct bpf_prog *prog,
-		      enum bpf_attach_type type, u32 flags)
+int cgroup_bpf_attach(struct cgroup *cgrp,
+		      struct bpf_prog *prog, struct bpf_prog *replace_prog,
+		      struct bpf_cgroup_link *link,
+		      enum bpf_attach_type type,
+		      u32 flags)
 {
 	int ret;
 
 	mutex_lock(&cgroup_mutex);
-	ret = __cgroup_bpf_attach(cgrp, prog, type, flags);
+	ret = __cgroup_bpf_attach(cgrp, prog, replace_prog, link, type, flags);
 	mutex_unlock(&cgroup_mutex);
 	return ret;
 }
+
 int cgroup_bpf_detach(struct cgroup *cgrp, struct bpf_prog *prog,
-		      enum bpf_attach_type type, u32 flags)
+		      enum bpf_attach_type type)
 {
 	int ret;
 
 	mutex_lock(&cgroup_mutex);
-	ret = __cgroup_bpf_detach(cgrp, prog, type);
+	ret = __cgroup_bpf_detach(cgrp, prog, NULL, type);
 	mutex_unlock(&cgroup_mutex);
 	return ret;
 }
+
 int cgroup_bpf_query(struct cgroup *cgrp, const union bpf_attr *attr,
 		     union bpf_attr __user *uattr)
 {

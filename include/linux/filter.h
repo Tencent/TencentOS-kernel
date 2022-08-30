@@ -65,8 +65,16 @@ struct ctl_table_header;
 /* unused opcode to mark special call to bpf_tail_call() helper */
 #define BPF_TAIL_CALL	0xf0
 
+/* unused opcode to mark special load instruction. Same as BPF_ABS */
+#define BPF_PROBE_MEM	0x20
+
 /* unused opcode to mark call to interpreter with arguments */
 #define BPF_CALL_ARGS	0xe0
+
+/* unused opcode to mark speculation barrier for mitigating
+ * Speculative Store Bypass
+ */
+#define BPF_NOSPEC	0xc0
 
 /* As per nm, we expose JITed images as text (code) section for
  * kallsyms. That way, tools like perf can find it to match
@@ -368,6 +376,16 @@ static inline bool insn_is_zext(const struct bpf_insn *insn)
 		.off   = 0,					\
 		.imm   = 0 })
 
+/* Speculation barrier */
+
+#define BPF_ST_NOSPEC()						\
+	((struct bpf_insn) {					\
+		.code  = BPF_ST | BPF_NOSPEC,			\
+		.dst_reg = 0,					\
+		.src_reg = 0,					\
+		.off   = 0,					\
+		.imm   = 0 })
+
 /* Internal classic blocks for direct assignment */
 
 #define __BPF_STMT(CODE, K)					\
@@ -511,10 +529,12 @@ struct sock_fprog_kern {
 	struct sock_filter	*filter;
 };
 
+/* Some arches need doubleword alignment for their instructions and/or data */
+#define BPF_IMAGE_ALIGNMENT 8
+
 struct bpf_binary_header {
 	u32 pages;
-	/* Some arches need word alignment for their instructions */
-	u8 image[] __aligned(4);
+	u8 image[] __aligned(BPF_IMAGE_ALIGNMENT);
 };
 
 struct bpf_prog {
@@ -553,22 +573,25 @@ struct sk_filter {
 
 DECLARE_STATIC_KEY_FALSE(bpf_stats_enabled_key);
 
-#define BPF_PROG_RUN(prog, ctx)	({				\
-	u32 ret;						\
-	cant_sleep();						\
-	if (static_branch_unlikely(&bpf_stats_enabled_key)) {	\
-		struct bpf_prog_stats *stats;			\
-		u64 start = sched_clock();			\
-		ret = (*(prog)->bpf_func)(ctx, (prog)->insnsi);	\
-		stats = this_cpu_ptr(prog->aux->stats);		\
-		u64_stats_update_begin(&stats->syncp);		\
-		stats->cnt++;					\
-		stats->nsecs += sched_clock() - start;		\
-		u64_stats_update_end(&stats->syncp);		\
-	} else {						\
-		ret = (*(prog)->bpf_func)(ctx, (prog)->insnsi);	\
-	}							\
+#define __BPF_PROG_RUN(prog, ctx, dfunc)	({			\
+	u32 ret;							\
+	cant_sleep();							\
+	if (static_branch_unlikely(&bpf_stats_enabled_key)) {		\
+		struct bpf_prog_stats *stats;				\
+		u64 start = sched_clock();				\
+		ret = dfunc(ctx, (prog)->insnsi, (prog)->bpf_func);	\
+		stats = this_cpu_ptr(prog->aux->stats);			\
+		u64_stats_update_begin(&stats->syncp);			\
+		stats->cnt++;						\
+		stats->nsecs += sched_clock() - start;			\
+		u64_stats_update_end(&stats->syncp);			\
+	} else {							\
+		ret = dfunc(ctx, (prog)->insnsi, (prog)->bpf_func);	\
+	}								\
 	ret; })
+
+#define BPF_PROG_RUN(prog, ctx) __BPF_PROG_RUN(prog, ctx,		\
+					       bpf_dispatcher_nopfunc)
 
 #define BPF_SKB_CB_LEN QDISC_CB_PRIV_LEN
 
@@ -578,6 +601,14 @@ struct bpf_skb_data_end {
 	void *data_end;
 };
 
+struct bpf_nh_params {
+	u32 nh_family;
+	union {
+		u32 ipv4_nh;
+		struct in6_addr ipv6_nh;
+	};
+};
+
 struct bpf_redirect_info {
 	u32 flags;
 	u32 tgt_index;
@@ -585,6 +616,7 @@ struct bpf_redirect_info {
 	struct bpf_map *map;
 	struct bpf_map *map_to_flush;
 	u32 kern_flags;
+	struct bpf_nh_params nh;
 };
 
 DECLARE_PER_CPU(struct bpf_redirect_info, bpf_redirect_info);
@@ -693,6 +725,8 @@ static inline u32 bpf_prog_run_clear_cb(const struct bpf_prog *prog,
 	return res;
 }
 
+DECLARE_BPF_DISPATCHER(bpf_dispatcher_xdp)
+
 static __always_inline u32 bpf_prog_run_xdp(const struct bpf_prog *prog,
 					    struct xdp_buff *xdp)
 {
@@ -702,8 +736,11 @@ static __always_inline u32 bpf_prog_run_xdp(const struct bpf_prog *prog,
 	 * already takes rcu_read_lock() when fetching the program, so
 	 * it's not necessary here anymore.
 	 */
-	return BPF_PROG_RUN(prog, xdp);
+	return __BPF_PROG_RUN(prog, xdp,
+			      BPF_DISPATCHER_FUNC(bpf_dispatcher_xdp));
 }
+
+void bpf_prog_change_xdp(struct bpf_prog *prev_prog, struct bpf_prog *prog);
 
 static inline u32 bpf_prog_insn_size(const struct bpf_prog *prog)
 {
@@ -830,6 +867,8 @@ int bpf_prog_create(struct bpf_prog **pfp, struct sock_fprog_kern *fprog);
 int bpf_prog_create_from_user(struct bpf_prog **pfp, struct sock_fprog *fprog,
 			      bpf_aux_classic_check_t trans, bool save_orig);
 void bpf_prog_destroy(struct bpf_prog *fp);
+const struct bpf_func_proto *
+bpf_base_func_proto(enum bpf_func_id func_id);
 
 int sk_attach_filter(struct sock_fprog *fprog, struct sock *sk);
 int sk_attach_bpf(u32 ufd, struct sock *sk);
@@ -950,6 +989,9 @@ void *bpf_jit_alloc_exec(unsigned long size);
 void bpf_jit_free_exec(void *addr);
 void bpf_jit_free(struct bpf_prog *fp);
 
+int bpf_jit_add_poke_descriptor(struct bpf_prog *prog,
+				struct bpf_jit_poke_descriptor *poke);
+
 int bpf_jit_get_func_addr(const struct bpf_prog *prog,
 			  const struct bpf_insn *insn, bool extra_pass,
 			  u64 *func_addr, bool *func_addr_fixed);
@@ -1051,6 +1093,13 @@ static inline bool ebpf_jit_enabled(void)
 static inline bool bpf_prog_ebpf_jited(const struct bpf_prog *fp)
 {
 	return false;
+}
+
+static inline int
+bpf_jit_add_poke_descriptor(struct bpf_prog *prog,
+			    struct bpf_jit_poke_descriptor *poke)
+{
+	return -ENOTSUPP;
 }
 
 static inline void bpf_jit_free(struct bpf_prog *fp)
@@ -1231,5 +1280,150 @@ struct bpf_sockopt_kern {
 	s32		optlen;
 	s32		retval;
 };
+
+struct bpf_sk_lookup_kern {
+	u16		family;
+	u16		protocol;
+	struct {
+		__be32 saddr;
+		__be32 daddr;
+	} v4;
+	struct {
+		const struct in6_addr *saddr;
+		const struct in6_addr *daddr;
+	} v6;
+	__be16		sport;
+	u16		dport;
+	struct sock	*selected_sk;
+	bool		no_reuseport;
+};
+
+extern struct static_key_false bpf_sk_lookup_enabled;
+
+/* Runners for BPF_SK_LOOKUP programs to invoke on socket lookup.
+ *
+ * Allowed return values for a BPF SK_LOOKUP program are SK_PASS and
+ * SK_DROP. Their meaning is as follows:
+ *
+ *  SK_PASS && ctx.selected_sk != NULL: use selected_sk as lookup result
+ *  SK_PASS && ctx.selected_sk == NULL: continue to htable-based socket lookup
+ *  SK_DROP                           : terminate lookup with -ECONNREFUSED
+ *
+ * This macro aggregates return values and selected sockets from
+ * multiple BPF programs according to following rules in order:
+ *
+ *  1. If any program returned SK_PASS and a non-NULL ctx.selected_sk,
+ *     macro result is SK_PASS and last ctx.selected_sk is used.
+ *  2. If any program returned SK_DROP return value,
+ *     macro result is SK_DROP.
+ *  3. Otherwise result is SK_PASS and ctx.selected_sk is NULL.
+ *
+ * Caller must ensure that the prog array is non-NULL, and that the
+ * array as well as the programs it contains remain valid.
+ */
+#define BPF_PROG_SK_LOOKUP_RUN_ARRAY(array, ctx, func)			\
+	({								\
+		struct bpf_sk_lookup_kern *_ctx = &(ctx);		\
+		struct bpf_prog_array_item *_item;			\
+		struct sock *_selected_sk = NULL;			\
+		bool _no_reuseport = false;				\
+		struct bpf_prog *_prog;					\
+		bool _all_pass = true;					\
+		u32 _ret;						\
+									\
+		_item = &(array)->items[0];				\
+		while ((_prog = READ_ONCE(_item->prog))) {		\
+			/* restore most recent selection */		\
+			_ctx->selected_sk = _selected_sk;		\
+			_ctx->no_reuseport = _no_reuseport;		\
+									\
+			_ret = func(_prog, _ctx);			\
+			if (_ret == SK_PASS && _ctx->selected_sk) {	\
+				/* remember last non-NULL socket */	\
+				_selected_sk = _ctx->selected_sk;	\
+				_no_reuseport = _ctx->no_reuseport;	\
+			} else if (_ret == SK_DROP && _all_pass) {	\
+				_all_pass = false;			\
+			}						\
+			_item++;					\
+		}							\
+		_ctx->selected_sk = _selected_sk;			\
+		_ctx->no_reuseport = _no_reuseport;			\
+		_all_pass || _selected_sk ? SK_PASS : SK_DROP;		\
+	 })
+
+static inline bool bpf_sk_lookup_run_v4(struct net *net, int protocol,
+					const __be32 saddr, const __be16 sport,
+					const __be32 daddr, const u16 dport,
+					struct sock **psk)
+{
+	struct bpf_prog_array *run_array;
+	struct sock *selected_sk = NULL;
+	bool no_reuseport = false;
+
+	rcu_read_lock();
+	run_array = rcu_dereference(net->bpf.run_array[NETNS_BPF_SK_LOOKUP]);
+	if (run_array) {
+		struct bpf_sk_lookup_kern ctx = {
+			.family		= AF_INET,
+			.protocol	= protocol,
+			.v4.saddr	= saddr,
+			.v4.daddr	= daddr,
+			.sport		= sport,
+			.dport		= dport,
+		};
+		u32 act;
+
+		act = BPF_PROG_SK_LOOKUP_RUN_ARRAY(run_array, ctx, BPF_PROG_RUN);
+		if (act == SK_PASS) {
+			selected_sk = ctx.selected_sk;
+			no_reuseport = ctx.no_reuseport;
+		} else {
+			selected_sk = ERR_PTR(-ECONNREFUSED);
+		}
+	}
+	rcu_read_unlock();
+	*psk = selected_sk;
+	return no_reuseport;
+}
+
+#if IS_ENABLED(CONFIG_IPV6)
+static inline bool bpf_sk_lookup_run_v6(struct net *net, int protocol,
+					const struct in6_addr *saddr,
+					const __be16 sport,
+					const struct in6_addr *daddr,
+					const u16 dport,
+					struct sock **psk)
+{
+	struct bpf_prog_array *run_array;
+	struct sock *selected_sk = NULL;
+	bool no_reuseport = false;
+
+	rcu_read_lock();
+	run_array = rcu_dereference(net->bpf.run_array[NETNS_BPF_SK_LOOKUP]);
+	if (run_array) {
+		struct bpf_sk_lookup_kern ctx = {
+			.family		= AF_INET6,
+			.protocol	= protocol,
+			.v6.saddr	= saddr,
+			.v6.daddr	= daddr,
+			.sport		= sport,
+			.dport		= dport,
+		};
+		u32 act;
+
+		act = BPF_PROG_SK_LOOKUP_RUN_ARRAY(run_array, ctx, BPF_PROG_RUN);
+		if (act == SK_PASS) {
+			selected_sk = ctx.selected_sk;
+			no_reuseport = ctx.no_reuseport;
+		} else {
+			selected_sk = ERR_PTR(-ECONNREFUSED);
+		}
+	}
+	rcu_read_unlock();
+	*psk = selected_sk;
+	return no_reuseport;
+}
+#endif /* IS_ENABLED(CONFIG_IPV6) */
 
 #endif /* __LINUX_FILTER_H__ */
