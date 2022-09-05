@@ -7411,20 +7411,6 @@ void mem_cgroup_cancel_charge(struct page *page, struct mem_cgroup *memcg,
 	cancel_charge(memcg, nr_pages);
 }
 
-int mem_cgroup_charge(struct page *page, struct mm_struct *mm, gfp_t gfp_mask, bool lruvec)
-{
-	struct mem_cgroup *memcg;
-	int ret;
-
-	VM_BUG_ON_PAGE(!page->mapping, page);
-
-	ret = mem_cgroup_try_charge(page, mm, gfp_mask, &memcg, false);
-	if (ret)
-		return ret;
-	mem_cgroup_commit_charge(page, memcg, lruvec, false);
-	return 0;
-}
-
 struct uncharge_gather {
 	struct mem_cgroup *memcg;
 	unsigned long pgpgout;
