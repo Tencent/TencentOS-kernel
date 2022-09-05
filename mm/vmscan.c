@@ -1601,7 +1601,7 @@ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
  */
 int __isolate_lru_page(struct page *page, isolate_mode_t mode)
 {
-	int ret = -EBUSY;
+	int ret = -EINVAL;
 
 	/* Only take pages on the LRU. */
 	if (!PageLRU(page))
@@ -1611,6 +1611,7 @@ int __isolate_lru_page(struct page *page, isolate_mode_t mode)
 	if (PageUnevictable(page) && !(mode & ISOLATE_UNEVICTABLE))
 		return ret;
 
+	ret = -EBUSY;
 
 	/*
 	 * To minimise LRU disruption, the caller can indicate that it only
@@ -1658,10 +1659,8 @@ int __isolate_lru_page(struct page *page, isolate_mode_t mode)
 		 * sure the page is not being freed elsewhere -- the
 		 * page release code relies on it.
 		 */
-		if (TestClearPageLRU(page))
-			ret = 0;
-		else
-			put_page(page);
+		ClearPageLRU(page);
+		ret = 0;
 	}
 
 	return ret;
@@ -1730,6 +1729,8 @@ static unsigned long isolate_lru_pages(unsigned long nr_to_scan,
 
 		page = lru_to_page(src);
 		prefetchw_prev_lru_page(page, src, flags);
+
+		VM_BUG_ON_PAGE(!PageLRU(page), page);
 
 		nr_pages = compound_nr(page);
 		total_scan += nr_pages;
@@ -1827,17 +1828,20 @@ int isolate_lru_page(struct page *page)
 	VM_BUG_ON_PAGE(!page_count(page), page);
 	WARN_RATELIMIT(PageTail(page), "trying to isolate tail page");
 
-	if (TestClearPageLRU(page)) {
+	if (PageLRU(page)) {
 		pg_data_t *pgdat = page_pgdat(page);
 		struct lruvec *lruvec;
 
-		get_page(page);
-		lruvec = mem_cgroup_page_lruvec(page, pgdat);
-
 		spin_lock_irq(&pgdat->lru_lock);
-		del_page_from_lru_list(page, lruvec, page_lru(page));
+		lruvec = mem_cgroup_page_lruvec(page, pgdat);
+		if (PageLRU(page)) {
+			int lru = page_lru(page);
+			get_page(page);
+			ClearPageLRU(page);
+			del_page_from_lru_list(page, lruvec, lru);
+			ret = 0;
+		}
 		spin_unlock_irq(&pgdat->lru_lock);
-		ret = 0;
 	}
 	return ret;
 }
@@ -4770,11 +4774,6 @@ void check_move_unevictable_pages(struct pagevec *pvec)
 		struct pglist_data *pagepgdat = page_pgdat(page);
 
 		pgscanned++;
-
-		/* block memcg migration during page moving between lru */
-		if (!TestClearPageLRU(page))
-			continue;
-
 		if (pagepgdat != pgdat) {
 			if (pgdat)
 				spin_unlock_irq(&pgdat->lru_lock);
@@ -4783,7 +4782,10 @@ void check_move_unevictable_pages(struct pagevec *pvec)
 		}
 		lruvec = mem_cgroup_page_lruvec(page, pgdat);
 
-		if (page_evictable(page) && PageUnevictable(page)) {
+		if (!PageLRU(page) || !PageUnevictable(page))
+			continue;
+
+		if (page_evictable(page)) {
 			enum lru_list lru = page_lru_base_type(page);
 
 			VM_BUG_ON_PAGE(PageActive(page), page);
@@ -4791,7 +4793,6 @@ void check_move_unevictable_pages(struct pagevec *pvec)
 			del_page_from_lru_list(page, lruvec, LRU_UNEVICTABLE);
 			add_page_to_lru_list(page, lruvec, lru);
 			pgrescued++;
-			SetPageLRU(page);
 		}
 	}
 
@@ -4799,8 +4800,6 @@ void check_move_unevictable_pages(struct pagevec *pvec)
 		__count_vm_events(UNEVICTABLE_PGRESCUED, pgrescued);
 		__count_vm_events(UNEVICTABLE_PGSCANNED, pgscanned);
 		spin_unlock_irq(&pgdat->lru_lock);
-	} else if (pgscanned) {
-		count_vm_events(UNEVICTABLE_PGSCANNED, pgscanned);
 	}
 }
 EXPORT_SYMBOL_GPL(check_move_unevictable_pages);
