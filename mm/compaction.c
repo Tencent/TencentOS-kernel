@@ -786,7 +786,7 @@ isolate_migratepages_block(struct compact_control *cc, unsigned long low_pfn,
 	unsigned long nr_scanned = 0, nr_isolated = 0;
 	struct lruvec *lruvec;
 	unsigned long flags = 0;
-	struct lruvec *locked = NULL;
+	bool locked = false;
 	struct page *page = NULL, *valid_page = NULL;
 	unsigned long start_pfn = low_pfn;
 	bool skip_on_failure = false;
@@ -846,17 +846,11 @@ isolate_migratepages_block(struct compact_control *cc, unsigned long low_pfn,
 		 * contention, to give chance to IRQs. Abort completely if
 		 * a fatal signal is pending.
 		 */
-		if (!(low_pfn % SWAP_CLUSTER_MAX)) {
-			if (locked) {
-				unlock_page_lruvec_irqrestore(locked, flags);
-				locked = NULL;
-			}
-			if (fatal_signal_pending(current)) {
-				cc->contended = true;
-				low_pfn = 0;
-				goto fatal_pending;
-			}
-			cond_resched();
+		if (!(low_pfn % SWAP_CLUSTER_MAX)
+		    && compact_unlock_should_abort(&pgdat->lru_lock,
+					    flags, &locked, cc)) {
+			low_pfn = 0;
+			goto fatal_pending;
 		}
 
 		if (!pfn_valid_within(low_pfn))
@@ -927,8 +921,9 @@ isolate_migratepages_block(struct compact_control *cc, unsigned long low_pfn,
 			if (unlikely(__PageMovable(page)) &&
 					!PageIsolated(page)) {
 				if (locked) {
-					unlock_page_lruvec_irqrestore(locked, flags);
-					locked = NULL;
+					spin_unlock_irqrestore(&pgdat->lru_lock,
+									flags);
+					locked = false;
 				}
 
 				if (!isolate_movable_page(page, isolate_mode))
@@ -969,18 +964,10 @@ isolate_migratepages_block(struct compact_control *cc, unsigned long low_pfn,
 		if (!TestClearPageLRU(page))
 			goto isolate_fail_put;
 
-		rcu_read_lock();
-		lruvec = mem_cgroup_page_lruvec(page, pgdat);
-
 		/* If we already hold the lock, we can skip some rechecking */
-		if (lruvec != locked) {
-			if (locked)
-				unlock_page_lruvec_irqrestore(locked, flags);
-			compact_lock_irqsave(&lruvec->lru_lock, &flags, cc);
-			locked = lruvec;
-			rcu_read_unlock();
-
-			lruvec_memcg_debug(lruvec, page);
+		if (!locked) {
+			locked = compact_lock_irqsave(&pgdat->lru_lock,
+								&flags, cc);
 
 			/* Try get exclusive access under lock */
 			if (!skip_updated) {
@@ -999,8 +986,9 @@ isolate_migratepages_block(struct compact_control *cc, unsigned long low_pfn,
 				SetPageLRU(page);
 				goto isolate_fail_put;
 			}
-		} else
-			rcu_read_unlock();
+		}
+
+		lruvec = mem_cgroup_page_lruvec(page, pgdat);
 
 		VM_BUG_ON_PAGE(PageCompound(page), page);
 
@@ -1030,8 +1018,8 @@ isolate_success:
 isolate_fail_put:
 	/* Avoid potential deadlock in freeing page under lru_lock */
 	if (locked) {
-		unlock_page_lruvec_irqrestore(locked, flags);
-		locked = NULL;
+		spin_unlock_irqrestore(&pgdat->lru_lock, flags);
+		locked = false;
 	}
 	put_page(page);
 
@@ -1046,8 +1034,8 @@ isolate_fail:
 		 */
 		if (nr_isolated) {
 			if (locked) {
-				unlock_page_lruvec_irqrestore(locked, flags);
-				locked = NULL;
+				spin_unlock_irqrestore(&pgdat->lru_lock, flags);
+				locked = false;
 			}
 			putback_movable_pages(&cc->migratepages);
 			cc->nr_migratepages = 0;
@@ -1074,7 +1062,7 @@ isolate_fail:
 
 isolate_abort:
 	if (locked)
-		unlock_page_lruvec_irqrestore(locked, flags);
+		spin_unlock_irqrestore(&pgdat->lru_lock, flags);
 	if (page) {
 		SetPageLRU(page);
 		put_page(page);
@@ -1114,7 +1102,8 @@ fatal_pending:
  * Otherwise, function returns one-past-the-last PFN of isolated page
  * (which may be greater than end_pfn if end fell in a middle of a THP page).
  */
-unsigned long isolate_migratepages_range(struct compact_control *cc, unsigned long start_pfn,
+unsigned long
+isolate_migratepages_range(struct compact_control *cc, unsigned long start_pfn,
 							unsigned long end_pfn)
 {
 	unsigned long pfn, block_start_pfn, block_end_pfn;
