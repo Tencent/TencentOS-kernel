@@ -1,6 +1,7 @@
 %global with_debuginfo 0
 %global with_perf 1
 %global with_tools 1
+%global with_bpftool 1
 %if 0%{?rhel} == 6
 %global rdist .tl1
 %global debug_path /usr/lib/debug/lib/
@@ -22,6 +23,9 @@
 %endif
 
 %global dist %{nil}
+
+%global build_env DESTDIR="%{buildroot}" prefix=%{_prefix} lib=%{_lib} PYTHON=%{__python3} INSTALL_ROOT=%{buildroot}
+%global bpftool_make make %{?_smp_mflags} -C tools/bpf/bpftool %{build_env} mandir=%{_mandir} bash_compdir=%{_sysconfdir}/bash_completion.d/
 
 # Architectures we build tools/cpupower on
 %define cpupowerarchs x86_64 aarch64
@@ -64,6 +68,11 @@ BuildRequires: gettext ncurses-devel asciidoc
 BuildRequires: pciutils-devel
 BuildRequires: libcap-devel
 %endif
+%endif
+%if %{with_bpftool}
+BuildRequires: llvm
+BuildRequires: python3-docutils
+BuildRequires: zlib-devel binutils-devel
 %endif
 Requires(pre): linux-firmware >= 20150904-44
 Requires(pre): grubby
@@ -193,9 +202,24 @@ License: GPLv2
 %description -n kernel-tools-libs
 This package contains the libraries built from the tools/ directory
 from the kernel source.
-
-
 %endif # with_tools
+
+%if %{with_bpftool}
+%package -n bpftool
+Summary: Inspection and simple manipulation of eBPF programs and maps
+License: GPLv2
+%description -n bpftool
+This package contains the bpftool, which allows inspection and simple
+manipulation of eBPF programs and maps.
+
+%package -n bpftool-debuginfo
+Summary: Debug information for package bpftool
+AutoReqProv: no
+%description -n bpftool-debuginfo
+This package provides debug information for the bpftool package.
+# debuginfo search rule
+%{expand:%%global debuginfo_args %{?debuginfo_args} -p '.*%%{_sbindir}/bpftool(\.debug)?|XXX' -o bpftool-debuginfo.list}
+%endif # with_bpftool
 
 # prep #########################################################################
 %prep
@@ -263,6 +287,9 @@ do
     popd
     %endif
 
+    %if %{with_bpftool}
+    %{bpftool_make}
+    %endif
 done
 
 # install ######################################################################
@@ -543,6 +570,11 @@ do
     popd
     %endif
     %endif
+
+    %if %{with_bpftool}
+    %{bpftool_make} install doc-install
+    /usr/lib/rpm/brp-compress
+    %endif # with_bpftool
 done
 
 mkdir -p %buildroot/etc/sysconfig/modules
@@ -693,6 +725,19 @@ echo -e "Remove \"%{tagged_name}%{?dist}\" Done."
 %{_libdir}/libcpupower.so.0.0.1
 %endif
 %endif # with_tools
+
+%if %{with_bpftool}
+%files -n bpftool
+%defattr(-,root,root)
+%{_sbindir}/bpftool
+%{_sysconfdir}/bash_completion.d/bpftool
+%{_mandir}/man8/bpftool*.gz
+
+%if %{with_debuginfo}
+%files -f bpftool-debuginfo.list -n bpftool-debuginfo
+%defattr(-,root,root)
+%endif
+%endif # with_bpftool
 
 # changelog  ###################################################################
 %changelog
