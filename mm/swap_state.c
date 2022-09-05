@@ -435,7 +435,7 @@ struct page *__read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 		goto fail_unlock;
 	}
 
-	if (mem_cgroup_charge(page, NULL, gfp_mask)) {
+	if (mem_cgroup_charge(page, NULL, gfp_mask, false)) {
 		delete_from_swap_cache(page);
 		goto fail_unlock;
 	}
