@@ -71,7 +71,11 @@ BuildRequires: libcap-devel
 %endif
 %if %{with_bpftool}
 BuildRequires: llvm
+%if 0%{?rhel} == 7
+BuildRequires: python2-docutils
+%else
 BuildRequires: python3-docutils
+%endif
 BuildRequires: zlib-devel binutils-devel
 %endif
 Requires(pre): linux-firmware >= 20150904-44
