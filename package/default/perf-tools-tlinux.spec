@@ -115,20 +115,6 @@ if [ $num_processor -gt 8 ]; then
     num_processor=8
 fi
 
-type_name=default
-
-objdir=../%{name}-%{version}-obj-${type_name}
-[ -d ${objdir} ] || mkdir ${objdir}
-bash scripts/mkmakefile $PWD ${objdir} 2 6
-if [ "$no_sign" != "yes" ]; then
-cp ./package/default/config.${type_name} ${objdir}/.config
-else
-cp ./package/default/config.${type_name}_nosign ${objdir}/.config
-fi
-localversion='"'-`echo %{tagged_name}|cut -d- -f3-`%{?dist}'"'
-sed -i -e 's/CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION='$localversion'/' ${objdir}/.config 
-
-
 %global perf_make make %{?_smp_mflags} -C tools/perf -s V=1 WERROR=0 NO_LIBUNWIND=1 HAVE_CPLUS_DEMANGLE=1 NO_GTK2=1 NO_STRLCPY=1 prefix=%{_prefix}
 # perf
 %{perf_make} all
