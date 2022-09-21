@@ -11,6 +11,9 @@
 %endif
 %endif
 
+%global build_env DESTDIR="%{buildroot}" prefix=%{_prefix} lib=%{_lib} PYTHON=%{__python3} INSTALL_ROOT=%{buildroot}
+%global bpftool_make make %{?_smp_mflags} -C tools/bpf/bpftool %{build_env} mandir=%{_mandir} bash_compdir=%{_sysconfdir}/bash_completion.d/
+
 # Architectures we build tools/cpupower on
 %define cpupowerarchs x86_64 aarch64
 
@@ -90,6 +93,19 @@ License: GPLv2
 This package contains the libraries built from the tools/ directory
 from the kernel source.
 
+%package -n bpftool
+Summary: Inspection and simple manipulation of eBPF programs and maps
+License: GPLv2
+BuildRequires: llvm
+%if 0%{?rhel} == 7
+BuildRequires: python2-docutils
+%else
+BuildRequires: python3-docutils
+%endif
+%description -n bpftool
+This package contains the bpftool, which allows inspection and simple
+manipulation of eBPF programs and maps.
+
 %{!?python_sitearch: %global python_sitearch %(%{__python} -c "from distutils.sysconfig import get_python_lib; print get_python_lib(1)")}
 
 
@@ -144,6 +160,8 @@ pushd tools
 make tmon
 popd
 
+%{bpftool_make}
+
 # install ######################################################################
 %install
 cd %{name}-%{version}
@@ -184,6 +202,9 @@ pushd tools/thermal/tmon
 make INSTALL_ROOT=%{buildroot} install
 popd
 %endif
+
+%{bpftool_make} install doc-install
+/usr/lib/rpm/brp-compress
 
 %pre
 # pre #########################################################################
@@ -251,6 +272,12 @@ fi
 %{_libdir}/libcpupower.so.0
 %{_libdir}/libcpupower.so.0.0.1
 %endif
+
+%files -n bpftool
+%defattr(-,root,root)
+%{_sbindir}/bpftool
+%{_sysconfdir}/bash_completion.d/bpftool
+%{_mandir}/man8/bpftool*.gz
 
 # changelog  ###################################################################
 %changelog

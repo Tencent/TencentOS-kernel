@@ -11,6 +11,9 @@
 %endif
 %endif
 
+%global build_env DESTDIR="%{buildroot}" prefix=%{_prefix} lib=%{_lib} PYTHON=%{__python3} INSTALL_ROOT=%{buildroot}
+%global bpftool_make make %{?_smp_mflags} -C tools/bpf/bpftool %{build_env} mandir=%{_mandir} bash_compdir=%{_sysconfdir}/bash_completion.d/
+
 Summary: Performance monitoring for the Linux kernel
 Group: Development/System
 Name: %{name}
@@ -53,6 +56,21 @@ The python-perf package contains a module that permits applications
 written in the Python programming language to use the interface
 to manipulate perf events.
 
+
+%package -n bpftool
+Summary: Inspection and simple manipulation of eBPF programs and maps
+License: GPLv2
+BuildRequires: llvm
+%if 0%{?rhel} == 7
+BuildRequires: python2-docutils
+%else
+BuildRequires: python3-docutils
+%endif
+%description -n bpftool
+This package contains the bpftool, which allows inspection and simple
+manipulation of eBPF programs and maps.
+
+
 %{!?python_sitearch: %global python_sitearch %(%{__python} -c "from distutils.sysconfig import get_python_lib; print get_python_lib(1)")}
 
 
@@ -83,6 +101,9 @@ fi
 %{perf_make} all
 %{perf_make} man
 
+# bpftool
+%{bpftool_make}
+
 # install ######################################################################
 %install
 cd %{name}-%{version}
@@ -93,6 +114,9 @@ cd %{name}-%{version}
 
 # perf man pages (note: implicit rpm magic compresses them later)
 %{perf_make} DESTDIR=$RPM_BUILD_ROOT install-man
+
+%{bpftool_make} install doc-install
+/usr/lib/rpm/brp-compress
 
 %pre
 # pre #########################################################################
@@ -132,6 +156,12 @@ fi
 %files -n python-perf
 %defattr(-,root,root)
 %{python_sitearch}
+
+%files -n bpftool
+%defattr(-,root,root)
+%{_sbindir}/bpftool
+%{_sysconfdir}/bash_completion.d/bpftool
+%{_mandir}/man8/bpftool*.gz
 
 
 # changelog  ###################################################################
