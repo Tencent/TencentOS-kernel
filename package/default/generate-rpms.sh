@@ -20,7 +20,7 @@ make_jobs=""
 nosign_suffix=""
 build_src_only=0
 strip_sign_token=0
-raw_tagged_name=""
+tagged_name=""
 kasan=0
 # to control wheter to build rpm for xen domU
 isXenU=""
@@ -71,22 +71,15 @@ get_kernel_version()
 get_tlinux_name()
 {
 	if [ -n "$tag_name" ]; then
-		raw_tagged_name="$tag_name"
+		tagged_name="$tag_name"
 	else
-		raw_tagged_name=`git describe --tags`
+		tagged_name=`git describe --tags`
 	fi
 	
-	if [ -z "${raw_tagged_name}" ];then
+	if [ -z "${tagged_name}" ];then
 		echo "Error:Can't get kernel version from git tree."
 		exit 1
 	fi
-
-	if [[ $raw_tagged_name != x86-* ]]; then
-		echo "$raw_tagged_name not valid tag name for x86"
-		exit 11
-	fi
-
-	tagged_name=${raw_tagged_name#x86-}
 
 	echo "${tagged_name}" | grep 'kasan'
 	if [ $?  -eq 0 ]; then
@@ -241,7 +234,7 @@ if test -e ${build_srcdir}/${kernel_full_name}; then
 fi
 
 #tagged_name is a confirmed tag name and will be used for final source.
-git archive --format=tar --prefix=${kernel_full_name}/ ${raw_tagged_name} | (cd ${build_srcdir} && tar xf  -)
+git archive --format=tar --prefix=${kernel_full_name}/ ${tagged_name} | (cd ${build_srcdir} && tar xf  -)
 if [ $? -ne 0 ];then
 	echo "Error:can't prepare $kernel_full_name source with git archive!"
 	exit 1
