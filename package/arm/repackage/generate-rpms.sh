@@ -55,17 +55,7 @@ usage()
 
 get_kernel_version()
 {
-	local tagged_name
-	raw_tagged_name=$tag_name
-
-	if [[ $raw_tagged_name != arm64-* ]]; then
-                echo "$raw_tagged_name not valid tag name for arm64"
-                exit 1
-        fi  
-
-	tagged_name=${raw_tagged_name#arm64-}
-
-	kernel_version=`echo $tagged_name|cut -d- -f1`
+	kernel_version=`echo $tag_name|cut -d- -f1`
 	#kernel_version=${kernel_version}-1
 	#echo "kernel version: $kernel_version"
 	echo "kernel version: ${kernel_version}"
@@ -74,23 +64,15 @@ get_kernel_version()
 get_tlinux_name()
 {
 	if [ -n "$tag_name" ]; then
-		raw_tagged_name="$tag_name"
+		tagged_name="$tag_name"
 	else
-		raw_tagged_name=`git describe --tags`
+		tagged_name=`git describe --tags`
 	fi
 	
-	if [ -z "${raw_tagged_name}" ];then
+	if [ -z "${tagged_name}" ];then
 		echo "Error:Can't get kernel version from git tree."
 		exit 1
 	fi
-
-	if [[ $raw_tagged_name != arm64-* ]]; then
-                echo "$raw_tagged_name not valid tag name for arm64"
-                exit 1
-        fi  
-
-	tagged_name=${raw_tagged_name#arm64-}
-
 
 	echo "${tagged_name}" | grep 'kvm_guest'
 	if [ $? -eq 0 ]; then
