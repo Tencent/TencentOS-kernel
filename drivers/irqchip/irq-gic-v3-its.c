@@ -35,6 +35,10 @@
 #include <asm/cputype.h>
 #include <asm/exception.h>
 
+#ifdef CONFIG_ARCH_PHYTIUM
+#include <asm/machine_types.h>
+#endif
+
 #include "irq-gic-common.h"
 
 #define ITS_FLAGS_CMDQ_NEEDS_FLUSHING		(1ULL << 0)
@@ -1193,6 +1197,11 @@ static void its_irq_compose_msi_msg(struct irq_data *d, struct msi_msg *msg)
 	msg->address_lo		= lower_32_bits(addr);
 	msg->address_hi		= upper_32_bits(addr);
 	msg->data		= its_get_event_id(d);
+
+#ifdef CONFIG_ARCH_PHYTIUM
+	if (typeof_ft2000plus())
+		return ;
+#endif
 
 	iommu_dma_compose_msi_msg(irq_data_get_msi_desc(d), msg);
 }
