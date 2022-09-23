@@ -736,6 +736,7 @@ echo -e "Remove \"%{tagged_name}%{?dist}\" Done."
 %{_sbindir}/bpftool
 %{_sysconfdir}/bash_completion.d/bpftool
 %{_mandir}/man8/bpftool*.gz
+%{_mandir}/man7/bpf-helpers.7.gz
 
 %if %{with_debuginfo}
 %files -f bpftool-debuginfo.list -n bpftool-debuginfo
