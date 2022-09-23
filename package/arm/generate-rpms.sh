@@ -80,6 +80,7 @@ get_tlinux_name()
 		exit 1
 	fi
 
+	tagged_name=${tagged_name#arm64-}
 	echo "${tagged_name}" | grep 'kvm_guest'
 	if [ $? -eq 0 ]; then
 		echo "start kvm guest build"
