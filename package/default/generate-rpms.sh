@@ -83,6 +83,7 @@ get_tlinux_name()
 		exit 1
 	fi
 
+	tagged_name=${tagged_name#x86-}
 	echo "${tagged_name}" | grep 'kasan'
 	if [ $?  -eq 0 ]; then
 		kasan=1
@@ -297,7 +298,7 @@ if test -e ${build_srcdir}/${kernel_full_name}; then
 fi
 
 #tagged_name is a confirmed tag name and will be used for final source.
-git archive --format=tar --prefix=${kernel_full_name}/ ${tagged_name} | (cd ${build_srcdir} && tar xf  -)
+git archive --format=tar --prefix=${kernel_full_name}/ ${tag_name} | (cd ${build_srcdir} && tar xf  -)
 if [ $? -ne 0 ];then
 	echo "Error:can't prepare $kernel_full_name source with git archive!"
 	exit 1
