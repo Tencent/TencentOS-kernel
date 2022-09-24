@@ -1,5 +1,6 @@
 %global with_debuginfo 0
 %global with_perf 1
+%global with_bpftool 1
 %if 0%{?rhel} == 6
 %global rdist .tl1
 %global debug_path /usr/lib/debug/lib/
@@ -20,6 +21,9 @@
 %endif
 
 %global dist %{nil}
+
+%global build_env DESTDIR="%{buildroot}" prefix=%{_prefix} lib=%{_lib} PYTHON=%{__python3} INSTALL_ROOT=%{buildroot}
+%global bpftool_make make %{?_smp_mflags} -C tools/bpf/bpftool %{build_env} mandir=%{_mandir} bash_compdir=%{_sysconfdir}/bash_completion.d/
 
 Summary: Kernel for Tencent physical machine
 Name: %{name}
@@ -52,6 +56,15 @@ BuildRequires: python-devel
 %ifnarch s390 s390x
 BuildRequires: numactl-devel
 %endif
+%endif
+%if %{with_bpftool}
+BuildRequires: llvm
+%if 0%{?rhel} == 7
+BuildRequires: python2-docutils
+%else
+BuildRequires: python3-docutils
+%endif
+BuildRequires: zlib-devel binutils-devel
 %endif
 Requires(pre): linux-firmware >= 20100806-2
 
@@ -148,6 +161,23 @@ This package provides debug information for the perf python bindings.
 
 %endif # with_perf
 
+%if %{with_bpftool}
+%package -n bpftool
+Summary: Inspection and simple manipulation of eBPF programs and maps
+License: GPLv2
+%description -n bpftool
+This package contains the bpftool, which allows inspection and simple
+manipulation of eBPF programs and maps.
+
+%package -n bpftool-debuginfo
+Summary: Debug information for package bpftool
+AutoReqProv: no
+%description -n bpftool-debuginfo
+This package provides debug information for the bpftool package.
+# debuginfo search rule
+%{expand:%%global debuginfo_args %{?debuginfo_args} -p '.*%%{_sbindir}/bpftool(\.debug)?|XXX' -o bpftool-debuginfo.list}
+%endif # with_bpftool
+
 # prep #########################################################################
 %prep
 %setup -q -c -T -a 0
@@ -180,6 +210,10 @@ do
     # perf
     %{perf_make} all
     %{perf_make} man
+    %endif
+
+    %if %{with_bpftool}
+    %{bpftool_make}
     %endif
 done
 
@@ -430,6 +464,11 @@ do
     # perf man pages (note: implicit rpm magic compresses them later)
     %{perf_make} DESTDIR=$RPM_BUILD_ROOT install-man
     %endif
+
+    %if %{with_bpftool}
+    %{bpftool_make} install doc-install
+    /usr/lib/rpm/brp-compress
+    %endif # with_bpftool
 done
 
 mkdir -p %buildroot/etc/sysconfig/modules
@@ -557,6 +596,20 @@ echo -e "Remove \"%{tagged_name}%{?dist}\" Done."
 %defattr(-,root,root)
 %endif
 %endif # with_perf
+
+%if %{with_bpftool}
+%files -n bpftool
+%defattr(-,root,root)
+%{_sbindir}/bpftool
+%{_sysconfdir}/bash_completion.d/bpftool
+%{_mandir}/man8/bpftool*.gz
+%{_mandir}/man7/bpf-helpers.7.gz
+
+%if %{with_debuginfo}
+%files -f bpftool-debuginfo.list -n bpftool-debuginfo
+%defattr(-,root,root)
+%endif
+%endif # with_bpftool
 
 # changelog  ###################################################################
 %changelog

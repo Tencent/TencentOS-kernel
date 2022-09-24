@@ -278,6 +278,7 @@ fi
 %{_sbindir}/bpftool
 %{_sysconfdir}/bash_completion.d/bpftool
 %{_mandir}/man8/bpftool*.gz
+%{_mandir}/man7/bpf-helpers.7.gz
 
 # changelog  ###################################################################
 %changelog
