@@ -11,6 +11,10 @@
 %endif
 %endif
 
+%if 0%{?rhel} == 8
+%global __python %{__python2}
+%endif
+
 %global build_env DESTDIR="%{buildroot}" prefix=%{_prefix} lib=%{_lib} PYTHON=%{__python3} INSTALL_ROOT=%{buildroot}
 %global bpftool_make make %{?_smp_mflags} -C tools/bpf/bpftool %{build_env} mandir=%{_mandir} bash_compdir=%{_sysconfdir}/bash_completion.d/
 
@@ -35,7 +39,12 @@ ExclusiveArch:  x86_64
 Distribution: Tencent Linux
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-build
 BuildRequires: wget bc module-init-tools curl
-BuildRequires: elfutils-devel zlib-devel binutils-devel newt-devel python-devel perl(ExtUtils::Embed) bison flex
+BuildRequires: elfutils-devel zlib-devel binutils-devel newt-devel perl(ExtUtils::Embed) bison flex
+%if 0%{?rhel} == 8
+BuildRequires: python2-devel
+%else
+BuildRequires: python-devel
+%endif
 BuildRequires: xmlto asciidoc
 BuildRequires: audit-libs-devel
 %ifnarch s390 s390x
@@ -131,7 +140,7 @@ if [ $num_processor -gt 8 ]; then
     num_processor=8
 fi
 
-%global perf_make make %{?_smp_mflags} -C tools/perf -s V=1 WERROR=0 NO_LIBUNWIND=1 HAVE_CPLUS_DEMANGLE=1 NO_GTK2=1 NO_STRLCPY=1 prefix=%{_prefix}
+%global perf_make make %{?_smp_mflags} -C tools/perf -s V=1 WERROR=0 NO_LIBUNWIND=1 HAVE_CPLUS_DEMANGLE=1 NO_GTK2=1 NO_STRLCPY=1 prefix=%{_prefix} lib=%{_lib}
 # perf
 %{perf_make} all
 %{perf_make} man
@@ -166,6 +175,7 @@ popd
 %install
 cd %{name}-%{version}
 %{perf_make} DESTDIR=$RPM_BUILD_ROOT install
+rm -f %{buildroot}%{_bindir}/trace
 
 # perf-python extension
 %{perf_make} DESTDIR=$RPM_BUILD_ROOT install-python_ext
@@ -230,16 +240,17 @@ fi
 %files
 %defattr(-,root,root)
 %{_bindir}/perf
+%{_sysconfdir}/bash_completion.d/perf
+%dir %{_prefix}/lib/perf
+%{_prefix}/lib/perf/*
+%dir %{_libdir}/traceevent/
+%{_libdir}/traceevent/*
+%{_libdir}/libperf-jvmti.so
 %dir %{_libexecdir}/perf-core
 %{_libexecdir}/perf-core/*
+%{_datadir}/perf-core/*
+%{_docdir}/perf-tip/tips.txt
 %{_mandir}/man[1-8]/perf*
-%{_sysconfdir}/bash_completion.d/perf
-/usr/bin/trace
-/usr/bin/perf*
-/usr/lib64/*
-/usr/share/*
-/usr/lib/perf/*
-/usr/include/*
 
 %files -n python-perf
 %defattr(-,root,root)
