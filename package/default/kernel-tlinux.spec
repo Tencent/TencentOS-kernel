@@ -271,7 +271,7 @@ do
     # cpupower
     # make sure version-gen.sh is executable.
     chmod +x tools/power/cpupower/utils/version-gen.sh
-    make %{?_smp_mflags} -C tools/power/cpupower CPUFREQ_BENCH=false
+    make %{?_smp_mflags} -C tools/power/cpupower bash_completion_dir=%{_sysconfdir}/bash_completion.d/ CPUFREQ_BENCH=false
     %ifarch x86_64
 	pushd tools/power/cpupower/debug/x86_64
 	make %{?_smp_mflags} centrino-decode powernow-k8-decode
@@ -547,7 +547,7 @@ do
 
     %if %{with_tools}
     %ifarch %{cpupowerarchs}
-    make -C tools/power/cpupower DESTDIR=$RPM_BUILD_ROOT libdir=%{_libdir} mandir=%{_mandir} CPUFREQ_BENCH=false install
+    make -C tools/power/cpupower DESTDIR=$RPM_BUILD_ROOT libdir=%{_libdir} mandir=%{_mandir} bash_completion_dir=%{_sysconfdir}/bash_completion.d/ CPUFREQ_BENCH=false install
     rm -f %{buildroot}%{_libdir}/*.{a,la}
     %find_lang cpupower
     mv cpupower.lang ../
@@ -727,12 +727,13 @@ echo -e "Remove \"%{tagged_name}%{?dist}\" Done."
 %endif
 %endif
 %{_bindir}/tmon
+%{_sysconfdir}/bash_completion.d/cpupower
+%{_oldincludedir}/cpu*.h
 
 %ifarch %{cpupowerarchs}
 %files -n kernel-tools-libs
 %defattr(-,root,root)
-%{_libdir}/libcpupower.so.0
-%{_libdir}/libcpupower.so.0.0.1
+%{_libdir}/libcpupower.so*
 %endif
 %endif # with_tools
 
