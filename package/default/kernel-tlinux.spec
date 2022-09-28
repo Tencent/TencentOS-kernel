@@ -536,6 +536,8 @@ do
     %if %{with_perf}
     # perf tool binary and supporting scripts/binaries
     %{perf_make} DESTDIR=$RPM_BUILD_ROOT install
+    mkdir -p %{buildroot}%{_libdir}
+    touch %{buildroot}%{_libdir}/libperf-jvmti.so
     rm -f %{buildroot}%{_bindir}/trace
 
     # perf-python extension
