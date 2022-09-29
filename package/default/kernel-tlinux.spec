@@ -683,7 +683,7 @@ echo -e "Remove \"%{tagged_name}%{?dist}\" Done."
 %if %{with_perf}
 %files -n perf
 %defattr(-,root,root)
-%{_bindir}/perf
+%{_bindir}/perf*
 %{_sysconfdir}/bash_completion.d/perf
 %dir %{_prefix}/lib/perf
 %{_prefix}/lib/perf/*
