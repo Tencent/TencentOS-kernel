@@ -259,7 +259,7 @@ do
 #  dealing with files under lib/modules
     make -C ${objdir} RPM_BUILD_MODULE=y modules
 
-    %global perf_make make %{?_smp_mflags} -C tools/perf -s V=1 WERROR=0 NO_LIBUNWIND=1 HAVE_CPLUS_DEMANGLE=1 NO_GTK2=1 NO_STRLCPY=1 prefix=%{_prefix}
+    %global perf_make make %{?_smp_mflags} -C tools/perf -s V=1 WERROR=0 NO_LIBUNWIND=1 HAVE_CPLUS_DEMANGLE=1 NO_GTK2=1 NO_STRLCPY=1 prefix=%{_prefix} lib=%{_lib}
     %if %{with_perf}
     # perf
     %{perf_make} all
@@ -271,7 +271,7 @@ do
     # cpupower
     # make sure version-gen.sh is executable.
     chmod +x tools/power/cpupower/utils/version-gen.sh
-    make %{?_smp_mflags} -C tools/power/cpupower CPUFREQ_BENCH=false
+    make %{?_smp_mflags} -C tools/power/cpupower bash_completion_dir=%{_sysconfdir}/bash_completion.d/ CPUFREQ_BENCH=false
     %ifarch x86_64
 	pushd tools/power/cpupower/debug/x86_64
 	make %{?_smp_mflags} centrino-decode powernow-k8-decode
@@ -536,6 +536,9 @@ do
     %if %{with_perf}
     # perf tool binary and supporting scripts/binaries
     %{perf_make} DESTDIR=$RPM_BUILD_ROOT install
+    mkdir -p %{buildroot}%{_libdir}
+    touch %{buildroot}%{_libdir}/libperf-jvmti.so
+    rm -f %{buildroot}%{_bindir}/trace
 
     # perf-python extension
     %{perf_make} DESTDIR=$RPM_BUILD_ROOT install-python_ext
@@ -546,7 +549,7 @@ do
 
     %if %{with_tools}
     %ifarch %{cpupowerarchs}
-    make -C tools/power/cpupower DESTDIR=$RPM_BUILD_ROOT libdir=%{_libdir} mandir=%{_mandir} CPUFREQ_BENCH=false install
+    make -C tools/power/cpupower DESTDIR=$RPM_BUILD_ROOT libdir=%{_libdir} mandir=%{_mandir} bash_completion_dir=%{_sysconfdir}/bash_completion.d/ CPUFREQ_BENCH=false install
     rm -f %{buildroot}%{_libdir}/*.{a,la}
     %find_lang cpupower
     mv cpupower.lang ../
@@ -680,13 +683,18 @@ echo -e "Remove \"%{tagged_name}%{?dist}\" Done."
 %if %{with_perf}
 %files -n perf
 %defattr(-,root,root)
-%{_bindir}/*
-/usr/lib64/*
-/usr/lib/perf/*
-/usr/share/*
+%{_bindir}/perf
+%{_sysconfdir}/bash_completion.d/perf
+%dir %{_prefix}/lib/perf
+%{_prefix}/lib/perf/*
+%dir %{_libdir}/traceevent/
+%{_libdir}/traceevent/*
+%{_libdir}/libperf-jvmti.so
 %dir %{_libexecdir}/perf-core
 %{_libexecdir}/perf-core/*
-%{_sysconfdir}/bash_completion.d/perf
+%{_datadir}/perf-core/*
+%{_docdir}/perf-tip/tips.txt
+%{_mandir}/man[1-8]/perf*
 
 %files -n python-perf
 %defattr(-,root,root)
@@ -721,12 +729,13 @@ echo -e "Remove \"%{tagged_name}%{?dist}\" Done."
 %endif
 %endif
 %{_bindir}/tmon
+%{_sysconfdir}/bash_completion.d/cpupower
+%{_oldincludedir}/cpu*.h
 
 %ifarch %{cpupowerarchs}
 %files -n kernel-tools-libs
 %defattr(-,root,root)
-%{_libdir}/libcpupower.so.0
-%{_libdir}/libcpupower.so.0.0.1
+%{_libdir}/libcpupower.so*
 %endif
 %endif # with_tools
 
