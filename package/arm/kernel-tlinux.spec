@@ -205,7 +205,7 @@ do
 #  dealing with files under lib/modules
     make -j16  -C ${objdir} RPM_BUILD_MODULE=y modules > /dev/null
 
-    %global perf_make make %{?_smp_mflags} -C tools/perf -s V=1 WERROR=0 NO_LIBUNWIND=1 HAVE_CPLUS_DEMANGLE=1 NO_GTK2=1 NO_STRLCPY=1 prefix=%{_prefix}
+    %global perf_make make %{?_smp_mflags} -C tools/perf -s V=1 WERROR=0 NO_LIBUNWIND=1 HAVE_CPLUS_DEMANGLE=1 NO_GTK2=1 NO_STRLCPY=1 prefix=%{_prefix} lib=%{_lib}
     %if %{with_perf}
     # perf
     %{perf_make} all
@@ -457,6 +457,9 @@ do
     %if %{with_perf}
     # perf tool binary and supporting scripts/binaries
     %{perf_make} DESTDIR=$RPM_BUILD_ROOT install
+    mkdir -p %{buildroot}%{_libdir}
+    touch %{buildroot}%{_libdir}/libperf-jvmti.so
+    rm -f %{buildroot}%{_bindir}/trace
 
     # perf-python extension
     %{perf_make} DESTDIR=$RPM_BUILD_ROOT install-python_ext
@@ -574,15 +577,18 @@ echo -e "Remove \"%{tagged_name}%{?dist}\" Done."
 %if %{with_perf}
 %files -n perf
 %defattr(-,root,root)
-%{_bindir}/*
-/usr/lib64/*
-/usr/lib/traceevent/plugins/*.so
-/usr/lib/perf/examples/bpf/*
-/usr/lib/perf/include/bpf/*
-/usr/share/*
+%{_bindir}/perf
+%{_sysconfdir}/bash_completion.d/perf
+%dir %{_prefix}/lib/perf
+%{_prefix}/lib/perf/*
+%dir %{_libdir}/traceevent/
+%{_libdir}/traceevent/*
+%{_libdir}/libperf-jvmti.so
 %dir %{_libexecdir}/perf-core
 %{_libexecdir}/perf-core/*
-%{_sysconfdir}/bash_completion.d/perf
+%{_datadir}/perf-core/*
+%{_docdir}/perf-tip/tips.txt
+%{_mandir}/man[1-8]/perf*
 
 %files -n python-perf
 %defattr(-,root,root)
