@@ -241,7 +241,7 @@ fi
 
 %files
 %defattr(-,root,root)
-%{_bindir}/perf
+%{_bindir}/perf*
 %{_sysconfdir}/bash_completion.d/perf
 %dir %{_prefix}/lib/perf
 %{_prefix}/lib/perf/*
