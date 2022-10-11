@@ -18,15 +18,62 @@
 #include "hibmc_drm_drv.h"
 #include "hibmc_drm_regs.h"
 
+struct hibmc_resolution {
+	int w;
+	int h;
+};
+
+static const struct hibmc_resolution hibmc_modetables[] = {
+	{640, 480},
+	{800, 600},
+	{1024, 768},
+	{1152, 864},
+	{1280, 768},
+	{1280, 720},
+	{1280, 960},
+	{1280, 1024},
+	{1440, 900},
+	{1600, 900},
+	{1600, 1200},
+	{1920, 1080},
+	{1920, 1200}
+};
+
+static int hibmc_valid_mode(int w, int h)
+{
+	int i;
+
+	for (i = 0; i < sizeof(hibmc_modetables) /
+		sizeof(struct hibmc_resolution); i++) {
+		if (hibmc_modetables[i].w == w && hibmc_modetables[i].h == h)
+			return 0;
+	}
+
+	return -1;
+}
+
 static int hibmc_connector_get_modes(struct drm_connector *connector)
 {
-	return drm_add_modes_noedid(connector, 800, 600);
+	int count;
+
+	drm_connector_update_edid_property(connector, NULL);
+	count = drm_add_modes_noedid(connector, 1920, 1200);
+	drm_set_preferred_mode(connector, 1024, 768);
+
+	return count;
 }
 
 static enum drm_mode_status hibmc_connector_mode_valid(struct drm_connector *connector,
 				      struct drm_display_mode *mode)
 {
-	return MODE_OK;
+	int vrefresh = drm_mode_vrefresh(mode);
+
+	if (vrefresh < 59 || vrefresh > 61)
+		return MODE_NOMODE;
+	else if (hibmc_valid_mode(mode->hdisplay, mode->vdisplay) != 0)
+		return MODE_NOMODE;
+	else
+		return MODE_OK;
 }
 
 static const struct drm_connector_helper_funcs
