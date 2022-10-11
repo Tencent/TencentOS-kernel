@@ -77,7 +77,7 @@ int hibmc_dumb_create(struct drm_file *file, struct drm_device *dev,
 	u32 handle;
 	int ret;
 
-	args->pitch = ALIGN(args->width * DIV_ROUND_UP(args->bpp, 8), 16);
+	args->pitch = ALIGN(args->width * DIV_ROUND_UP(args->bpp, 8), 128);
 	args->size = args->pitch * args->height;
 
 	ret = hibmc_gem_create(dev, args->size, false,
