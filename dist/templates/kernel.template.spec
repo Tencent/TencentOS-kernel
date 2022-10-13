@@ -193,6 +193,8 @@ Source30: check-kabi
 # Start from Source2000 to Source2999, for userspace tools
 Source2000: cpupower.service
 Source2001: cpupower.config
+# TK4 Legacy CCISS naming rule
+Source2002: tlinux_cciss_link_compat.modules
 
 ### TK4 Legacy MLNX OFED
 Source3000: MLNX_OFED_SRC-5.1-2.5.8.0.46.tgz
@@ -923,6 +925,11 @@ InstTools() {
 	install -m755 slabinfo %{buildroot}%{_bindir}/slabinfo
 	install -m755 page_owner_sort %{buildroot}%{_bindir}/page_owner_sort
 	popd
+
+%ifarch x86_64
+	mkdir -p %{buildroot}%{_sysconfdir}/sysconfig/modules
+	install -m755 %{SOURCE2002} %{buildroot}%{_sysconfdir}/sysconfig/modules
+%endif
 	# with_tools
 }
 
@@ -1195,6 +1202,13 @@ fi
 %ghost /lib/modules/%{kernel_unamer}/modules.symbols.bin
 
 %files modules -f modules.list
+%ifarch x86_64
+# TK4 Legacy CCISS naming rule
+#
+# This might be duplicated with tlinux_cciss_link.modules from the old kernel-tlinux package,
+# but that's fine since the script itself checks if it's neccessary to re-apply the workaround
+%{_sysconfdir}/sysconfig/modules/tlinux_cciss_link_compat.modules
+%endif
 %defattr(-,root,root)
 
 %files devel
