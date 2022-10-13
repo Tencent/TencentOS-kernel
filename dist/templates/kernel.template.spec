@@ -860,8 +860,8 @@ InstKernelDevel() {
 		cp -a $_KernBuild/arch/$Arch/kernel/module.lds arch/$Arch/kernel/
 	fi
 
-	# Symlink include/asm-$Arch for better compatibility with some old system
-	ln -sfr arch/$Arch include/asm-$Arch
+	# Copy include/asm-$Arch for better compatibility with some old system
+	cp -a $_KernSrc/arch/$Arch include/asm-$Arch
 
 	# Delete obj files
 	find include -iname "*.o" -o -iname "*.cmd" -delete
