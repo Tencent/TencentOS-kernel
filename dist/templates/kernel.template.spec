@@ -162,7 +162,8 @@ BuildRequires: xmlto, asciidoc
 
 %if %{with_bpftool}
 BuildRequires: llvm
-BuildRequires: python3-docutils
+# We don't care about this utils's python version, since we only want rst2* commands during build time
+BuildRequires: /usr/bin/rst2man
 BuildRequires: zlib-devel binutils-devel
 %endif
 
