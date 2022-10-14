@@ -217,14 +217,6 @@ Provides: %{rpm_name} = %{version}-%{release}
 Requires: %{rpm_name}-core = %{version}-%{release}
 Requires: %{rpm_name}-modules = %{version}-%{release}
 Requires: linux-firmware
-Requires(pre): coreutils
-Requires(post): coreutils kmod
-Requires(preun): coreutils kmod
-Requires(post): /usr/bin/kernel-install
-Requires(preun): /usr/bin/kernel-install
-# Kernel install hooks & initramfs
-Requires(post): systemd-udev dracut
-Requires(preun): systemd-udev
 
 %description
 This is the meta package of %{?rpm_vendor:%{rpm_vendor} }Linux kernel, the core of operating system.
@@ -236,6 +228,20 @@ This is the meta package of %{?rpm_vendor:%{rpm_vendor} }Linux kernel, the core 
 Summary: %{rpm_vendor} Linux Kernel
 Provides: installonlypkg(kernel)
 Provides: kernel-core = %{version}-%{release}
+Requires(pre): coreutils
+Requires(post): coreutils kmod dracut
+Requires(preun): coreutils kmod
+Requires(post): %{_bindir}/kernel-install
+Requires(preun): %{_bindir}/kernel-install
+# Kernel install hooks & initramfs
+%if 0%{?rhel} == 7
+Requires(post): systemd
+Requires(preun): systemd
+%else
+Requires(post): systemd-udev
+Requires(preun): systemd-udev
+%endif
+
 %description core
 The kernel package contains the %{?rpm_vendor:%{rpm_vendor} } Linux kernel (vmlinuz), the core of
 operating system. The kernel handles the basic functions
