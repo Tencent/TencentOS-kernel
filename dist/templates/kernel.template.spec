@@ -1146,7 +1146,7 @@ fi
 %if %{with_perf}
 %files -n perf
 %defattr(-,root,root)
-%{_bindir}/perf
+%{_bindir}/perf*
 %dir %{_libdir}/traceevent/
 %{_libdir}/traceevent/*
 %{_libdir}/libperf-jvmti.so
