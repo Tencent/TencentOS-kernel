@@ -283,7 +283,10 @@ vmlinux, System.map for package %{rpm_name}.
 This is required to use SystemTap with %{rpm_name}.
 # debuginfo search rule
 # If BTF presents, keep it so kernel can use it.
+%if 0%{?rhel} != 7
+# Old version of find-debuginfo.sh doesn't support this, so only do it for newer version. Old version of eu-strip seems doesn't strip BTF either, so should be fine.
 %global _find_debuginfo_opts %{_find_debuginfo_opts} --keep-section '.BTF'
+%endif
 # Debuginfo file list for main kernel package
 %global _find_debuginfo_opts %{_find_debuginfo_opts} -p '.*\/usr\/src\/kernels/.*|XXX' -o ignored-debuginfo.list -p '/.*/%{kernel_unamer_regex}/.*|/.*%{kernel_unamer_regex}(\.debug)?' -o debuginfo.list
 # with_debuginfo
