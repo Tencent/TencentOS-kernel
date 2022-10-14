@@ -16,7 +16,7 @@
 #define MAX_STACK_TRACE_DEPTH	64
 
 struct member_offset {
-	char member[LINE_SIZE];
+	char *member;
 	int  offset;
 };
 
