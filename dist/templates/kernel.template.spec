@@ -545,6 +545,9 @@ sed -i "/^SUBLEVEL/cSUBLEVEL = $(echo %{kernel_majver} | cut -d '.' -f 3)" $_Ker
 %global perf_make EXTRA_CFLAGS="${RPM_OPT_FLAGS}" LDFLAGS="%{__global_ldflags}" WERROR=0 NO_LIBUNWIND=1 HAVE_CPLUS_DEMANGLE=1 NO_GTK2=1 NO_STRLCPY=1 NO_BIONIC=1 %{make} %{tools_make_opts}
 %global bpftool_make EXTRA_CFLAGS="${RPM_OPT_FLAGS}" EXTRA_LDFLAGS="%{__global_ldflags}" VMLINUX_H="$_KernVmlinuxH" %{make} %{tools_make_opts}
 
+# TK4: Workaround, Makefile fails with mass parallel build
+%global tools_make %{tools_make} -j1
+
 ### Real make
 %{prepare_buildvar}
 
