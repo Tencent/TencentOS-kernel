@@ -522,6 +522,9 @@ sed -i "/^SUBLEVEL/cSUBLEVEL = $(echo %{kernel_majver} | cut -d '.' -f 3)" $_Ker
 %global kernel_make_opts INSTALL_HDR_PATH=%{buildroot}/usr INSTALL_MOD_PATH=%{buildroot} KERNELRELEASE=$KernUnameR
 %global tools_make_opts DESTDIR="%{buildroot}" prefix=%{_prefix} lib=%{_lib} PYTHON=%{__python3} INSTALL_ROOT="%{buildroot}"
 
+# TK4: Workaround, Makefile fails with mass parallel build
+%global tools_make_opts %{tools_make_opts} -j1
+
 ## Cross compile flags
 %if %{with_crossbuild}
 %global kernel_make_opts %{kernel_make_opts} CROSS_COMPILE=%{_cross_compile} ARCH=%{kernel_arch}
