@@ -1275,7 +1275,6 @@ fi
 %{_bindir}/lsgpio
 %{_bindir}/gpio-hammer
 %{_bindir}/gpio-event-mon
-%{_bindir}/gpio-watch
 %{_bindir}/page_owner_sort
 %{_bindir}/slabinfo
 
@@ -1313,6 +1312,7 @@ fi
 %{_mandir}/man8/bpftool-feature.8.gz
 %{_mandir}/man8/bpftool-btf.8.gz
 %{_mandir}/man8/bpftool-struct_ops.8.gz
+%{_mandir}/man7/bpf-helpers.7.gz
 
 %if %{with_debuginfo}
 %files -f bpftool-debuginfo.list -n bpftool-debuginfo
