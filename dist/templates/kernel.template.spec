@@ -1126,6 +1126,29 @@ elif command -v new-kernel-pkg > /dev/null; then
 else
 	echo "NOTICE: No available kernel install handler found. Please make sure boot loader and initramfs are properly configured after the installation." > /dev/stderr
 fi
+
+# If match, the selinux will be disabled.
+is_set_selinux=0
+if [ -e /proc/config.gz ]; then
+    zcat /proc/config.gz | grep -q "^CONFIG_SECURITY_SELINUX=y"
+    is_set_selinux=$?
+elif [ -e /boot/config-$(uname -r) ]; then
+    cat /boot/config-$(uname -r) | grep -q "^CONFIG_SECURITY_SELINUX=y"
+    is_set_selinux=$?
+elif [ -e /proc/kallsyms ]; then
+    cat /proc/kallsyms | grep -q " selinux_init$"
+    is_set_selinux=$?
+else
+    echo "Ignore selinux adjustments"
+fi
+
+# if CONFIG_SECURITY_SELINUX is not set, we should disable selinux.
+[ $is_set_selinux -ne 0 ] && {
+    echo "Selinux is not supported by current running kernel, disabling SELinux globally to avoid potential system failure."
+    echo "Please update /etc/selinux/config manually after testing SELinux functionality. Now setting SELINUX=disabled"
+    grep -q "^SELINUX *= *.*$" /etc/selinux/config && sed -ri "s/^ *SELINUX *= *enforcing *$/SELINUX=disabled/" /etc/selinux/config || echo "SELINUX=disabled" >> /etc/selinux/config
+}
+
 # Just in case kernel-install didn't depmod
 depmod -A %{kernel_unamer}
 
