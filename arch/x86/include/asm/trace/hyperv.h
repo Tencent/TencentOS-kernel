@@ -74,7 +74,7 @@ TRACE_EVENT(hyperv_send_ipi_mask,
 #endif /* CONFIG_HYPERV */
 
 #undef TRACE_INCLUDE_PATH
-#define TRACE_INCLUDE_PATH asm/trace/
+#define TRACE_INCLUDE_PATH asm/trace
 #undef TRACE_INCLUDE_FILE
 #define TRACE_INCLUDE_FILE hyperv
 #endif /* _TRACE_HYPERV_H */
