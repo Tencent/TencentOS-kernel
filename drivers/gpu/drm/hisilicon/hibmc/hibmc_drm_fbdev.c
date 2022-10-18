@@ -73,7 +73,7 @@ static int hibmc_drm_fb_create(struct drm_fb_helper *helper,
 
 	mode_cmd.width = sizes->surface_width;
 	mode_cmd.height = sizes->surface_height;
-	mode_cmd.pitches[0] = mode_cmd.width * bytes_per_pixel;
+	mode_cmd.pitches[0] = ALIGN(mode_cmd.width * bytes_per_pixel, 128);
 	mode_cmd.pixel_format = drm_mode_legacy_fb_format(sizes->surface_bpp,
 							  sizes->surface_depth);
 
@@ -186,7 +186,7 @@ int hibmc_fbdev_init(struct hibmc_drm_private *priv)
 		goto fini;
 	}
 
-	ret = drm_fb_helper_initial_config(&hifbdev->helper, 16);
+	ret = drm_fb_helper_initial_config(&hifbdev->helper, 32);
 	if (ret) {
 		DRM_ERROR("failed to setup initial conn config: %d\n", ret);
 		goto fini;
