@@ -103,9 +103,9 @@ is_valid_commit() {
 is_valid_upstream_commit() {
 	local commit=$1
 	local upstream_repo=(
-		"torvals https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/patch/?id=<>"
+		"torvalds https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/patch/?id=<>"
 		"stable https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/patch/?id=<>"
-		"tip https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/patch/?id=<>"
+		"tip https://git.kernel.org/pub/scm/linux/kernel/git/tip/tip.git/patch/?id=<>"
 	)
 	local repo repo_name repo_url commit_url
 
