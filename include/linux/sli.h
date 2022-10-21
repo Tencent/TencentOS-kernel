@@ -2,6 +2,8 @@
 #define _LINUX_SLI_H
 #include <linux/cgroup.h>
 
+static DEFINE_STATIC_KEY_TRUE(sli_no_enabled);
+
 enum sli_memlat_stat_item {
 	MEM_LAT_GLOBAL_DIRECT_RECLAIM,	/* global direct reclaim latency */
 	MEM_LAT_MEMCG_DIRECT_RECLAIM,	/* memcg direct reclaim latency */
@@ -48,12 +50,12 @@ struct sli_schedlat_stat {
 
 int  sli_cgroup_alloc(struct cgroup *cgroup);
 void sli_cgroup_free(struct cgroup *cgroup);
-void sli_memlat_stat_start(u64 *start);
-void sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start);
+void __sli_memlat_stat_start(u64 *start);
+void __sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start);
 int  sli_memlat_stat_show(struct seq_file *m, struct cgroup *cgrp);
 int  sli_memlat_max_show(struct seq_file *m, struct cgroup *cgrp);
-void sli_schedlat_stat(struct task_struct *task,enum sli_schedlat_stat_item sidx, u64 delta);
-void sli_schedlat_rundelay(struct task_struct *task, struct task_struct *prev, u64 delta);
+void __sli_schedlat_stat(struct task_struct *task,enum sli_schedlat_stat_item sidx, u64 delta);
+void __sli_schedlat_rundelay(struct task_struct *task, struct task_struct *prev, u64 delta);
 int  sli_schedlat_stat_show(struct seq_file *m, struct cgroup *cgrp);
 int  sli_schedlat_max_show(struct seq_file *m, struct cgroup *cgrp);
 #ifdef CONFIG_SCHED_INFO
@@ -61,4 +63,40 @@ void sli_check_longsys(struct task_struct *tsk);
 #else
 static void sli_check_longsys(struct task_struct *tsk){};
 #endif
+
+#define SLI_CHECK_ENABLE()	\
+	if (static_branch_likely(&sli_no_enabled))	\
+		return;
+
+static __always_inline
+void sli_memlat_stat_start(u64 *start)
+{
+	SLI_CHECK_ENABLE();
+
+	__sli_memlat_stat_start(start);
+}
+
+static __always_inline
+void sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start)
+{
+	SLI_CHECK_ENABLE();
+
+	__sli_memlat_stat_end(sidx, start);
+}
+
+static __always_inline
+void sli_schedlat_stat(struct task_struct *task,enum sli_schedlat_stat_item sidx, u64 delta)
+{
+	SLI_CHECK_ENABLE();
+
+	__sli_schedlat_stat(task, sidx, delta);
+}
+
+static __always_inline
+void sli_schedlat_rundelay(struct task_struct *task, struct task_struct *prev, u64 delta)
+{
+	SLI_CHECK_ENABLE();
+
+	__sli_schedlat_rundelay(task, prev, delta);
+}
 #endif /*_LINUX_SLI_H*/

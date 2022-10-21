@@ -39,7 +39,6 @@ struct schedlat_thr {
 	u64 schedlat_longsys_thr;
 };
 
-static DEFINE_STATIC_KEY_TRUE(sli_no_enabled);
 static struct memlat_thr memlat_threshold;
 static struct schedlat_thr schedlat_threshold;
 
@@ -324,22 +323,19 @@ int sli_memlat_max_show(struct seq_file *m, struct cgroup *cgrp)
 	return 0;
 }
 
-void sli_memlat_stat_start(u64 *start)
+void __sli_memlat_stat_start(u64 *start)
 {
-	if (static_branch_likely(&sli_no_enabled))
-		*start = 0;
-	else
-		*start = local_clock();
+	*start = local_clock();
 }
 
-void sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start)
+void __sli_memlat_stat_end(enum sli_memlat_stat_item sidx, u64 start)
 {
 	enum sli_lat_count cidx;
 	u64 duration,threshold;
 	struct mem_cgroup *memcg;
 	struct cgroup *cgrp;
 
-	if (static_branch_likely(&sli_no_enabled) || start == 0)
+	if (start == 0)
 		return;
 
 	duration = local_clock() - start;
@@ -452,13 +448,13 @@ static const struct file_operations sli_memlat_thr_fops = {
 	.release	= single_release,
 };
 
-void sli_schedlat_stat(struct task_struct *task, enum sli_schedlat_stat_item sidx, u64 delta)
+void __sli_schedlat_stat(struct task_struct *task, enum sli_schedlat_stat_item sidx, u64 delta)
 {
 	enum sli_lat_count cidx;
 	struct cgroup *cgrp = NULL;
 	u64 threshold;
 
-	if (static_branch_likely(&sli_no_enabled) || !task)
+	if (!task)
 		return;
 
 	threshold = get_schedlat_threshold(sidx);
@@ -481,14 +477,14 @@ void sli_schedlat_stat(struct task_struct *task, enum sli_schedlat_stat_item sid
 	rcu_read_unlock();
 }
 
-void sli_schedlat_rundelay(struct task_struct *task, struct task_struct *prev, u64 delta)
+void __sli_schedlat_rundelay(struct task_struct *task, struct task_struct *prev, u64 delta)
 {
 	enum sli_lat_count cidx;
 	enum sli_schedlat_stat_item sidx = SCHEDLAT_RUNDELAY;
 	struct cgroup *cgrp = NULL;
 	u64 threshold;
 
-	if (static_branch_likely(&sli_no_enabled) || !task || !prev)
+	if (!task || !prev)
 		return;
 
 	threshold = get_schedlat_threshold(sidx);
@@ -562,7 +558,7 @@ void sli_check_longsys(struct task_struct *tsk)
 	}
 
 	delta = rq_clock(this_rq()) - tsk->sched_info.kernel_exec_start;
-	sli_schedlat_stat(tsk, SCHEDLAT_LONGSYS, delta);
+	__sli_schedlat_stat(tsk, SCHEDLAT_LONGSYS, delta);
 }
 
 #endif
