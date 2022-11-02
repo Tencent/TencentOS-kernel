@@ -58,15 +58,18 @@ static struct sock *raw_lookup(struct net *net, struct sock *from,
 static struct sock *raw_sock_get(struct net *net, const struct inet_diag_req_v2 *r)
 {
 	struct raw_hashinfo *hashinfo = raw_get_hashinfo(r);
+	struct hlist_nulls_head *hlist;
+	struct hlist_nulls_node *hnode;
 	struct sock *sk = NULL, *s;
 	int slot;
 
 	if (IS_ERR(hashinfo))
 		return ERR_CAST(hashinfo);
 
-	read_lock(&hashinfo->lock);
+	rcu_read_lock();
 	for (slot = 0; slot < RAW_HTABLE_SIZE; slot++) {
-		sk_for_each(s, &hashinfo->ht[slot]) {
+		hlist = &hashinfo->ht[slot];
+		hlist_nulls_for_each_entry(sk, hnode, hlist, sk_nulls_node) {
 			sk = raw_lookup(net, s, r);
 			if (sk) {
 				/*
@@ -76,13 +79,13 @@ static struct sock *raw_sock_get(struct net *net, const struct inet_diag_req_v2 
 				 * We can do that because we're keeping
 				 * hashinfo->lock here.
 				 */
-				sock_hold(sk);
-				goto out_unlock;
+				if (refcount_inc_not_zero(&sk->sk_refcnt))
+					goto out_unlock;
 			}
 		}
 	}
 out_unlock:
-	read_unlock(&hashinfo->lock);
+	rcu_read_unlock();
 
 	return sk ? sk : ERR_PTR(-ENOENT);
 }
@@ -145,6 +148,8 @@ static void raw_diag_dump(struct sk_buff *skb, struct netlink_callback *cb,
 	struct raw_hashinfo *hashinfo = raw_get_hashinfo(r);
 	struct net *net = sock_net(skb->sk);
 	struct inet_diag_dump_data *cb_data;
+	struct hlist_nulls_head *hlist;
+	struct hlist_nulls_node *hnode;
 	int num, s_num, slot, s_slot;
 	struct sock *sk = NULL;
 	struct nlattr *bc;
@@ -157,11 +162,12 @@ static void raw_diag_dump(struct sk_buff *skb, struct netlink_callback *cb,
 	s_slot = cb->args[0];
 	num = s_num = cb->args[1];
 
-	read_lock(&hashinfo->lock);
+	rcu_read_lock();
 	for (slot = s_slot; slot < RAW_HTABLE_SIZE; s_num = 0, slot++) {
 		num = 0;
 
-		sk_for_each(sk, &hashinfo->ht[slot]) {
+		hlist = &hashinfo->ht[slot];
+		hlist_nulls_for_each_entry(sk, hnode, hlist, sk_nulls_node) {
 			struct inet_sock *inet = inet_sk(sk);
 
 			if (!net_eq(sock_net(sk), net))
@@ -184,7 +190,7 @@ next:
 	}
 
 out_unlock:
-	read_unlock(&hashinfo->lock);
+	rcu_read_unlock();
 
 	cb->args[0] = slot;
 	cb->args[1] = num;
