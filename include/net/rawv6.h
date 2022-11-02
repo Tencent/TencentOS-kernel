@@ -3,6 +3,7 @@
 #define _NET_RAWV6_H
 
 #include <net/protocol.h>
+#include <net/raw.h>
 
 extern struct raw_hashinfo raw_v6_hashinfo;
 struct sock *__raw_v6_lookup(struct net *net, struct sock *sk,
