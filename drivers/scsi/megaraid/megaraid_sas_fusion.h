@@ -1,10 +1,22 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  *  Linux MegaRAID driver for SAS based RAID controllers
  *
- *  Copyright (c) 2009-2013  LSI Corporation
- *  Copyright (c) 2013-2016  Avago Technologies
- *  Copyright (c) 2016-2018  Broadcom Inc.
+ *  Copyright (c) 2009-2018  LSI Corporation.
+ *  Copyright (c) 2009-2018  Avago Technologies.
+ *  Copyright (c) 2009-2018  Broadcom Inc.
+ *
+ *  This program is free software; you can redistribute it and/or
+ *  modify it under the terms of the GNU General Public License
+ *  as published by the Free Software Foundation; either version 2
+ *  of the License, or (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  *  FILE: megaraid_sas_fusion.h
  *
@@ -140,15 +152,16 @@ struct RAID_CONTEXT_G35 {
 	u16		nseg_type;
 	u16 timeout_value; /* 0x02 -0x03 */
 	u16		routing_flags;	// 0x04 -0x05 routing flags
-	u16 virtual_disk_tgt_id;   /* 0x06 -0x07 */
-	__le64 reg_lock_row_lba;      /* 0x08 - 0x0F */
-	u32 reg_lock_length;      /* 0x10 - 0x13 */
-	union {                     // flow specific
-		u16 rmw_op_index;   /* 0x14 - 0x15, R5/6 RMW: rmw operation index*/
-		u16 peer_smid;      /* 0x14 - 0x15, R1 Write: peer smid*/
-		u16 r56_arm_map;    /* 0x14 - 0x15, Unused [15], LogArm[14:10], P-Arm[9:5], Q-Arm[4:0] */
+	u16 virtual_disk_tgt_id;   	/* 0x06 -0x07 */
+	__le64 reg_lock_row_lba;      	/* 0x08 - 0x0F */
+	u32 reg_lock_length;      	/* 0x10 - 0x13 */
+	union { 			// flow specific
+		u16 rmw_op_index;	/* 0x14 - 0x15, R5/6 RMW: rmw operation index*/
+		u16 peer_smid;		/* 0x14 - 0x15, R1 Write: peer smid*/
+		u16 r56_arm_map;	/* 0x14 - 0x15, Unused [15], LogArm[14:10], P-Arm[9:5], Q-Arm[4:0] */
 
 	} flow_specific;
+
 
 	u8 ex_status;       /* 0x16 : OUT */
 	u8 status;          /* 0x17 status */
@@ -246,7 +259,7 @@ union RAID_CONTEXT_UNION {
 #define RAID_CTX_R56_P_ARM_MASK		(0x3E0)
 #define RAID_CTX_R56_LOG_ARM_SHIFT	(10)
 #define RAID_CTX_R56_LOG_ARM_MASK	(0x7C00)
-
+ 
 /* number of bits per index in U32 TrackStream */
 #define BITS_PER_INDEX_STREAM		4
 #define INVALID_STREAM_NUM              16
@@ -774,7 +787,7 @@ struct MR_SPAN_BLOCK_INFO {
 struct MR_CPU_AFFINITY_MASK {
 	union {
 		struct {
-#ifndef MFI_BIG_ENDIAN
+#ifndef __BIG_ENDIAN_BITFIELD
 		u8 hw_path:1;
 		u8 cpu0:1;
 		u8 cpu1:1;
@@ -866,8 +879,19 @@ struct MR_LD_RAID {
 	__le16     seqNum;
 
 	struct {
+#ifndef __BIG_ENDIAN_BITFIELD
 		u32 ldSyncRequired:1;
-		u32 reserved:31;
+		u32 regTypeReqOnReadIsValid:1; // Qualifier bit for regTypeOnRead
+		u32 isEPD:1;                   // Set if LD is an "Enhanced Physical Drive"
+		u32 enableSLDOnAllRWIOs:1;     // If set, driver should unconditionally set SLD bit for all Read Write IOs
+		u32 reserved:28;
+#else
+		u32 reserved:28;
+		u32 enableSLDOnAllRWIOs:1;     // If set, driver should unconditionally set SLD bit for all Read Write IOs
+		u32 isEPD:1;                   // Set if LD is an "Enhanced Physical Drive"
+		u32 regTypeReqOnReadIsValid:1; // Qualifier bit for regTypeOnRead
+		u32 ldSyncRequired:1;
+#endif
 	} flags;
 
 	u8	LUN[8]; /* 0x24 8 byte LUN field used for SCSI IO's */
@@ -878,7 +902,7 @@ struct MR_LD_RAID {
 	/* 0x30 - 0x33, Logical block size for the LD */
 	u32 logical_block_length;
 	struct {
-#ifndef MFI_BIG_ENDIAN
+#ifndef __BIG_ENDIAN_BITFIELD
 	/* 0x34, P_I_EXPONENT from READ CAPACITY 16 */
 	u32 ld_pi_exp:4;
 	/* 0x34, LOGICAL BLOCKS PER PHYSICAL
@@ -1062,6 +1086,7 @@ struct MR_FW_RAID_MAP_DYNAMIC {
 #define MPI26_IEEE_SGE_FLAGS_NSF_MPI_IEEE       (0x00)
 #define MPI26_IEEE_SGE_FLAGS_NSF_NVME_PRP       (0x08)
 #define MPI26_IEEE_SGE_FLAGS_NSF_NVME_SGL       (0x10)
+
 
 #define MEGASAS_DEFAULT_SNAP_DUMP_WAIT_TIME 15
 #define MEGASAS_MAX_SNAP_DUMP_WAIT_TIME 60
@@ -1292,6 +1317,7 @@ struct fusion_context {
 	u8 *sense;
 	dma_addr_t sense_phys_addr;
 
+	atomic_t   busy_mq_poll[MAX_MSIX_QUEUES_FUSION];
 	dma_addr_t reply_frames_desc_phys[MAX_MSIX_QUEUES_FUSION];
 	union MPI2_REPLY_DESCRIPTORS_UNION *reply_frames_desc[MAX_MSIX_QUEUES_FUSION];
 	struct rdpq_alloc_detail rdpq_tracker[RDPQ_MAX_CHUNK_COUNT];
@@ -1355,12 +1381,13 @@ enum CMD_RET_VALUES {
 };
 
 struct  MR_SNAPDUMP_PROPERTIES {
-	u8       offload_num;
-	u8       max_num_supported;
-	u8       cur_num_supported;
-	u8       trigger_min_num_sec_before_ocr;
-	u8       reserved[12];
+    u8       offload_num;
+    u8       max_num_supported;
+    u8       cur_num_supported;
+    u8       trigger_min_num_sec_before_ocr;
+    u8       reserved[12];
 };
+
 
 struct megasas_debugfs_buffer {
 	void *buf;
