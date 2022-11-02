@@ -1,10 +1,22 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  *  Linux MegaRAID driver for SAS based RAID controllers
  *
- *  Copyright (c) 2003-2013  LSI Corporation
- *  Copyright (c) 2013-2016  Avago Technologies
- *  Copyright (c) 2016-2018  Broadcom Inc.
+ *  Copyright (c) 2003-2018  LSI Corporation.
+ *  Copyright (c) 2003-2018  Avago Technologies.
+ *  Copyright (c) 2003-2018  Broadcom Inc.
+ *
+ *  This program is free software; you can redistribute it and/or
+ *  modify it under the terms of the GNU General Public License
+ *  as published by the Free Software Foundation; either version 2
+ *  of the License, or (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
  *  FILE: megaraid_sas.h
  *
@@ -18,11 +30,37 @@
 #ifndef LSI_MEGARAID_SAS_H
 #define LSI_MEGARAID_SAS_H
 
+#if ((defined(RHEL_MAJOR) && (RHEL_MAJOR == 7) && (RHEL_MINOR >= 3)) || \
+	(defined(CONFIG_SUSE_KERNEL) && (LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,21))) || \
+	(LINUX_VERSION_CODE >= KERNEL_VERSION(4,6,0)))
+#include <linux/irq_poll.h>
+#define ENABLE_IRQ_POLL
+#endif
+
+#if ((defined(RHEL_MAJOR) && (RHEL_MAJOR == 8) && (RHEL_MINOR >= 2)) || \
+	(LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0)))
+#define USE_MANAGED_IRQ_API
+#endif
+
+#if ((defined(RHEL_MAJOR) && (RHEL_MAJOR == 8) && (RHEL_MINOR >= 4)) || \
+	(LINUX_VERSION_CODE >= KERNEL_VERSION(5,10,0)))
+#include <linux/blk-mq-pci.h>
+#define HOST_TAGSET_SUPPORT
+#endif
+
+#if defined(HOST_TAGSET_SUPPORT) && !defined(USE_MANAGED_IRQ_API)
+#error "Please use Managed IRQs APIs for shared host tagset to work"
+#endif
+
 /*
  * MegaRAID SAS Driver meta data
  */
-#define MEGASAS_VERSION				"07.710.50.00-rc1"
-#define MEGASAS_RELDATE				"June 28, 2019"
+#define MEGASAS_VERSION				"07.721.02.00"
+#define MEGASAS_RELDATE				"Jan 07, 2022"
+#define MEGASAS_EXT_VERSION			"Jan 07, 17:00:00 PDT 2022"
+
+#define MEGASAS_MSIX_NAME_LEN			32
+
 
 /*
  * Device IDs
@@ -48,14 +86,14 @@
 #define PCI_DEVICE_ID_LSI_TOMCAT		    0x0017
 #define PCI_DEVICE_ID_LSI_VENTURA_4PORT		0x001B
 #define PCI_DEVICE_ID_LSI_CRUSADER_4PORT	0x001C
-#define PCI_DEVICE_ID_LSI_AERO_10E1		0x10e1
-#define PCI_DEVICE_ID_LSI_AERO_10E2		0x10e2
-#define PCI_DEVICE_ID_LSI_AERO_10E5		0x10e5
-#define PCI_DEVICE_ID_LSI_AERO_10E6		0x10e6
-#define PCI_DEVICE_ID_LSI_AERO_10E0		0x10e0
-#define PCI_DEVICE_ID_LSI_AERO_10E3		0x10e3
-#define PCI_DEVICE_ID_LSI_AERO_10E4		0x10e4
-#define PCI_DEVICE_ID_LSI_AERO_10E7		0x10e7
+#define PCI_DEVICE_ID_LSI_AERO_10E1			0x10e1
+#define PCI_DEVICE_ID_LSI_AERO_10E2			0x10e2
+#define PCI_DEVICE_ID_LSI_AERO_10E5			0x10e5
+#define PCI_DEVICE_ID_LSI_AERO_10E6			0x10e6
+#define PCI_DEVICE_ID_LSI_AERO_10E0			0x10e0
+#define PCI_DEVICE_ID_LSI_AERO_10E3			0x10e3
+#define PCI_DEVICE_ID_LSI_AERO_10E4			0x10e4
+#define PCI_DEVICE_ID_LSI_AERO_10E7			0x10e7
 
 /*
  * Intel HBA SSDIDs
@@ -177,6 +215,10 @@
 #define DRV_DCMD_POLLED_MODE		0x1
 #define DRV_DCMD_SKIP_REFIRE		0x2
 
+#define MR_HIGH_IOPS_QUEUE_COUNT	8
+#define MR_DEVICE_HIGH_IOPS_DEPTH	8
+#define MR_HIGH_IOPS_BATCH_COUNT	16
+
 /*
  * Definition for cmd_status
  */
@@ -193,8 +235,8 @@ enum MFI_CMD_OP {
 	MFI_CMD_PD_SCSI_IO	= 0x4,
 	MFI_CMD_DCMD		= 0x5,
 	MFI_CMD_ABORT		= 0x6,
-	MFI_CMD_SMP		= 0x7,
-	MFI_CMD_STP		= 0x8,
+	MFI_CMD_SMP			= 0x7,
+	MFI_CMD_STP			= 0x8,
 	MFI_CMD_NVME		= 0x9,
 	MFI_CMD_TOOLBOX		= 0xa,
 	MFI_CMD_OP_COUNT,
@@ -509,7 +551,7 @@ union MR_PROGRESS {
  */
 struct MR_PD_PROGRESS {
 	struct {
-#ifndef MFI_BIG_ENDIAN
+#ifndef __BIG_ENDIAN_BITFIELD
 		u32     rbld:1;
 		u32     patrol:1;
 		u32     clear:1;
@@ -535,7 +577,7 @@ struct MR_PD_PROGRESS {
 	};
 
 	struct {
-#ifndef MFI_BIG_ENDIAN
+#ifndef __BIG_ENDIAN_BITFIELD
 		u32     rbld:1;
 		u32     patrol:1;
 		u32     clear:1;
@@ -1453,12 +1495,11 @@ struct megasas_ctrl_info {
 
 	u32 size;
 	u32 pad1;
-
 	u8 reserved6[64];
-
+    
 	struct {
 	#if defined(__BIG_ENDIAN_BITFIELD)
-		u32 reserved:19;
+        u32 reserved:19;
 		u32 support_pci_lane_margining: 1;
 		u32 support_psoc_update:1;
 		u32 support_force_personality_change:1;
@@ -1492,7 +1533,7 @@ struct megasas_ctrl_info {
 
 	u8 reserved7[3];
 
-	u8 TaskAbortTO;	/* Timeout value in seconds used by Abort Task TM */
+	u8 TaskAbortTO;	/* Timeout value in seconds used by Abort Task TM Request. */
 	u8 MaxResetTO;	/* Max Supported Reset timeout in seconds. */
 	u8 reserved8[3];
 } __packed;
@@ -1515,6 +1556,7 @@ struct megasas_ctrl_info {
 #define MEGASAS_MAX_LD_IDS			(MEGASAS_MAX_LD_CHANNELS * \
 						MEGASAS_MAX_DEV_PER_CHANNEL)
 
+#define MEGASAS_MAX_NAME                        32
 #define MEGASAS_MAX_SECTORS                    (2*1024)
 #define MEGASAS_MAX_SECTORS_IEEE		(2*128)
 #define MEGASAS_DBG_LVL				1
@@ -1679,7 +1721,7 @@ struct megasas_register_set {
 
 	u32 	reserved_3[3];			/*00A4h*/
 
-	u32	outbound_scratch_pad_0;		/*00B0h*/
+	u32 	outbound_scratch_pad_0;		/*00B0h*/
 	u32	outbound_scratch_pad_1;         /*00B4h*/
 	u32	outbound_scratch_pad_2;         /*00B8h*/
 	u32	outbound_scratch_pad_3;         /*00BCh*/
@@ -1814,10 +1856,11 @@ struct megasas_init_frame {
 	__le32 queue_info_new_phys_addr_hi;	/*1Ch */
 	__le32 queue_info_old_phys_addr_lo;	/*20h */
 	__le32 queue_info_old_phys_addr_hi;	/*24h */
-	__le32 reserved_4[2];	/*28h */
+	__le32 driver_ver_lo;      /*28h */
+	__le32 driver_ver_hi;      /*2Ch */
 	__le32 system_info_lo;      /*30h */
 	__le32 system_info_hi;      /*34h */
-	__le32 reserved_5[2];	/*38h */
+	__le32 reserved_3[2];	/*38h */
 
 } __attribute__ ((packed));
 
@@ -2020,11 +2063,16 @@ union megasas_frame {
  */
 struct MR_PRIV_DEVICE {
 	bool is_tm_capable;
+        bool is_epd;
 	bool tm_busy;
+	bool device_removed_by_fw;
 	atomic_t r1_ldio_hint;
 	u8 interface_type;
 	u8 task_abort_tmo;
 	u8 target_reset_tmo;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0))
+	atomic_t sdev_priv_busy;
+#endif
 };
 struct megasas_cmd;
 
@@ -2203,12 +2251,16 @@ struct megasas_aen_event {
 };
 
 struct megasas_irq_context {
+	char name[MEGASAS_MSIX_NAME_LEN];
 	struct megasas_instance *instance;
 	u32 MSIxIndex;
+#if defined(ENABLE_IRQ_POLL)
 	u32 os_irq;
 	struct irq_poll irqpoll;
 	bool irq_poll_scheduled;
 	bool irq_line_enable;
+#endif
+	atomic_t in_use;
 };
 
 struct MR_DRV_SYSTEM_INFO {
@@ -2230,39 +2282,33 @@ enum MR_PD_TYPE {
 
 /* JBOD Queue depth definitions */
 #define MEGASAS_SATA_QD	32
-#define MEGASAS_SAS_QD	64
+#define MEGASAS_SAS_QD	256
 #define MEGASAS_DEFAULT_PD_QD	64
-#define MEGASAS_NVME_QD		32
+#define MEGASAS_NVME_QD		64
 
 #define MR_DEFAULT_NVME_PAGE_SIZE	4096
 #define MR_DEFAULT_NVME_PAGE_SHIFT	12
 #define MR_DEFAULT_NVME_MDTS_KB		128
 #define MR_NVME_PAGE_SIZE_MASK		0x000000FF
 
-/*Aero performance parameters*/
-#define MR_HIGH_IOPS_QUEUE_COUNT	8
-#define MR_DEVICE_HIGH_IOPS_DEPTH	8
-#define MR_HIGH_IOPS_BATCH_COUNT	16
-
-enum MR_PERF_MODE {
-	MR_BALANCED_PERF_MODE		= 0,
-	MR_IOPS_PERF_MODE		= 1,
-	MR_LATENCY_PERF_MODE		= 2,
+enum MEGASAS_LD_TARGET_ID_STATUS {
+	LD_TARGET_ID_INITIAL,
+	LD_TARGET_ID_ACTIVE,
+	LD_TARGET_ID_DELETED,
 };
 
-#define MEGASAS_PERF_MODE_2STR(mode) \
-		((mode) == MR_BALANCED_PERF_MODE ? "Balanced" : \
-		 (mode) == MR_IOPS_PERF_MODE ? "IOPS" : \
-		 (mode) == MR_LATENCY_PERF_MODE ? "Latency" : \
-		 "Unknown")
+#define MEGASAS_TARGET_ID(sdev)						\
+	(((sdev->channel % 2) * MEGASAS_MAX_DEV_PER_CHANNEL) +	\
+		sdev->id)
 
 struct megasas_instance {
 
-	unsigned int *reply_map;
 	__le32 *producer;
 	dma_addr_t producer_h;
 	__le32 *consumer;
 	dma_addr_t consumer_h;
+	__le32 *verbuf;
+	dma_addr_t verbuf_h;
 	struct MR_DRV_SYSTEM_INFO *system_info_buf;
 	dma_addr_t system_info_h;
 	struct MR_LD_VF_AFFILIATION *vf_affiliation;
@@ -2320,6 +2366,9 @@ struct megasas_instance {
 	struct megasas_pd_list          pd_list[MEGASAS_MAX_PD];
 	struct megasas_pd_list          local_pd_list[MEGASAS_MAX_PD];
 	u8 ld_ids[MEGASAS_MAX_LD_IDS];
+	u8 ld_tgtid_status[MEGASAS_MAX_LD_IDS];
+	u8 ld_ids_prev[MEGASAS_MAX_LD_IDS];
+	u8 ld_ids_from_raidmap[MEGASAS_MAX_LD_IDS];
 	s8 init_id;
 
 	u16 max_num_sge;
@@ -2398,6 +2447,8 @@ struct megasas_instance {
 	/* Ptr to hba specific information */
 	void *ctrl_context;
 	unsigned int msix_vectors;
+	u8 *reply_map;
+	struct msix_entry msixentry[MEGASAS_MAX_MSIX_QUEUES];
 	struct megasas_irq_context irq_context[MEGASAS_MAX_MSIX_QUEUES];
 	u64 map_id;
 	u64 pd_seq_map_id;
@@ -2434,8 +2485,8 @@ struct megasas_instance {
 	u8 max_reset_tmo;
 	u8 snapdump_wait_time;
 #ifdef CONFIG_DEBUG_FS
-	struct dentry *debugfs_root;
-	struct dentry *raidmap_dump;
+ 	struct dentry *debugfs_root;
+ 	struct dentry *raidmap_dump;
 #endif
 	u8 enable_fw_dev_list;
 	bool atomic_desc_support;
@@ -2443,6 +2494,8 @@ struct megasas_instance {
 	bool support_pci_lane_margining;
 	u8  low_latency_index_start;
 	int perf_mode;
+	bool use_blk_mq;
+	int iopoll_q_count;
 };
 
 struct MR_LD_VF_MAP {
@@ -2538,6 +2591,9 @@ struct megasas_instance_template {
 
 #define MEGASAS_IS_LOGICAL(sdev)					\
 	((sdev->channel < MEGASAS_MAX_PD_CHANNELS) ? 0 : 1)
+
+#define MEGASAS_IS_LUN_VALID(sdev)					\
+	((sdev->lun == 0) ? 1 : 0)
 
 #define MEGASAS_DEV_INDEX(scp)						\
 	(((scp->device->channel % 2) * MEGASAS_MAX_DEV_PER_CHANNEL) +	\
@@ -2637,11 +2693,31 @@ enum MEGASAS_OCR_CAUSE {
 };
 
 enum DCMD_RETURN_STATUS {
-	DCMD_SUCCESS		= 0,
-	DCMD_TIMEOUT		= 1,
-	DCMD_FAILED		= 2,
-	DCMD_NOT_FIRED		= 3,
+	DCMD_SUCCESS	= 0x00,
+	DCMD_TIMEOUT	= 0x01,
+	DCMD_FAILED		= 0x02,
+	DCMD_BUSY		= 0x03,
+	DCMD_INIT		= 0xff,
 };
+
+enum MR_PERF_MODE {
+	MR_BALANCED_PERF_MODE		= 0,
+	MR_IOPS_PERF_MODE			= 1,
+	MR_LATENCY_PERF_MODE		= 2,
+};
+
+#define MEGASAS_PERF_MODE_2STR(mode) \
+		((mode) == MR_BALANCED_PERF_MODE ? "Balanced" : \
+	 	 (mode) == MR_IOPS_PERF_MODE ? "IOPs" : \
+	 	 (mode) == MR_LATENCY_PERF_MODE ? "Latency": \
+		 "Unknown")
+
+#define MEGASAS_PCIE_SPEED2STR(speed) \
+		((speed) == MEGASAS_PCIE_SPEED_16_0GT ? "16 GT/s" : \
+	 	 (speed) == MEGASAS_PCIE_SPEED_8_0GT ? "8 GT/s" : \
+	 	 (speed) == MEGASAS_PCIE_SPEED_5_0GT ? "5 GT/s" : \
+	 	 (speed) == MEGASAS_PCIE_SPEED_2_5GT ? "2.5 GT/s" : \
+	 	 "Unknown speed")
 
 u8
 MR_BuildRaidContext(struct megasas_instance *instance,
@@ -2700,9 +2776,14 @@ void megasas_fusion_stop_watchdog(struct megasas_instance *instance);
 void megasas_set_dma_settings(struct megasas_instance *instance,
 			      struct megasas_dcmd_frame *dcmd,
 			      dma_addr_t dma_addr, u32 dma_len);
+unsigned int megasas_get_irq(struct megasas_instance *instance, int msix_index);
+#if defined(ENABLE_IRQ_POLL)
+extern int megasas_irqpoll(struct irq_poll *irqpoll, int budget);
+#endif
+void megasas_dump_fusion_io(struct scsi_cmnd *scmd);
 int megasas_adp_reset_wait_for_ready(struct megasas_instance *instance,
 				     bool do_adp_reset,
 				     int ocr_context);
-int megasas_irqpoll(struct irq_poll *irqpoll, int budget);
-void megasas_dump_fusion_io(struct scsi_cmnd *scmd);
+int megasas_blk_mq_poll(struct Scsi_Host *shost, unsigned int queue_num);
+
 #endif				/*LSI_MEGARAID_SAS_H */
