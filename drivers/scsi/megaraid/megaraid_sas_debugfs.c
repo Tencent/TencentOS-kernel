@@ -25,16 +25,18 @@
  *
  *  Send feedback to: megaraidlinux.pdl@broadcom.com
  */
+#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/pci.h>
 #include <linux/interrupt.h>
 #include <linux/compat.h>
-#include <linux/irq_poll.h>
+#include <linux/uio.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_device.h>
 #include <scsi/scsi_host.h>
+
 
 #include "megaraid_sas_fusion.h"
 #include "megaraid_sas.h"
@@ -42,11 +44,12 @@
 #ifdef CONFIG_DEBUG_FS
 #include <linux/debugfs.h>
 
-struct dentry *megasas_debugfs_root;
+struct dentry *megasas_debugfs_root = NULL;
 
 static ssize_t
 megasas_debugfs_read(struct file *filp, char __user *ubuf, size_t cnt,
-		      loff_t *ppos)
+	loff_t *ppos)
+
 {
 	struct megasas_debugfs_buffer *debug = filp->private_data;
 
@@ -72,7 +75,7 @@ megasas_debugfs_raidmap_open(struct inode *inode, struct file *file)
 	debug->buf = (void *)fusion->ld_drv_map[(instance->map_id & 1)];
 	debug->len = fusion->drv_map_sz;
 	file->private_data = debug;
-
+	
 	return 0;
 }
 
@@ -111,7 +114,8 @@ void megasas_init_debugfs(void)
  */
 void megasas_exit_debugfs(void)
 {
-	debugfs_remove_recursive(megasas_debugfs_root);
+	if (megasas_debugfs_root)
+		debugfs_remove_recursive(megasas_debugfs_root);
 }
 
 /*
@@ -127,8 +131,7 @@ megasas_setup_debugfs(struct megasas_instance *instance)
 	fusion = instance->ctrl_context;
 
 	if (fusion) {
-		snprintf(name, sizeof(name),
-			 "scsi_host%d", instance->host->host_no);
+		snprintf(name, sizeof(name), "scsi_host%d", instance->host->host_no);
 		if (!instance->debugfs_root) {
 			instance->debugfs_root =
 				debugfs_create_dir(name, megasas_debugfs_root);
@@ -142,8 +145,8 @@ megasas_setup_debugfs(struct megasas_instance *instance)
 		snprintf(name, sizeof(name), "raidmap_dump");
 		instance->raidmap_dump =
 			debugfs_create_file(name, S_IRUGO,
-					    instance->debugfs_root, instance,
-					    &megasas_debugfs_raidmap_fops);
+					instance->debugfs_root,
+					instance, &megasas_debugfs_raidmap_fops);
 		if (!instance->raidmap_dump) {
 			dev_err(&instance->pdev->dev,
 				"Cannot create raidmap debugfs file\n");
@@ -160,7 +163,8 @@ megasas_setup_debugfs(struct megasas_instance *instance)
  */
 void megasas_destroy_debugfs(struct megasas_instance *instance)
 {
-	debugfs_remove_recursive(instance->debugfs_root);
+	if (instance->debugfs_root) 
+		debugfs_remove_recursive(instance->debugfs_root);
 }
 
 #else
@@ -177,3 +181,4 @@ void megasas_destroy_debugfs(struct megasas_instance *instance)
 {
 }
 #endif /*CONFIG_DEBUG_FS*/
+
