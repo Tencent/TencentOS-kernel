@@ -59,6 +59,7 @@
 #endif
 #include <net/calipso.h>
 #include <net/seg6.h>
+#include <net/rawv6.h>
 
 #include <linux/uaccess.h>
 #include <linux/mroute6.h>
@@ -991,6 +992,8 @@ static int __init inet6_init(void)
 		pr_info("Loaded, but administratively disabled, reboot required to enable\n");
 		goto out;
 	}
+
+	raw_hashinfo_init(&raw_v6_hashinfo);
 
 	err = proto_register(&tcpv6_prot, 1);
 	if (err)

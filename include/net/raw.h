@@ -33,9 +33,18 @@ int raw_rcv(struct sock *, struct sk_buff *);
 #define RAW_HTABLE_SIZE	MAX_INET_PROTOS
 
 struct raw_hashinfo {
-	rwlock_t lock;
-	struct hlist_head ht[RAW_HTABLE_SIZE];
+	spinlock_t lock;
+	struct hlist_nulls_head ht[RAW_HTABLE_SIZE];
 };
+
+static inline void raw_hashinfo_init(struct raw_hashinfo *hashinfo)
+{
+	int i;
+
+	spin_lock_init(&hashinfo->lock);
+	for (i = 0; i < RAW_HTABLE_SIZE; i++)
+		INIT_HLIST_NULLS_HEAD(&hashinfo->ht[i], i);
+}
 
 #ifdef CONFIG_PROC_FS
 int raw_proc_init(void);
