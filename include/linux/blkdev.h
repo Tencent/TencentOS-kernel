@@ -1786,6 +1786,9 @@ static inline bool blk_req_can_dispatch_to_zone(struct request *rq)
 }
 #endif /* CONFIG_BLK_DEV_ZONED */
 
+int truncate_bdev_range(struct block_device *bdev, fmode_t mode, loff_t lstart,
+			loff_t lend);
+
 #else /* CONFIG_BLOCK */
 
 struct block_device;
@@ -1794,6 +1797,12 @@ struct block_device;
  * stubs for when the block layer is configured out
  */
 #define buffer_heads_over_limit 0
+
+static inline int truncate_bdev_range(struct block_device *bdev, fmode_t mode,
+				      loff_t lstart, loff_t lend)
+{
+	return 0;
+}
 
 static inline long nr_blockdev_pages(void)
 {

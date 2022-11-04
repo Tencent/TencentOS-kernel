@@ -1698,6 +1698,7 @@ static int iavf_clean_rx_irq(struct iavf_ring *rx_ring, int budget)
 			if (rx_buffer) {
 				xdp.data = page_address(rx_buffer->page) +
 					   rx_buffer->page_offset;
+				xdp_set_data_meta_invalid(&xdp);
 				xdp.data_hard_start = (void *)((u8 *)xdp.data -
 						      iavf_rx_offset(rx_ring));
 				xdp.data_end = (void *)((u8 *)xdp.data + size);
