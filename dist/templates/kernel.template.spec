@@ -229,7 +229,7 @@ Requires(preun): coreutils kmod
 Requires(post): %{_bindir}/kernel-install
 Requires(preun): %{_bindir}/kernel-install
 # Kernel install hooks & initramfs
-%if 0%{?rhel} == 7
+%if 0%{?rhel} == 7 || "%{?dist}" == ".tl2"
 Requires(post): systemd
 Requires(preun): systemd
 %else
