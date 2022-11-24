@@ -238,7 +238,7 @@ Requires(preun): coreutils kmod
 Requires(post): %{_bindir}/kernel-install
 Requires(preun): %{_bindir}/kernel-install
 # Kernel install hooks & initramfs
-%if 0%{?rhel} == 7
+%if 0%{?rhel} == 7 || "%{?dist}" == ".tl2"
 Requires(post): systemd
 Requires(preun): systemd
 %else
@@ -275,6 +275,7 @@ Provides: kernel-devel = %{version}-%{release}
 Provides: kernel-devel-%{_target_cpu} = %{version}-%{release}
 Provides: kernel-devel-uname-r = %{version}-%{release}
 AutoReqprov: no
+Obsoletes: kernel-devel <= 5.4.119-19.0009.11
 %description devel
 This package provides kernel headers and makefiles sufficient to build modules
 against the %{version}-%{release} kernel package.
@@ -287,6 +288,7 @@ Requires: %{rpm_name}-debuginfo-common-%{_target_cpu}
 Provides: installonlypkg(kernel-debuginfo)
 Provides: kernel-debuginfo = %{version}-%{release}
 AutoReqProv: no
+Obsoletes: kernel-debuginfo <= 5.4.119-19.0009.11
 %description debuginfo
 This package provides debug information including
 vmlinux, System.map for package %{rpm_name}.
@@ -323,6 +325,7 @@ Summary: Header files for the Linux kernel for use by glibc
 Obsoletes: glibc-kernheaders < 3.0-46
 Provides: glibc-kernheaders = 3.0-46
 Provides: kernel-headers = %{version}-%{release}
+Obsoletes: kernel-headers <= 5.4.119-19.0009.11
 %description headers
 Kernel-headers includes the C header files that specify the interface
 between the Linux kernel and userspace libraries and programs. The
