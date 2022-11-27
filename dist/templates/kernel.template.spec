@@ -566,6 +566,9 @@ BuildConfig() {
 	# Ensures build-ids are unique to allow parallel debuginfo
 	sed -i -e "s/^CONFIG_BUILD_SALT.*/CONFIG_BUILD_SALT=\"$KernUnameR\"/" .config
 
+	# Erase LOCALVERSION to prevent it from mucking with our version numbers
+	sed -i -e 's/^CONFIG_LOCALVERSION=.*/CONFIG_LOCALVERSION=""/' .config
+
 	# Call olddefconfig before make all, set all unset config to default value.
 	# The packager uses CROSS_COMPILE=scripts/dummy-tools for generating .config
 	# so compiler related config are always unset, let's just use defconfig for them for now
