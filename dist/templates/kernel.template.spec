@@ -187,7 +187,6 @@ Source30: check-kabi
 ### Arch speficied kernel configs and kABI
 # Start from Source1000 to Source1199, for kernel config
 # Start from Source1200 to Source1399, for kabi
-# Start from Source1400 to Source1599, for filter-<arch>.sh
 {{ARCHSOURCESPEC}}
 
 ### Userspace tools
@@ -948,8 +947,7 @@ CollectKernelFile() {
 	# Do module splitting, filter-modules.sh will generate a list of
 	# modules to be split into external module package
 	# Rest of the modules stay in core package
-	echo "%dir /lib/modules/$KernUnameR/" >> modules.list
-	%SOURCE10 "%{buildroot}" "$KernUnameR" "%{_target_cpu}" "$_KernBuild/System.map" >> modules.list || exit $?
+	%SOURCE10 "%{buildroot}" "$KernUnameR" "%{_target_cpu}" "$_KernBuild/System.map" non-core-modules >> modules.list || exit $?
 
 	comm -23 core.list modules.list > core.list.tmp
 	mv core.list.tmp core.list
@@ -957,7 +955,8 @@ CollectKernelFile() {
 	popd
 
 	# Make these file list usable in rpm build dir
-	mv %{buildroot}/{core.list,modules.list} ../
+	mv %{buildroot}/core.list ../
+	mv %{buildroot}/modules.list ../
 }
 
 BuildInstMLNXOFED() {

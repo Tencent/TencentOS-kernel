@@ -49,13 +49,11 @@ BASE_DIR=$1
 KERNEL_UNAMER=$2
 ARCH=$3
 SYSTEM_MAP=$(realpath "$4")
+MODULEPKG=$5
 MODULE_DIR=lib/modules/$KERNEL_UNAMER
 
-# Grab the arch-specific filter list overrides
-source "$(dirname "$(realpath "$0")")/filter-$ARCH.sh"
-
 error() {
-	echo "$@">&2
+	echo "filter-modules.sh: $@">&2
 }
 
 if ! cd "$BASE_DIR"; then
@@ -105,47 +103,78 @@ filter_override() {
 	done
 }
 
-filter_mods "drivers/" "$driverdirs" /
-filter_mods "drivers/char/" "$chardrvs" /
-filter_mods "drivers/net/" "$netdrvs" /
-filter_mods "drivers/net/ethernet/" "$ethdrvs" /
-filter_mods "drivers/input/" "$inputdrvs" /
-filter_mods "drivers/hid/" "$hiddrvs" /
-filter_mods "drivers/scsi/" "$scsidrvs" /
-filter_mods "drivers/usb"/ "$usbdrvs" /
-filter_mods "drivers/gpu/drm/" "$drmdrvs" /
-filter_mods "net/" "$netprots" /
-filter_mods "fs/" "$fsdrvs" /
+# Check if modules dependency are still sane after splitting these mods out
+# args: moduled to be spliited out
+check_modules_dependency_after_split() {
+	# Mask external mods to do a depmod check
+	for mod in "$modules_list"; do
+		mv "$mod" "$mod.bak"
+	done
 
-# Just kill sound.
-filter_mods "" "sound" /
-filter_mods "drivers" "soundwire" /
+	# Run depmod on the resulting module tree and make sure it isn't broken
+	depmod_err=$(depmod "$KERNEL_UNAMER" -b "$BASE_DIR" -naeF "$SYSTEM_MAP" 2>&1 1>/dev/null)
+	if [ "$depmod_err" ]; then
+		error "Failed to filter out external modules, broken depmod:"
+		error "$depmod_err"
+		exit 1
+	fi
 
-# Filter single modules
-filter_mods "" "$singlemods"
+	# Move the mods back
+	for mod in "$modules_list"; do
+		mv "$mod.bak" "$mod"
+	done
+}
 
-# Now process the override list to bring those modules back into core
-filter_override "$overrides"
+# Modules override for differnet arch
+case $ARCH in
+	aarch64 )
+		driverdirs="atm auxdisplay bcma bluetooth firewire fpga infiniband leds media memstick message mmc mtd nfc ntb pcmcia power ssb soundwire staging tty uio w1 ofed_addon"
+		ethdrvs="3com adaptec arc alteon atheros broadcom cadence calxeda chelsio cisco dec dlink emulex marvell micrel myricom neterion nvidia packetengines qlogic rdc sfc silan sis smsc stmicro sun tehuti ti via wiznet xircom"
+		drmdrvs="amd arm bridge ast exynos hisilicon i2c imx mgag200 meson msm nouveau panel pl111 radeon rockchip tegra sun4i tiny vc4"
+		singlemods="ntb_netdev iscsi_ibft iscsi_boot_sysfs megaraid pmcraid qedi qla1280 9pnet_rdma rpcrdma nvmet-rdma nvme-rdma hid-picolcd hid-prodikeys hwpoison-inject target_core_user sbp_target cxgbit chcr rnbd-client rnbd-server mlx5_ib mlx5_core mlx5_vdpa dfl-emif octeontx2-cpt octeontx2-cptvf spi-altera-dfl rvu_cptpf rvu_cptvf regmap-sdw regmap-sdw-mbq hid-playstation hid-nintendo configs"
+		;;
+	riscv64 )
+		;;
+	x86_64 )
+		;;
+	* )
+		error "Unknown arch '$ARCH'"
+		;;
+esac
 
-# Mask external mods to do a depmod check
-for mod in $modules_list; do
-	mv "$mod" "$mod.bak"
-done
+# Filter for split and verify
+case $MODULEPKG in
+	non-core-modules )
+		filter_mods "drivers/" "$driverdirs" /
+		filter_mods "drivers/char/" "$chardrvs" /
+		filter_mods "drivers/net/" "$netdrvs" /
+		filter_mods "drivers/net/ethernet/" "$ethdrvs" /
+		filter_mods "drivers/input/" "$inputdrvs" /
+		filter_mods "drivers/hid/" "$hiddrvs" /
+		filter_mods "drivers/scsi/" "$scsidrvs" /
+		filter_mods "drivers/usb"/ "$usbdrvs" /
+		filter_mods "drivers/gpu/drm/" "$drmdrvs" /
+		filter_mods "net/" "$netprots" /
+		filter_mods "fs/" "$fsdrvs" /
+		# Just kill sound.
+		filter_mods "" "sound" /
+		filter_mods "drivers" "soundwire" /
+		# Filter single modules
+		filter_mods "" "$singlemods"
+		# Now process the override list to bring those modules back into core
+		filter_override "$overrides"
+		;;
+	* )
+		error "Invalid module packaging param '$1'"
+		exit 1
+		;;
+esac
 
-# Run depmod on the resulting module tree and make sure it isn't broken
-depmod_err=$(depmod "$KERNEL_UNAMER" -b "$BASE_DIR" -naeF "$SYSTEM_MAP" 2>&1 1>/dev/null)
-if [ "$depmod_err" ]; then
-	error "Failed to filter out external modules, broken depmod:"
-	error "$depmod_err"
-	exit 1
-fi
-
-# Mask external mods to do a depmod check
-for mod in $modules_list; do
-	mv "$mod.bak" "$mod"
-done
+# Ensure this packaging splitting won't break core modules dependency
+check_modules_dependency_after_split
 
 # Print the modules_list after sort, and prepend /lib/modules/<KERNEL_UNAMER>/ to each line
+echo "%dir /lib/modules/$KERNEL_UNAMER/"
 echo "$modules_list" | sort -n | sed "/^$/d;s/^/\/${MODULE_DIR//\//\\\/}\//"
 
 exit 0

@@ -125,13 +125,6 @@ _gen_arch_source() {
 		echo "Source$kabi_source_num: Module.kabi_$arch"
 		kabi_source_num=$((kabi_source_num + 1))
 	done
-
-	# Source1400 - Source1599 for module filter
-	local filter_source_num=1400 arch
-	for arch in $BUILD_ARCH; do
-		echo "Source$filter_source_num: filter-$arch.sh"
-		filter_source_num=$((filter_source_num + 1))
-	done
 }
 
 _gen_config_build() {
