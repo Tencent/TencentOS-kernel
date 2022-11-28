@@ -45,7 +45,8 @@ dump_info() {
 }
 
 update_info() {
-	${EDITOR:-vi} "$DISTDIR/.release.stash" || die "Failed to call editor to edit the release info"
+	${EDITOR:-vi} "$DISTDIR/.release.stash" >/dev/tty
+	[[ $? -eq 0 ]] || die "Failed to call editor to edit the release info"
 }
 
 parse_info() {
