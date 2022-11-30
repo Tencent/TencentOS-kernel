@@ -62,13 +62,17 @@ override ARCH := $(shell echo $(BUILD_ARCH) | sed -e 's/amd64/x86_64/;s/aarch64/
 
 ### Check if TAG is valid
 TAG := HEAD
+# If COMMIT is specified, this line won't take effect
 COMMIT := $(shell git rev-parse --verify --quiet $(TAG))
 ifeq ($(COMMIT),)
 $(error Invalid git reference, tag '$(TAG)' commit '$(COMMIT)', aborting)
 endif
+# Prefer using TAG, if not set, use COMMIT
+TAG := $(COMMIT)
+GITREF := $(TAG)
 
 ### Build files
-KFULLVER := $(shell $(DISTDIR)/scripts/get-version.sh $(COMMIT))
+KFULLVER := $(shell $(DISTDIR)/scripts/get-version.sh $(GITREF))
 CONFIGFILE := $(shell $(DISTDIR)/scripts/ls-config-files.sh $(CONFIG))
 WORKDIRS = $(DISTWORKDIR) $(RPM_TOPDIR) $(RPM_BUILDDIR) $(RPM_RPMDIR) $(RPM_SOURCEDIR) $(RPM_SPECDIR) $(RPM_SRCRPMDIR) $(RPM_BUILDROOTDIR)
 SPECFILE = $(RPM_SOURCEDIR)/kernel.spec
@@ -132,7 +136,7 @@ default: dist-help
 
 $(TARFILE):
 	@echo "Generating kernel source tar: $(TARFILE)"
-	@cd $(TOPDIR); git archive $(COMMIT) $(TOPDIR) --format=tar --prefix=kernel-$(KFULLVER)/ --output $(TARFILE)
+	@cd $(TOPDIR); git archive $(GITREF) $(TOPDIR) --format=tar --prefix=kernel-$(KFULLVER)/ --output $(TARFILE)
 
 dist-tarball: $(TARFILE)
 	@echo "$(TARFILE)"
@@ -158,7 +162,7 @@ dist-config: dist-configs
 $(SPECFILE): always-rebuild
 	@echo "Generating kernel RPM spec: $(SPECFILE)"
 	@$(DISTDIR)/scripts/gen-spec.sh \
-		--commit "$(COMMIT)" \
+		--gitref "$(GITREF)" \
 		--build-arch "$(SRPM_ARCH)" \
 		--kernel-config "$(CONFIG)" \
 		--kernel-variant "$(VARIANT)" \

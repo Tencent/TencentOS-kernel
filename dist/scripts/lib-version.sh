@@ -93,6 +93,30 @@ export KERNEL_DIST=
 # Only used for make-release
 export KERNEL_PREV_RELREASE_TAG=
 
+# Get the tag of a git ref, if the git ref itself is a valid tag, just return itself
+# else, search latest tag before this git ref.
+_get_last_git_tag_of() {
+	local gitref=$1; shift
+	local last_tag tag
+	local tagged
+
+	for tag in $(git "$@" tag --points-at "$gitref"); do
+		tagged=1
+		last_tag="$tag"
+		if [[ "$last_tag" == "$gitref" ]]; then
+			break
+		fi
+	done
+
+	if [[ -z "$last_tag" ]]; then
+		tagged=0
+		last_tag=$(git "$@" describe --tags --abbrev=0 "$gitref" 2>/dev/null)
+	fi
+
+	echo "$last_tag"
+	return $tagged
+}
+
 # $1: git tag or git commit, defaults to HEAD
 # $2: kernel source tree, should be a git repo
 get_kernel_code_version() {
@@ -133,6 +157,7 @@ _first_merge_window_detection() {
 	local gitref=${1:-HEAD}
 	local repo=${2:-$TOPDIR}
 	local upstream_base upstream_lasttag upstream_gitdesc
+	local tagged
 
 	# If KSUBLEVEL or KEXTRAVERSION is  set, it's not in the first merge window of a major release
 	[[ $KSUBLEVEL -eq 0 ]] || return 1
@@ -142,14 +167,15 @@ _first_merge_window_detection() {
 	# Get latest merge base if forked from upstream to merge window detection
 	# merge window is an upstream-only thing
 	if upstream_base=$(git -C "$repo" merge-base "$gitref" "$upstream" 2>/dev/null); then
-		upstream_lasttag=$(git -C "$repo" describe --tags --abbrev=0 "$upstream_base" 2>/dev/null)
 		upstream_gitdesc=$(git -C "$repo" describe --tags --abbrev=12 "$upstream_base" 2>/dev/null)
+		upstream_lasttag=$(_get_last_git_tag_of "$upstream_base" -C "$repo")
+		tagged=$?
 
 		if \
 			# If last tag is an tagged upstream release
 			[[ $upstream_lasttag == v$KVERSION.$KPATCHLEVEL ]] && \
 			# And if merge base is ahead of the taggewd release
-			[[ $upstream_gitdesc != "$upstream_lasttag" ]]; then
+			[[ "$tagged" -eq 1 ]]; then
 			# Then it's in first merge window
 			return 0
 		fi
@@ -255,7 +281,7 @@ get_kernel_git_version()
 	local upstream=${3:-"@{u}"}
 
 	local last_tag release_tag release_info git_desc
-	local tag
+	local tag tagged
 
 	# Get current commit's snapshot name, format: YYYYMMDDgit<commit>,
 	# or YYYYMMDD (Only if repo is missing, eg. running this script with tarball)
@@ -273,7 +299,8 @@ get_kernel_git_version()
 	fi
 
 	# Get latest git tag of this commit
-	last_tag=$(git -C "$repo" describe --tags --abbrev=0 "$gitref" 2>/dev/null)
+	last_tag=$(_get_last_git_tag_of "$gitref" -C "$repo")
+	tagged=$?
 	# Check and get latest release git tag, in case current tag is a test tag
 	# (eg. current tag is fix_xxxx, rebase_test_xxxx, or user tagged for fun, and previous release tag is 5.18.0-1[.KDIST])
 	if _get_rel_info_from_tag "$last_tag" > /dev/null; then
@@ -318,7 +345,7 @@ get_kernel_git_version()
 			KGIT_SUB_RELEASE_NUM=0
 		fi
 
-		if [[ "$release_tag" == "$git_desc" ]]; then
+		if [[ "$tagged" -eq 1 ]] && [[ "$release_tag" == "$last_tag" ]]; then
 			if [[ $release_info ]] && [[ "$KGIT_RELEASE_NUM" -ne 0 ]]; then
 				# This commit is tagged and it's a valid release tag, juse use it
 				KGIT_FORCE_RELEAE=$release_info

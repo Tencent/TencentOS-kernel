@@ -31,8 +31,8 @@ while [[ $# -gt 0 ]]; do
 			BUILD_ARCH=$2
 			shift 2
 			;;
-		--commit )
-			COMMIT=$2
+		--gitref )
+			GITREF=$2
 			shift 2
 			;;
 		--set-default-disabled )
@@ -54,7 +54,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # This function will prepare $KERNEL_MAJVER, $KERNEL_RELVER
-prepare_kernel_ver "${COMMIT:-HEAD}"
+prepare_kernel_ver "${GITREF:-HEAD}"
 
 BUILD_ARCH="${BUILD_ARCH:-$SPEC_ARCH}"
 
