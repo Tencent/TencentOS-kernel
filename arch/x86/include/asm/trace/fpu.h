@@ -90,7 +90,7 @@ DEFINE_EVENT(x86_fpu, x86_fpu_xstate_check_failed,
 );
 
 #undef TRACE_INCLUDE_PATH
-#define TRACE_INCLUDE_PATH asm/trace/
+#define TRACE_INCLUDE_PATH asm/trace
 #undef TRACE_INCLUDE_FILE
 #define TRACE_INCLUDE_FILE fpu
 #endif /* _TRACE_FPU_H */

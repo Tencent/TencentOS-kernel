@@ -6,7 +6,7 @@
 #define TRACE_INCLUDE_FILE msr-trace
 
 #undef TRACE_INCLUDE_PATH
-#define TRACE_INCLUDE_PATH asm/
+#define TRACE_INCLUDE_PATH asm
 
 #if !defined(_TRACE_MSR_H) || defined(TRACE_HEADER_MULTI_READ)
 #define _TRACE_MSR_H

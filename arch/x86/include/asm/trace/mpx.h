@@ -125,7 +125,7 @@ void trace_bounds_exception_mpx(const struct mpx_bndcsr *bndcsr)
 #endif /* CONFIG_X86_INTEL_MPX */
 
 #undef TRACE_INCLUDE_PATH
-#define TRACE_INCLUDE_PATH asm/trace/
+#define TRACE_INCLUDE_PATH asm/trace
 #undef TRACE_INCLUDE_FILE
 #define TRACE_INCLUDE_FILE mpx
 #endif /* _TRACE_MPX_H */
