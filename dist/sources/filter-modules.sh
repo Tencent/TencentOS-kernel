@@ -135,6 +135,8 @@ case $ARCH in
 		;;
 	riscv64 )
 		;;
+	loongarch64 )
+		;;
 	x86_64 )
 		;;
 	* )

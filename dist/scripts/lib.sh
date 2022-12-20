@@ -142,6 +142,9 @@ get_kernel_arch () {
 		riscv64 )
 			echo "riscv"
 			;;
+		loongarch64 )
+			echo "loongarch64"
+			;;
 		arm64 | aarch64 )
 			echo "arm64"
 			;;
@@ -160,6 +163,9 @@ get_kernel_arch () {
 # source code base sub path in arch/
 get_kernel_src_arch () {
 	case $1 in
+		loongarch64 )
+			echo "loongarch"
+			;;
 		riscv64 )
 			echo "riscv"
 			;;

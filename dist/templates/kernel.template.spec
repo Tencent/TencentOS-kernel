@@ -756,6 +756,10 @@ InstKernelBasic() {
 	install -m 644 $_KernBuild/arch/x86/boot/bzImage vmlinuz
 	%endif
 
+	%ifarch loongarch64
+	install -m 644 $_KernBuild/vmlinuz vmlinuz
+	%endif
+
 	install -m 644 vmlinuz %{buildroot}/boot/vmlinuz-$KernUnameR
 
 	sha512hmac %{buildroot}/boot/vmlinuz-$KernUnameR | sed -e "s,%{buildroot},," > .vmlinuz.hmac
