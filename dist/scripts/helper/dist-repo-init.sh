@@ -26,6 +26,21 @@ KMAKEFILE_CONTENT=""
 	die "Dist files are not properly configured, aborting."
 }
 
+if [[ $1 == "--reset" ]]; then
+	### Clean up changelog
+	echo -n > "$DISTDIR"/templates/changelog
+
+	### Clean up kABI
+	for i in $SPEC_ARCH; do
+		echo -n > "$DISTDIR"/kabi/Module.kabi_$i
+	done
+
+	### Clean up generic-default config
+	echo -n > "$DISTDIR"/configs/00base/generic/default.config
+	for i in $SPEC_ARCH; do
+		echo -n > "$DISTDIR"/configs/00base/generic/$i.config
+	done
+fi
 
 ### Patch .gitignore
 grep -qF "# ${VENDOR_CAPITALIZED:+${VENDOR_CAPITALIZED} }dist files" "$TOPDIR/.gitignore" || {
