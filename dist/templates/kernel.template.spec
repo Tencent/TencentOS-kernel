@@ -620,10 +620,13 @@ BuildKernel() {
 		%{host_make} -C $_KernSrc/tools/bpf/bpftool/ VMLINUX_BTF= VMLINUX_H=
 		# Prefer to extract the vmlinux.h from the vmlinux that were just compiled
 		# fallback to use host's vmlinux
-		if grep -q "CONFIG_DEBUG_INFO_BTF=y" ".config"; then
-			$_KernSrc/tools/bpf/bpftool/bpftool btf dump file vmlinux format c > $_KernVmlinuxH
-		else
-			$_KernSrc/tools/bpf/bpftool/bpftool btf dump file /sys/kernel/btf/vmlinux format c > $_KernVmlinuxH
+		# Skip this if bpftools is too old and doesn't support BTF dump
+		if $_KernSrc/tools/bpf/bpftool/bpftool btf help 2>&1 | grep -q "\bdump\b"; then
+			if grep -q "CONFIG_DEBUG_INFO_BTF=y" ".config"; then
+				$_KernSrc/tools/bpf/bpftool/bpftool btf dump file vmlinux format c > $_KernVmlinuxH
+			else
+				$_KernSrc/tools/bpf/bpftool/bpftool btf dump file /sys/kernel/btf/vmlinux format c > $_KernVmlinuxH
+			fi
 		fi
 		%{host_make} -C $_KernSrc/tools/bpf/bpftool/ clean
 	fi
