@@ -229,8 +229,8 @@ dist-check-buildrequires: $(SPECFILE)
 
 dist-install-buildrequires: $(SPECFILE)
 	@if [ -n "$(MISSINGDEPS)" ]; then \
-		echo "Installing kernel build dependency "$(MISSINGDEPS)" using yum..." \
-		echo "Missing dependency packages: $(MISSINGDEPS)..."; \
+		echo "Installing kernel build dependency '$(MISSINGDEPS)' using yum..."; \
+		echo "Missing dependency packages: '$(MISSINGDEPS)...'"; \
 		if [ -x /usr/bin/yum ]; then \
 		echo "Trying to install..."; \
 		echo "$(MISSINGDEPS)" | sudo xargs yum install -y && exit 0; \
