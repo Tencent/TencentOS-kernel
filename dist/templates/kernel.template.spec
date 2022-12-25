@@ -462,7 +462,7 @@ This package provides debug information for the bpftool package.
 
 ### Prepare common build vars to share by %%prep, %%build and %%install section
 # _KernSrc: Path to kernel source, located in _buildir
-# _KernBuild: Path to the built kernel objects, located in _buildir
+# _KernBuild: Path to the built kernel objects, could be same as $_KernSrc (just like source points to build under /lib/modules/<kver>)
 # _KernVmlinuxH: path to vmlinux.h for BTF, located in _buildir
 # KernUnameR: Get `uname -r` output of the built kernel
 # KernExtVer: Kernel EXTRAVERSION plus debug/kasan/syzkaller marker
@@ -560,9 +560,9 @@ sed -i "/^SUBLEVEL/cSUBLEVEL = $(echo %{kernel_majver} | cut -d '.' -f 3)" $_Ker
 BuildConfig() {
 	mkdir -p $_KernBuild
 	pushd $_KernBuild
-
 	cp $1 .config
-	echo "include $_KernSrc/Makefile" > Makefile
+
+	[ "$_KernBuild" != "$_KernSrc" ] && echo "include $_KernSrc/Makefile" > Makefile
 
 	# Ensures build-ids are unique to allow parallel debuginfo
 	sed -i -e "s/^CONFIG_BUILD_SALT.*/CONFIG_BUILD_SALT=\"$KernUnameR\"/" .config
