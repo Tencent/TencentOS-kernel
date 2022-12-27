@@ -235,7 +235,7 @@ _get_rel_info_from_tag() {
 	fi
 
 	if [[ $rel ]]; then
-		echo "${rel/-/.}"
+		echo "${rel//-/.}"
 	fi
 }
 
