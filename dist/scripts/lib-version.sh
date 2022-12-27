@@ -189,6 +189,7 @@ _first_merge_window_detection() {
 # Get release info from git tag
 _get_rel_info_from_tag() {
 	local tag=$1 rel ret=0
+	local kextraversion=${KEXTRAVERSION#-}
 
 	if [[ $tag == *"$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"* ]]; then
 		rel=${tag#*"$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"}
@@ -199,10 +200,9 @@ _get_rel_info_from_tag() {
 	else
 		return 1
 	fi
-	rel=${rel#-}
-	rel=${rel#.}
 
-	local kextraversion=${KEXTRAVERSION#-}
+	rel=${rel//-/.}
+	rel=${rel#.}
 
 	if [[ -z "$kextraversion" ]]; then
 		# If previous KEXTRAVERSION is not empty but now empty,
@@ -212,7 +212,7 @@ _get_rel_info_from_tag() {
 	elif [ "$kextraversion" -eq "$kextraversion" ] &>/dev/null; then
 		case $rel in
 			# Extra version is release number, ok
-			$kextraversion | "$kextraversion."* | "$kextraversion-"* ) ;;
+			$kextraversion | "$kextraversion."* ) ;;
 			* ) return 1; ;;
 		esac
 	else
@@ -222,11 +222,9 @@ _get_rel_info_from_tag() {
 			$kextraversion )
 				rel=""
 				;;
-			# Plain version tag plus suffix, eg. 5.17-rc3-*
-			"$kextraversion."* | "$kextraversion-"* )
-				rel=${rel#$kextraversion}
-				rel=${rel#-}
-				rel=${rel#.}
+			# Plain version tag plus suffix, eg. 5.17-rc3.*
+			"$kextraversion."* )
+				rel=${rel#$kextraversion.}
 				;;
 			# Extra tag, eg 5.17-1.rc3*
 			*".$kextraversion"* | *"-$kextraversion"* ) ;;
@@ -234,9 +232,7 @@ _get_rel_info_from_tag() {
 		esac
 	fi
 
-	if [[ $rel ]]; then
-		echo "${rel//-/.}"
-	fi
+	echo "$rel"
 }
 
 _search_for_release_tag() {
