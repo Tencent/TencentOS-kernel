@@ -1111,6 +1111,9 @@ if command -v uname > /dev/null; then
 	fi
 fi
 
+%post core
+touch %{_localstatedir}/lib/rpm-state/%{rpm_name}-%{rpm_version}-%{rpm_release}%{?dist}.installing_core
+
 %posttrans core
 # Weak modules
 if command -v weak-modules > /dev/null; then
@@ -1125,6 +1128,7 @@ elif command -v new-kernel-pkg > /dev/null; then
 else
 	echo "NOTICE: No available kernel install handler found. Please make sure boot loader and initramfs are properly configured after the installation." > /dev/stderr
 fi
+rm -f %{_localstatedir}/lib/rpm-state/%{rpm_name}-%{rpm_version}-%{rpm_release}%{?dist}.installing_core
 
 # If match, the selinux will be disabled.
 is_set_selinux=0
@@ -1169,6 +1173,15 @@ fi
 ### Module package
 %post modules
 depmod -a %{kernel_unamer}
+if [ ! -f %{_localstatedir}/lib/rpm-state/%{rpm_name}-%{rpm_version}-%{rpm_release}%{?dist}.installing_core ]; then
+	touch %{_localstatedir}/lib/rpm-state/%{rpm_name}-%{rpm_version}-%{rpm_release}%{?dist}.need_to_run_dracut
+fi
+
+%posttrans modules
+if [ -f %{_localstatedir}/lib/rpm-state/%{rpm_name}-%{rpm_version}-%{rpm_release}%{?dist}.need_to_run_dracut ]; then\
+	dracut -f --kver "%{kernel_unamer}"
+	rm -f %{_localstatedir}/lib/rpm-state/%{rpm_name}-%{rpm_version}-%{rpm_release}%{?dist}.need_to_run_dracut
+fi
 
 %postun modules
 depmod -a %{kernel_unamer}
