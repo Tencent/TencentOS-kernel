@@ -1154,6 +1154,8 @@ fi
 
 # Just in case kernel-install didn't depmod
 depmod -A %{kernel_unamer}
+# Core install done
+rm -f %{_localstatedir}/lib/rpm-state/%{rpm_name}-%{rpm_version}-%{rpm_release}%{?dist}.installing_core
 
 %preun core
 # Boot entry and depmod files
