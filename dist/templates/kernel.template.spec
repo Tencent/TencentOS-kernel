@@ -1119,6 +1119,9 @@ if command -v uname > /dev/null; then
 	fi
 fi
 
+%post core
+touch %{_localstatedir}/lib/rpm-state/%{rpm_name}-%{rpm_version}-%{rpm_release}%{?dist}.installing_core
+
 %posttrans core
 # Weak modules
 if command -v weak-modules > /dev/null; then
@@ -1158,6 +1161,8 @@ fi
 
 # Just in case kernel-install didn't depmod
 depmod -A %{kernel_unamer}
+# Core install done
+rm -f %{_localstatedir}/lib/rpm-state/%{rpm_name}-%{rpm_version}-%{rpm_release}%{?dist}.installing_core
 
 %preun core
 # Boot entry and depmod files
@@ -1177,6 +1182,15 @@ fi
 ### Module package
 %post modules
 depmod -a %{kernel_unamer}
+if [ ! -f %{_localstatedir}/lib/rpm-state/%{rpm_name}-%{rpm_version}-%{rpm_release}%{?dist}.installing_core ]; then
+	touch %{_localstatedir}/lib/rpm-state/%{rpm_name}-%{rpm_version}-%{rpm_release}%{?dist}.need_to_run_dracut
+fi
+
+%posttrans modules
+if [ -f %{_localstatedir}/lib/rpm-state/%{rpm_name}-%{rpm_version}-%{rpm_release}%{?dist}.need_to_run_dracut ]; then\
+	dracut -f --kver "%{kernel_unamer}"
+	rm -f %{_localstatedir}/lib/rpm-state/%{rpm_name}-%{rpm_version}-%{rpm_release}%{?dist}.need_to_run_dracut
+fi
 
 %postun modules
 depmod -a %{kernel_unamer}
