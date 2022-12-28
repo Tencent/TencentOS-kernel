@@ -231,6 +231,7 @@ This is the meta package of %{?rpm_vendor:%{rpm_vendor} }Linux kernel, the core 
 Summary: %{rpm_vendor} Linux Kernel
 Provides: installonlypkg(kernel)
 Provides: kernel-core = %{version}-%{release}
+Provides: kernel-uname-r = %{kernel_unamer}
 Requires(pre): coreutils
 Requires(post): coreutils kmod dracut
 Requires(preun): coreutils kmod
