@@ -53,7 +53,7 @@ MODULEPKG=$5
 MODULE_DIR=lib/modules/$KERNEL_UNAMER
 
 error() {
-	echo "filter-modules.sh: $@">&2
+	echo "filter-modules.sh: $*" >&2
 }
 
 if ! cd "$BASE_DIR"; then
@@ -107,7 +107,7 @@ filter_override() {
 # args: moduled to be spliited out
 check_modules_dependency_after_split() {
 	# Mask external mods to do a depmod check
-	for mod in "$modules_list"; do
+	for mod in $modules_list; do
 		mv "$mod" "$mod.bak"
 	done
 
@@ -120,7 +120,7 @@ check_modules_dependency_after_split() {
 	fi
 
 	# Move the mods back
-	for mod in "$modules_list"; do
+	for mod in $modules_list; do
 		mv "$mod.bak" "$mod"
 	done
 }
