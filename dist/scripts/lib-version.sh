@@ -103,7 +103,12 @@ _get_last_git_tag_of() {
 	for tag in $(git "$@" tag --points-at "$gitref"); do
 		tagged=1
 		last_tag="$tag"
-		if [[ "$last_tag" == "$gitref" ]]; then
+		if [[ "$tag" == "$gitref" ]]; then
+			break
+		fi
+		# If HEAD is tagged with multiple tags and user is not asking to use one of them,
+		# use the first one found matching release info.
+		if [[ "$gitref" == HEAD ]] && _get_rel_info_from_tag "$tag" > /dev/null; then
 			break
 		fi
 	done
