@@ -235,20 +235,58 @@ _first_merge_window_detection() {
 	return 1
 }
 
-# Get release info from git tag
-_get_rel_info_from_tag() {
-	local tag=$1 rel ret=0
+_do_strip_kernel_majver() {
+	local rel
 
-	if [[ $tag == *"$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"* ]]; then
-		rel=${tag#*"$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"}
-	elif [[ "$KSUBLEVEL" = "0" ]] && [[ $tag == *"$KVERSION.$KPATCHLEVEL"* ]]; then
-		rel=${tag#*"$KVERSION.$KPATCHLEVEL"}
-	elif [[ $KPREMERGEWINDOW ]] && [[ $tag == *"$KVERSION.$((KPATCHLEVEL + 1)).$KSUBLEVEL"* ]]; then
-		rel=${tag#*"$KVERSION.$((KPATCHLEVEL + 1)).$KSUBLEVEL"}
+	if [[ $1 == *"$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"* ]]; then
+		rel=${1#*"$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"}
+	elif [[ "$KSUBLEVEL" = "0" ]] && [[ $1 == *"$KVERSION.$KPATCHLEVEL"* ]]; then
+		rel=${1#*"$KVERSION.$KPATCHLEVEL"}
+	elif [[ $KPREMERGEWINDOW ]] && [[ $1 == *"$KVERSION.$((KPATCHLEVEL + 1)).$KSUBLEVEL"* ]]; then
+		rel=${1#*"$KVERSION.$((KPATCHLEVEL + 1)).$KSUBLEVEL"}
 	else
 		return 1
 	fi
 
+	echo "$rel"
+}
+
+# Check and strip the leading VERSION.PATCHLEVEL.SUBLEVEL of a tag,
+# (eg. 5.18.19) and potential prefixes. If the tag doesn't match its corresponding,
+# kernel version, return 1.
+_check_strip_kernel_majver() {
+	local tag=$1 rel
+	local makefile
+	local _kversion _kpatchlevel _ksublevel
+
+	if rel=$(_do_strip_kernel_majver "$tag"); then
+		echo "$rel"
+		return 0
+	fi
+
+	# Update VERSION/PATCHLEVEL/SUBLEVEL using target Makefile, because y upstream
+	# changes them very frequently and may out of sync with previous tag.
+	if makefile=$(git show "$tag:Makefile" 2>/dev/null); then
+		_kversion=$(sed -nE '/^VERSION\s*:?=\s*/{s///;p;q}' <<< "$makefile")
+		_kpatchlevel=$(sed -nE '/^PATCHLEVEL\s*:?=\s*/{s///;p;q}' <<< "$makefile")
+		_ksublevel=$(sed -nE '/^SUBLEVEL\s*:?=\s*/{s///;p;q}' <<< "$makefile")
+	fi
+
+	if rel=$(KVERSION=$_kversion KPATCHLEVEL=$_kpatchlevel KSUBLEVEL=$_ksublevel _do_strip_kernel_majver "$tag"); then
+		echo "$rel"
+		return 0
+	fi
+
+	return 1
+}
+
+# Get release info from git tag
+_get_rel_info_from_tag() {
+	local tag=$1 rel
+
+	if ! rel=$(_check_strip_kernel_majver "$@"); then
+		return 1
+	fi
 	rel=${rel//-/.}
 	rel=${rel#.}
 
