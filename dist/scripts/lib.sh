@@ -84,14 +84,14 @@ cat_repo_file() {
 		warn "Failed to retrive '$_path' from git reference '$_gitref', using current worktree as build source."
 	fi
 
-	cat $_repo/$1
+	cat "$_repo"/"$1"
 }
 
 # $1: keyword
 # $2: optional git ref, if not set current Makefile is used
 # $3: optional git repo
 get_dist_makefile_var() {
-	local _sedexp="/^$1\s*:?=\s*(.*)/{s/^\s*^$1\s*:?=\s*//;h};\${x;p}"
+	local _sedexp="/^$1\s*[:?]?=\s*(.*)/{s/^\s*^$1\s*[:?]?=\s*//;h};\${x;p}"
 	local _gitref=$2
 	local _repo=${3:-$TOPDIR}
 	local _val
@@ -113,6 +113,8 @@ get_dist_makefile_var() {
 [ "$DISTDIR" ] || DISTDIR=$TOPDIR/$DISTPATH
 [ "$SOURCEDIR" ] || SOURCEDIR=$DISTDIR/rpm/SOURCES
 [ "$SPEC_ARCH" ] || SPEC_ARCH=$(get_dist_makefile_var SPEC_ARCH)
+# If KDIST is not set (or it's set to "-" wnich is illegal value for KDIST), read from dist Makefile.
+[ "${KDIST--}" == - ] && KDIST=$(get_dist_makefile_var KDIST)
 
 if ! [ -s "$TOPDIR/Makefile" ]; then
 	echo "Dist tools can only be run within a valid Linux Kernel git workspace." >&2

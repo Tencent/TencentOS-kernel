@@ -46,9 +46,6 @@ KPATCHLEVEL=
 KSUBLEVEL=
 KEXTRAVERSION=
 
-# Kernel dist release (eg. <none>/tks/tlinux4)
-KDIST=
-
 # KPREMERGEWINDOW: If we are building a commit in the first merge window
 # In the first merge time window, after a formal kernel release, and before rc1 release of next kernel,
 # the KPATCHLEVEL will be stuck in lower value, which confuses RPM in many ways. So just bump
@@ -127,10 +124,9 @@ _get_last_git_tag_of() {
 get_kernel_code_version() {
 	local gitref=${1:-HEAD}
 	local repo=${2:-$TOPDIR}
-	local makefile dist_makefile
+	local makefile
 
 	makefile=$(git -C "$repo" show "$gitref:Makefile" 2>/dev/null || cat "$repo/Makefile")
-	dist_makefile=$(git -C "$repo" show "$gitref:$DISTPATH/Makefile" 2>/dev/null || cat "$repo/$DISTPAN/Makefile")
 
 	if [ ! "$makefile" ]; then
 		die "Error: Failed to read Makefile"
@@ -152,8 +148,8 @@ get_kernel_code_version() {
 		KRCRELEASE=1
 	fi
 
-	KDIST=$(sed -nE '/^KDIST\s*:?=\s*/{s///;p;q}' <<< "$dist_makefile")
-	KERNEL_DIST="$KDIST"
+	# Read KDIST using gitref for historical accurate value.
+	KERNEL_DIST=$(get_dist_makefile_var KDIST "$gitref" "$repo")
 
 	return 0
 }
@@ -237,6 +233,22 @@ _get_rel_info_from_tag() {
 		esac
 	fi
 
+	# If KERNEL_DIST is added as prefix/semi-prefix/suffix, remove it from rel
+	if [[ $KERNEL_DIST ]]; then
+		case $rel in
+			$KERNEL_DIST.*)
+				rel=${rel#$KERNEL_DIST.}
+				;;
+			$kextraversion.$KERNEL_DIST.*)
+				rel=${rel#$kextraversion.$KERNEL_DIST.}
+				rel=$kextraversion.$rel
+				;;
+			*.$KERNEL_DIST)
+				rel=${rel%.$KERNEL_DIST}
+				;;
+		esac
+	fi
+
 	echo "$rel"
 }
 
@@ -317,8 +329,6 @@ get_kernel_git_version()
 	if [[ "$release_tag" ]]; then
 		git_desc=$(git -C "$repo" describe --tags --abbrev=12 "$gitref" 2>/dev/null)
 		release_info=$(_get_rel_info_from_tag "$release_tag")
-		# Remove dist suffix, it'a always added for auto generated tag
-		KGIT_RELEASE=${release_info%".$KDIST"}
 
 		if ! [[ $release_info ]]; then
 			warn "No extra release info in release tag, might be a upstream tag." \
@@ -495,8 +505,8 @@ prepare_next_kernel_ver() {
 	fi
 
 	KERNEL_MAJVER="$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"
-	KERNEL_RELVER="$krelease${KDIST:+.$KDIST}"
-	KERNEL_UNAMER="$KERNEL_MAJVER-$KERNEL_RELVER"
+	KERNEL_RELVER="$krelease"
+	KERNEL_UNAMER="$KERNEL_MAJVER-$KERNEL_RELVER${KDIST:+.$KDIST}"
 }
 
 # Get next formal kernel version based on previous git tag
@@ -519,6 +529,6 @@ prepare_next_sub_kernel_ver() {
 	fi
 
 	KERNEL_MAJVER="$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"
-	KERNEL_RELVER="$krelease${KDIST:+.$KDIST}"
-	KERNEL_UNAMER="$KERNEL_MAJVER-$KERNEL_RELVER"
+	KERNEL_RELVER="$krelease"
+	KERNEL_UNAMER="$KERNEL_MAJVER-$KERNEL_RELVER${KDIST:+.$KDIST}"
 }

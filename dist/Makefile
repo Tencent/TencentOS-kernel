@@ -16,6 +16,8 @@ endif
 
 ### Downstream marker, update this when forking to another downstream
 KDIST =
+### NOTE: This export only applies to sub targets, for global commands, export KDIST explicitly in shell.
+export KDIST := $(KDIST)
 
 ### Vendor mark
 VENDOR = tencent
@@ -72,8 +74,8 @@ TAG := $(COMMIT)
 GITREF := $(TAG)
 
 ### Build files
-KFULLVER := $(shell $(DISTDIR)/scripts/get-version.sh $(GITREF))
-CONFIGFILE := $(shell $(DISTDIR)/scripts/ls-config-files.sh $(CONFIG))
+KFULLVER := $(shell KDIST=$(KDIST) $(DISTDIR)/scripts/get-version.sh $(GITREF) vr)
+CONFIGFILE := $(shell KDIST=$(KDIST) $(DISTDIR)/scripts/ls-config-files.sh $(CONFIG))
 WORKDIRS = $(DISTWORKDIR) $(RPM_TOPDIR) $(RPM_BUILDDIR) $(RPM_RPMDIR) $(RPM_SOURCEDIR) $(RPM_SPECDIR) $(RPM_SRCRPMDIR) $(RPM_BUILDROOTDIR)
 SPECFILE = $(RPM_SOURCEDIR)/kernel.spec
 TARFILE = $(RPM_SOURCEDIR)/kernel-$(KFULLVER).tar
@@ -123,9 +125,9 @@ RPMCROSSFLAGS = --without crossbuild
 endif
 
 # For re-distribute to another distro
-ifneq ($(DISTRO),)
-override RPMFLAGS := --define "dist .$(DISTRO)" $(RPMFLAGS)
-$(info "NOTE: DISTRO is set, building for another distro $(DISTRO)")
+ifneq ($(DIST),)
+override RPMFLAGS := --define "dist .$(DIST)" $(RPMFLAGS)
+$(info "NOTE: DIST is set, building for another distro $(DIST)")
 $(info "      You shoudn't do this unless you know what you are doing.")
 endif
 
@@ -179,7 +181,8 @@ dist-sources: dist-configs $(TARFILE) $(DISTSOURCES) $(DISTKABIS) $(SPECFILE)
 
 define DO_RPMBUILD
 @echo "=== DISTBUILD ==="
-@echo "Building kernel: $(KFULLVER)"
+@echo "Building kernel: $(shell rpmspec -q --qf "%{name}-%{version}-%{release}\n" --srpm $(SPECFILE))"
+@echo "Kernel uname-r: $(shell rpmspec -q --provides $(SPECFILE) | grep kernel-uname-r | awk -F ' = ' '{print $$2}')"
 @echo "Config style: $(CONFIG)"
 @echo "RPM build flags: $(1)"
 @echo "=== RPMBULID ==="
