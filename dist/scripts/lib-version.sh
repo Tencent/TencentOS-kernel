@@ -463,12 +463,12 @@ prepare_kernel_ver() {
 			krelease="$krelease.${KGIT_TESTBUILD_TAG//-/_}"
 		fi
 
-		KERNEL_RELVER="$krelease${KDIST:+.$KDIST}"
+		KERNEL_RELVER="$krelease"
 	fi
 
 	KERNEL_NAME="kernel${KDIST:+-$KDIST}"
 	KERNEL_MAJVER="$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"
-	KERNEL_UNAMER="$KERNEL_MAJVER-$KERNEL_RELVER"
+	KERNEL_UNAMER="$KERNEL_MAJVER-$KERNEL_RELVER${KDIST:+.$KDIST}"
 
 	if [[ $localversion ]]; then
 		KERNEL_NAME="$KERNEL_NAME-$localversion"
