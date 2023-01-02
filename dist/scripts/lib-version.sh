@@ -57,23 +57,18 @@ KEXTRAVERSION=
 # To avoid conflict with 5.15 stable build like 5.15.Y-Z, we can't bump the Y part or Z part.
 # So instead bump to 5.16 and mark it rc0 as 5.16.0-0.rc0. (Just as what Fedora does).
 KPREMERGEWINDOW=
-
-# KRCRELEASE: If we are building a rc-release
-# KSNAPRELEASE: If we are building a snapshot-release
-# Pre-release means we are building from an RC release
-# Snap-release means we are building from an git commit without tag
-export KRCRELEASE=
-export KSNAPRELEASE=
-export KTAGRELEASE=
+# Set to true if this is a rolling build tracks upstream
+KROLLING=
 
 # git snapshot versioning
 KGIT_SNAPSHOT=
-# Set if current commit is tagged with valid release info, force use it.
-KGIT_FORCE_RELEAE=
+# Set if current commit is tagged with valid release info
+KGIT_TAG_RELEASE_INFO=
+# Set if a previous commit is found tagged with valid release info
+KGIT_LATEST_TAG_RELEASE_INFO=
 # Set if current commit is tagged with a valid test tag name
 KGIT_TESTBUILD_TAG=
 # Release: Start from 1.0, indicate the release version, info embedded in git tag
-KGIT_RELEASE=
 KGIT_RELEASE_NUM=
 KGIT_SUB_RELEASE_NUM=
 
@@ -89,6 +84,19 @@ export KERNEL_RELVER=
 export KERNEL_DIST=
 # Only used for make-release
 export KERNEL_PREV_RELREASE_TAG=
+
+# Set if it's a tagged release
+export KTAGRELEASE=
+# KTESTRELEASE: If we are building based on a test tag
+KTESTRELEASE=
+# KSNAPRELEASE: If we are building a snapshot-release
+KSNAPRELEASE=
+# KRCRELEASE: If we are building a rc-release
+KRCRELEASE=
+
+_is_num() {
+	[ "$1" -eq "$1" ] &>/dev/null
+}
 
 # Get the tag of a git ref, if the git ref itself is a valid tag, just return itself
 # else, search latest tag before this git ref.
@@ -137,13 +145,15 @@ get_kernel_code_version() {
 	KPATCHLEVEL=$(sed -nE '/^PATCHLEVEL\s*:?=\s*/{s///;p;q}' <<< "$makefile")
 	KSUBLEVEL=$(sed -nE '/^SUBLEVEL\s*:?=\s*/{s///;p;q}' <<< "$makefile")
 	KEXTRAVERSION=$(sed -nE '/^EXTRAVERSION\s*:?=\s*/{s///;p;q}' <<< "$makefile")
+	# Replace '-' in KEXTRAVERSION
+	KEXTRAVERSION=${KEXTRAVERSION//-/.}
+	KEXTRAVERSION=${KEXTRAVERSION#.}
 
 	if [[ -z "$KVERSION" ]] || [[ -z "$KPATCHLEVEL" ]] || [[ -z "$KSUBLEVEL" ]]; then
 		die "Invalid VERSION, PATCHLEVEL or SUBLEVEL in Makefile"
 		return 1
 	fi
 
-	# RC releases are always considered pre-release
 	if [[ "$KEXTRAVERSION" == "rc"* ]] || [[ $KEXTRAVERSION == "-rc"* ]]; then
 		KRCRELEASE=1
 	fi
@@ -190,7 +200,6 @@ _first_merge_window_detection() {
 # Get release info from git tag
 _get_rel_info_from_tag() {
 	local tag=$1 rel ret=0
-	local kextraversion=${KEXTRAVERSION#-}
 
 	if [[ $tag == *"$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"* ]]; then
 		rel=${tag#*"$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"}
@@ -205,47 +214,53 @@ _get_rel_info_from_tag() {
 	rel=${rel//-/.}
 	rel=${rel#.}
 
-	if [[ -z "$kextraversion" ]]; then
-		# If previous KEXTRAVERSION is not empty but now empty,
-		# still consider it a valid release tag since release candidate mark may get dropped.
-		# But this really should look at the Makefile corresponding to that tag commit
-		:
-	elif [ "$kextraversion" -eq "$kextraversion" ] &>/dev/null; then
-		case $rel in
-			# Extra version is release number, ok
-			$kextraversion | "$kextraversion."* ) ;;
-			* ) return 1; ;;
-		esac
-	else
-		# Remove RC liked tag, append them as suffix later.
-		case $rel in
-			# Plain version tag, eg. 5.17-rc3
-			$kextraversion )
-				rel=""
-				;;
-			# Plain version tag plus suffix, eg. 5.17-rc3.*
-			"$kextraversion."* )
-				rel=${rel#$kextraversion.}
-				;;
-			# Extra tag, eg 5.17-1.rc3*
-			*".$kextraversion"* | *"-$kextraversion"* ) ;;
-			* ) return 1; ;;
-		esac
-	fi
-
 	# If KERNEL_DIST is added as prefix/semi-prefix/suffix, remove it from rel
 	if [[ $KERNEL_DIST ]]; then
 		case $rel in
 			$KERNEL_DIST.*)
 				rel=${rel#$KERNEL_DIST.}
 				;;
-			$kextraversion.$KERNEL_DIST.*)
-				rel=${rel#$kextraversion.$KERNEL_DIST.}
-				rel=$kextraversion.$rel
+			$KEXTRAVERSION.$KERNEL_DIST.*)
+				rel=${rel#$KEXTRAVERSION.$KERNEL_DIST.}
+				rel=$KEXTRAVERSION.$rel
 				;;
 			*.$KERNEL_DIST)
 				rel=${rel%.$KERNEL_DIST}
 				;;
+		esac
+	fi
+
+	# If KEXTRAVERSION is added, remove it
+	if [[ -z "$KEXTRAVERSION" ]]; then
+		# If previous KEXTRAVERSION is not empty but now empty,
+		# still consider it a valid release tag since release candidate mark may get dropped.
+		# But this really should look at the Makefile corresponding to that tag commit
+		:
+	elif _is_num "$KEXTRAVERSION"; then
+		case $rel in
+			# Extra version is release number, remove it and add later
+			$KEXTRAVERSION | "$KEXTRAVERSION."* )
+				rel=${rel#$KEXTRAVERSION}
+				rel=${rel#.}
+				;;
+			* ) return 1; ;;
+		esac
+	else
+		# Remove RC liked tag, append them as suffix later.
+		case $rel in
+			# Plain version tag, eg. 5.17-rc3
+			$KEXTRAVERSION )
+				rel=""
+				;;
+			# Plain version tag plus suffix, eg. 5.17-rc3.*
+			"$KEXTRAVERSION."* )
+				rel=${rel#$KEXTRAVERSION.}
+				;;
+			# Already appended as , eg 5.17-1.rc3*
+			*".$KEXTRAVERSION" )
+				rel=${rel%.$KEXTRAVERSION}
+				;;
+			* ) return 1; ;;
 		esac
 	fi
 
@@ -307,7 +322,7 @@ get_kernel_git_version()
 	KGIT_SNAPSHOT=$(date +"%Y%m%d")git$KGIT_SNAPSHOT
 
 	# Check if first merge-window, and set KPREMERGEWINDOW, see comment above about KPREMERGEWINDOW
-	if _first_merge_window_detection "$@"; then
+	if [[ $KROLLING ]] && _first_merge_window_detection "$@"; then
 		KPREMERGEWINDOW=1
 	fi
 
@@ -320,7 +335,7 @@ get_kernel_git_version()
 		# Latest tag is a release tag, just use it
 		release_tag=$last_tag
 	else
-		warn "Latest git tag '$last_tag' is not a release tag, it does't match Makefile version '$KVERSION.$KPATCHLEVEL.$KSUBLEVEL$KEXTRAVERSION'"
+		warn "Latest git tag '$last_tag' is not a release tag, it does't match Makefile version '$KVERSION.$KPATCHLEVEL.$KSUBLEVEL-$KEXTRAVERSION'"
 		if release_tag=$(_search_for_release_tag "$last_tag" "$repo"); then
 			warn "Found release tag '$release_tag'."
 		fi
@@ -333,41 +348,49 @@ get_kernel_git_version()
 		if ! [[ $release_info ]]; then
 			warn "No extra release info in release tag, might be a upstream tag." \
 				"Please make a release commit with 'make dist-release' for a formal release."
+			release_info=0
 			KGIT_RELEASE_NUM=0
 			KGIT_SUB_RELEASE_NUM=0
 		elif [[ $release_info == 0.* ]]; then
 			KGIT_RELEASE_NUM=${release_info##*.}
-			KGIT_RELEASE_NUM=${KGIT_RELEASE_NUM##*-}
-			KGIT_SUB_RELEASE_NUM=${release_info%."$KGIT_RELEASE_NUM"}
+			KGIT_SUB_RELEASE_NUM=${release_info%$KGIT_RELEASE_NUM}
+			KGIT_SUB_RELEASE_NUM=${KGIT_SUB_RELEASE_NUM%.}
 			KGIT_SUB_RELEASE_NUM=${KGIT_SUB_RELEASE_NUM##*.}
 		else
 			KGIT_RELEASE_NUM=${release_info%%.*}
-			KGIT_RELEASE_NUM=${KGIT_RELEASE_NUM%%-*}
-			KGIT_SUB_RELEASE_NUM=${release_info#"$KGIT_RELEASE_NUM".}
+			KGIT_SUB_RELEASE_NUM=${release_info#$KGIT_RELEASE_NUM}
+			KGIT_SUB_RELEASE_NUM=${KGIT_SUB_RELEASE_NUM#.}
 			KGIT_SUB_RELEASE_NUM=${KGIT_SUB_RELEASE_NUM%%.*}
 		fi
 
-		# Fix release numbers, if it's not a number
-		if ! [ "$KGIT_RELEASE_NUM" -eq "$KGIT_RELEASE_NUM" ] &>/dev/null; then
-			warn "Unrecognizable release number: $KGIT_RELEASE_NUM, resetting to 0"
-			KGIT_RELEASE_NUM=0
-		fi
-		if ! [ "$KGIT_SUB_RELEASE_NUM" -eq "$KGIT_SUB_RELEASE_NUM" ] &>/dev/null; then
-			KGIT_SUB_RELEASE_NUM=0
-		fi
+		KERNEL_PREV_RELREASE_TAG=$release_tag
+		KGIT_LATEST_TAG_RELEASE_INFO=$release_info
 
 		if [[ "$tagged" -eq 1 ]] && [[ "$release_tag" == "$last_tag" ]]; then
-			if [[ $release_info ]] && [[ "$KGIT_RELEASE_NUM" -ne 0 ]]; then
+			if [[ $release_info ]]; then
 				# This commit is tagged and it's a valid release tag, juse use it
-				KGIT_FORCE_RELEAE=$release_info
-				KTAGRELEASE=$release_tag
+				if [[ "$KGIT_RELEASE_NUM" != '0' ]]; then
+					KGIT_TAG_RELEASE_INFO=$release_info
+					KTAGRELEASE=$release_tag
+				else
+					warn "'$release_tag' is not a formal release tag, using snapshot versioning."
+					KGIT_SNAPSHOT=1
+				fi
+			else
+				# Tagged but no release info from current tag, could be upstream style tag
+				KGIT_TAG_RELEASE_INFO=1
+				# It's not a valid tag
+				KTAGRELEASE=
 			fi
 		elif [[ "$last_tag" == "$git_desc" ]]; then
+			# It's tagged, but the tag is not a release tag
 			# A dumb assumption here, if it's not in *.* format (v5.4, 4.12.0, etc...) it's a test tag
 			if [[ $last_tag != v*.* ]] && [[ $last_tag != *.*.* ]]; then
 				warn "'$last_tag' looks like a test tag, using it as versioning suffix."
 				warn "Please tag properly for release build, now versioning it as a test build."
-				KGIT_TESTBUILD_TAG=testbuild.$last_tag
+				KGIT_TESTBUILD_TAG=test.$last_tag
+				KGIT_TESTBUILD_TAG=${KGIT_TESTBUILD_TAG//-/_}
+				KTESTRELEASE=1
 			else
 				warn "'$last_tag' looks like a kernel release tag but out-of-sync with Makefile" \
 					"ignoring it and versioning as snapshot."
@@ -378,13 +401,21 @@ get_kernel_git_version()
 			# Just a simple untagged commit, nothing special
 			KSNAPRELEASE=1
 		fi
-
-		KERNEL_PREV_RELREASE_TAG=$release_tag
 	else
+		# No tag or no repo info available, use snapshot version
 		KSNAPRELEASE=1
 		KGIT_RELEASE_NUM=0
+		KGIT_SUB_RELEASE_NUM=0
 	fi
 
+	# Fix release numbers, if it's not a number
+	if ! _is_num "$KGIT_RELEASE_NUM"; then
+		warn "Unrecognizable release number: $KGIT_RELEASE_NUM, resetting to 0"
+		KGIT_RELEASE_NUM=0
+	fi
+	if ! _is_num "$KGIT_SUB_RELEASE_NUM"; then
+		KGIT_SUB_RELEASE_NUM=0
+	fi
 }
 
 _prepare_kernel_ver() {
@@ -398,9 +429,10 @@ _prepare_kernel_ver() {
 
 	# Disable PRE-merge window detection for tagged commit,
 	# We want to following user provided tag strictly
-	if [[ ! $KGIT_FORCE_RELEAE ]]; then
-		if [[ $KPREMERGEWINDOW ]]; then
+	if [[ $KPREMERGEWINDOW ]]; then
+		if [[ ! $KTAGRELEASE ]]; then
 			KPATCHLEVEL=$(( KPATCHLEVEL + 1 ))
+			KEXTRAVERSION="rc0"
 		fi
 	fi
 }
@@ -440,35 +472,51 @@ prepare_kernel_ver() {
 	esac
 
 	_prepare_kernel_ver "$gitref"
-
-	# If it's a tagged commit, and the release number in tag is non-zero, use that
-	if [[ $KGIT_FORCE_RELEAE ]]; then
-		KERNEL_RELVER="$KGIT_FORCE_RELEAE"
+	if [[ $KSNAPRELEASE ]]; then
+		# For snpashot version, it should start with 0. and
+		# KEXTRAVERSION will be appended at the tail of git info.
+		krelease=0.$KGIT_SNAPSHOT
+		[[ ${KEXTRAVERSION:-0} != "0" ]] && krelease=$krelease.$KEXTRAVERSION
+		# Release numbers will be appended too if available as a version hint for users.
+		[[ ${KGIT_RELEASE_NUM:-0} != "0" ]] && krelease=$krelease.$KGIT_RELEASE_NUM
+		[[ ${KGIT_SUB_RELEASE_NUM:-0} != "0" ]] && krelease=$krelease.$KGIT_SUB_RELEASE_NUM
+	elif [[ $KTESTRELEASE ]]; then
+		# For test tag, use the most recent release tag we can find and
+		# append the test suffix.
+		krelease=0
+		[[ ${KEXTRAVERSION:-0} != "0" ]] && krelease=$krelease.$KEXTRAVERSION
+		krelease=$krelease.$KGIT_LATEST_TAG_RELEASE_INFO.$KGIT_TESTBUILD_TAG
 	else
-		local krelease=0
-		if [[ $KSNAPRELEASE ]]; then
-			krelease=$krelease.$KGIT_SNAPSHOT
-		elif [[ $KGIT_RELEASE ]]; then
-			krelease=$krelease.$KGIT_RELEASE
+		if [[ $KTAGRELEASE ]]; then
+			# If the git tag matches all release info, respect it.
+			krelease=$KGIT_TAG_RELEASE_INFO
+		else
+			# Upstream or unknown, set release to start with "0."
+			# so it can be updated easily later.
+			# And if it's a rc release, use "0.0" to ensure it have
+			# lower priority.
+			if [[ "$KRCRELEASE" ]]; then
+				krelease=0.0
+			else
+				krelease=0.1
+			fi
 		fi
 
+		# If KEXTRAVERSION is not number it will break the release syntax
+		# if added as prefix, add as suffix in such case
 		if [[ $KEXTRAVERSION ]]; then
-			krelease="$krelease.${KEXTRAVERSION##-}"
-		elif [[ $KPREMERGEWINDOW ]]; then
-			krelease="$krelease.rc0"
+			if _is_num "${KEXTRAVERSION%%.*}"; then
+				krelease="$KEXTRAVERSION.$krelease"
+			else
+				krelease="$krelease.$KEXTRAVERSION"
+			fi
 		fi
-
-		if [[ $KGIT_TESTBUILD_TAG ]]; then
-			# '-' is not allowed in release name, but commonly used in tag
-			krelease="$krelease.${KGIT_TESTBUILD_TAG//-/_}"
-		fi
-
-		KERNEL_RELVER="$krelease"
 	fi
 
 	KERNEL_NAME="kernel${KDIST:+-$KDIST}"
 	KERNEL_MAJVER="$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"
-	KERNEL_UNAMER="$KERNEL_MAJVER-$KERNEL_RELVER${KDIST:+.$KDIST}"
+	KERNEL_RELVER="$krelease"
+	KERNEL_UNAMER="$KERNEL_MAJVER-$KERNEL_RELVER${KERNEL_DIST:+.$KERNEL_DIST}"
 
 	if [[ $localversion ]]; then
 		KERNEL_NAME="$KERNEL_NAME-$localversion"
@@ -509,12 +557,16 @@ prepare_next_kernel_ver() {
 		warn "Upstream is in merge window, forcing a formal release is not recommanded."
 	fi
 
+	# TK4 left-pads the release number with 0
+	KGIT_RELEASE_NUM=$(echo "$KGIT_RELEASE_NUM" | sed 's/^0*//')
 	krelease=$((KGIT_RELEASE_NUM + 1))
 
 	if [[ $KEXTRAVERSION ]]; then
-		krelease="$krelease.${KEXTRAVERSION##-}"
-	elif [[ $KPREMERGEWINDOW ]]; then
-		krelease="$krelease.rc0"
+		if _is_num "${KEXTRAVERSION%%.*}"; then
+			krelease="$KEXTRAVERSION.$krelease"
+		else
+			krelease="$krelease.$KEXTRAVERSION"
+		fi
 	fi
 
 	KERNEL_MAJVER="$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"
@@ -532,13 +584,16 @@ prepare_next_sub_kernel_ver() {
 		warn "Upstream is in merge window, forcing a formal release is not recommanded."
 	fi
 
-	krelease=$((KGIT_RELEASE_NUM + 0))
+	KGIT_RELEASE_NUM=$(echo "$KGIT_RELEASE_NUM" | sed 's/^0*//')
+	krelease=$KGIT_RELEASE_NUM
 	krelease=$krelease.$((KGIT_SUB_RELEASE_NUM + 1))
 
 	if [[ $KEXTRAVERSION ]]; then
-		krelease="$krelease.${KEXTRAVERSION##-}"
-	elif [[ $KPREMERGEWINDOW ]]; then
-		krelease="$krelease.rc0"
+		if _is_num "${KEXTRAVERSION%%.*}"; then
+			krelease="$KEXTRAVERSION.$krelease"
+		else
+			krelease="$krelease.$KEXTRAVERSION"
+		fi
 	fi
 
 	KERNEL_MAJVER="$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"
