@@ -215,6 +215,8 @@ AutoReq: no
 AutoProv: yes
 
 # Kernel requirements
+# installonlypkg(kernel) is a hint for RPM that this package shouldn't be auto-cleaned.
+Provides: installonlypkg(kernel)
 Provides: kernel = %{version}-%{release}
 Provides: %{rpm_name} = %{version}-%{release}
 Requires: %{rpm_name}-core = %{version}-%{release}
@@ -226,7 +228,6 @@ This is the meta package of %{?rpm_vendor:%{rpm_vendor} }Linux kernel, the core 
 
 %if %{with_core}
 ### Kernel core package
-# installonlypkg(kernel) is a hint for RPM that this package shouldn't be auto-cleaned.
 %package core
 Summary: %{rpm_vendor} Linux Kernel
 Provides: installonlypkg(kernel)
@@ -270,10 +271,10 @@ This package provides commonly used kernel modules for the %{?2:%{2}-}core kerne
 %package devel
 Summary: Development package for building kernel modules to match the %{version}-%{release} kernel
 Release: %{release}
-Provides: installonlypkg(kernel-devel)
+Provides: installonlypkg(kernel)
 Provides: kernel-devel = %{version}-%{release}
 Provides: kernel-devel-%{_target_cpu} = %{version}-%{release}
-Provides: kernel-devel-uname-r = %{version}-%{release}
+Provides: kernel-devel-uname-r = %{kernel_unamer}
 AutoReqprov: no
 %description devel
 This package provides kernel headers and makefiles sufficient to build modules
@@ -284,7 +285,7 @@ against the %{version}-%{release} kernel package.
 %package debuginfo
 Summary: Debug information for package %{rpm_name}
 Requires: %{rpm_name}-debuginfo-common-%{_target_cpu}
-Provides: installonlypkg(kernel-debuginfo)
+Provides: installonlypkg(kernel)
 Provides: kernel-debuginfo = %{version}-%{release}
 AutoReqProv: no
 %description debuginfo
@@ -308,7 +309,7 @@ This is required to use SystemTap with %{rpm_name}.
 ### Common debuginfo package
 %package debuginfo-common-%{_target_cpu}
 Summary: Kernel source files used by %{rpm_name}-debuginfo packages
-Provides: installonlypkg(kernel-debuginfo-common)
+Provides: installonlypkg(kernel)
 Provides: kernel-debuginfo-common = %{version}-%{release}
 %description debuginfo-common-%{_target_cpu}
 This package is required by %{rpm_name}-debuginfo subpackages.
