@@ -96,9 +96,13 @@ KEXTRAVERSION=
 KPREMERGEWINDOW=
 # Set to true if this is a rolling build tracks upstream
 KROLLING=
+# Set to 1 to allow git tag force override uname
+KFORCEUNAMER=
 
 # git snapshot versioning
 KGIT_SNAPSHOT=
+# Raw info from current git tag
+KGIT_TAG_RELEASE_INFO_RAW=
 # Set if current commit is tagged with valid release info
 KGIT_TAG_RELEASE_INFO=
 # Set if a previous commit is found tagged with valid release info
@@ -420,6 +424,7 @@ get_kernel_git_version()
 	if [[ "$release_tag" ]]; then
 		git_desc=$(git -C "$repo" describe --tags --abbrev=12 "$gitref" 2>/dev/null)
 		release_info=$(_get_rel_info_from_tag "$release_tag")
+		release_info_raw=$(_check_strip_kernel_majver "$release_tag")
 
 		if ! [[ $release_info ]]; then
 			warn "No extra release info in release tag, might be a upstream tag." \
@@ -447,6 +452,7 @@ get_kernel_git_version()
 				# This commit is tagged and it's a valid release tag, juse use it
 				if [[ "$KGIT_RELEASE_NUM" != '0' ]]; then
 					KGIT_TAG_RELEASE_INFO=$release_info
+					KGIT_TAG_RELEASE_INFO_RAW=$release_info_raw
 					KTAGRELEASE=$release_tag
 				else
 					warn "'$release_tag' is not a formal release tag, using snapshot versioning."
@@ -593,6 +599,10 @@ prepare_kernel_ver() {
 	KERNEL_MAJVER="$KVERSION.$KPATCHLEVEL.$KSUBLEVEL"
 	KERNEL_RELVER="$krelease"
 	KERNEL_UNAMER="$KERNEL_MAJVER-$KERNEL_RELVER${KERNEL_DIST:+.$KERNEL_DIST}"
+
+	if [[ $KFORCEUNAMER ]] && [[ $KGIT_TAG_RELEASE_INFO_RAW ]]; then
+		KERNEL_UNAMER="$KERNEL_MAJVER$KGIT_TAG_RELEASE_INFO_RAW"
+	fi
 
 	if [[ $localversion ]]; then
 		KERNEL_NAME="$KERNEL_NAME-$localversion"
