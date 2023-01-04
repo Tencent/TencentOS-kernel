@@ -32,9 +32,6 @@ NATIVE_ARCH := $(shell uname -m | sed -e 's/amd64/x86_64/;s/arm64/aarch64/;s/*86
 ARCH := $(NATIVE_ARCH)
 # ARCH to be covered by spec file
 SPEC_ARCH := x86_64 aarch64 riscv64
-# Kernel variant, will be appended to kernel release string as suffix
-# to indicate this is a variant kernel (eg. debug; minimal;)
-VARIANT :=
 # Which kernel config to use, this build system supports multiple config targets,
 # Get the available config by scripts/ls-config.sh
 CONFIG := generic-release
@@ -145,7 +142,7 @@ dist-tarball: $(TARFILE)
 
 $(CONFIGFILE): $(DISTFILES)
 	@echo "Generating kernel config style '$(CONFIG)'"
-	@$(DISTDIR)/scripts/gen-configs.sh $(CONFIG)
+	@$(DISTDIR)/scripts/gen-configs.sh "$(CONFIG)" "$(GITREF)"
 
 dist-configs: $(CONFIGFILE)
 dist-config: dist-configs
@@ -167,7 +164,6 @@ $(SPECFILE): always-rebuild
 		--gitref "$(GITREF)" \
 		--build-arch "$(SRPM_ARCH)" \
 		--kernel-config "$(CONFIG)" \
-		--kernel-variant "$(VARIANT)" \
 		--set-default-disabled "$(DEFAULT_DISABLED)" \
 		--set-default-enabled "$(DEFAULT_ENABLED)" \
 		> $(SPECFILE)
@@ -348,10 +344,6 @@ dist-help:
 	@echo  '    Targer ARCH coverted by spec/SRPM build.'
 	@echo  '  TAG="$(TAG)" (or COMMIT="$(COMMIT)")'
 	@echo  '    Specify a git tag or commit, and this Makefile will build the kernel from that version.'
-	@echo  '  VARIANT="$(VARIANT)"'
-	@echo  '    Kernel variant, will be appended to kernel release string as suffix'
-	@echo  '    to indicate this is a variant kernel (eg. debug; minimal;), especially'
-	@echo  '    useful when combined with CONFIG=<variant config>'
 	@echo  '  RPMFLAGS="$(RPMFLAGS)"'
 	@echo  '    Extra RPM flags to be passed to rpmbuild for RPM bulding related commands.'
 	@echo  '  CONFIG="$(CONFIG)"'

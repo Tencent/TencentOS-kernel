@@ -14,3 +14,6 @@ populate_configs "$@"
 
 # Process the config files with make olddefconfig
 makedef_configs "$@"
+
+# Check config values (eg. LOCALVERSION)
+sanity_check_configs "$@"

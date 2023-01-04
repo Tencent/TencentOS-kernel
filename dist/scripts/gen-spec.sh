@@ -16,15 +16,40 @@ gen-spec.sh [OPTION]
 EOF
 }
 
+# gen-spec need to parse info from source (currently only parse LOCALVERSION from config),
+# so check if the kernel configs are valid here.
+prepare_source_info() {
+	local localversion arch_localversion file
+
+	if [ -z "$KERNEL_CONFIG" ]; then
+		die "Config target not specified."
+	fi
+
+	for arch in $BUILD_ARCH; do
+		file="$SOURCEDIR/$KERNEL_CONFIG.$arch.config"
+		if ! [ -e "$file" ]; then
+			die "Config file missing '$file'"
+		fi
+		if [ -z "$localversion" ]; then
+			localversion=$(sed -ne 's/^CONFIG_LOCALVERSION=\(.*\)$/\1/pg' "$file")
+		else
+			arch_localversion=$(sed -ne 's/^CONFIG_LOCALVERSION=\(.*\)$/\1/pg' "$file")
+			if [ "$arch_localversion" != "$localversion" ]; then
+				die "LOCALVERSION inconsistent between sub-arches for config target '$file', this breaks SRPM package naming."
+			fi
+		fi
+	done
+
+	localversion=${localversion#\"}
+	localversion=${localversion%\"}
+	LOCALVERSION=$localversion
+}
+
 DEFAULT_DISALBED=" kabichk "
 while [[ $# -gt 0 ]]; do
 	case $1 in
 		--kernel-config )
 			KERNEL_CONFIG=$2
-			shift 2
-			;;
-		--kernel-variant )
-			KERNEL_VARIANT=$2
 			shift 2
 			;;
 		--build-arch )
@@ -53,31 +78,12 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-# This function will prepare $KERNEL_MAJVER, $KERNEL_RELVER
-prepare_kernel_ver "${GITREF:-HEAD}"
-
 BUILD_ARCH="${BUILD_ARCH:-$SPEC_ARCH}"
 
-RPM_NAME="kernel${KERNEL_VARIANT:+-$KERNEL_VARIANT}${KDIST:+-$KDIST}"
-RPM_VERSION=${KERNEL_MAJVER//-/.}
-RPM_RELEASE=${KERNEL_RELVER//-/.}
-RPM_RELEASE=${RPM_RELEASE%".$KDIST"}
-RPM_VENDOR=$(get_dist_makefile_var VENDOR_CAPITALIZED)
-RPM_URL=$(get_dist_makefile_var URL)
-
-if [ -z "$KERNEL_CONFIG" ]; then
-	for config in "$TOPDIR/configs/"*.config; do
-		# "<config-basename>.<arch>.config" -> "<config-basename>"
-		KERNEL_CONFIG=$(basename "$config")
-		KERNEL_CONFIG=${config%.config}
-		KERNEL_CONFIG=${config%.*}
-		break
-	done
-
-	if [ -z "$KERNEL_CONFIG" ]; then
-		die "There is no valid kernel config."
-	fi
-fi
+# This helper prepares LOCALVERSION
+prepare_source_info
+# This function will prepare $KERNEL_MAJVER, $KERNEL_RELVER
+prepare_kernel_ver "${GITREF:-HEAD}" "$LOCALVERSION"
 
 _gen_arch_spec() {
 	local arch kernel_arch
@@ -98,16 +104,12 @@ EOF
 
 _gen_kerver_spec() {
 	cat << EOF
-%define rpm_name $RPM_NAME
-%define rpm_version $RPM_VERSION
-%define rpm_release $RPM_RELEASE
-%define rpm_vendor $RPM_VENDOR
-%define rpm_url $RPM_URL
 %define kernel_majver $KERNEL_MAJVER
 %define kernel_relver $KERNEL_RELVER
-EOF
-[ "$KERNEL_VARIANT" ] && cat << EOF
-%define kernel_variant $KERNEL_VARIANT
+%define kernel_unamer $KERNEL_UNAMER
+%define rpm_name $KERNEL_NAME
+%define rpm_vendor $(get_dist_makefile_var VENDOR_CAPITALIZED)
+%define rpm_url $(get_dist_makefile_var URL)
 EOF
 }
 
