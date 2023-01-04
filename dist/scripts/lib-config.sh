@@ -15,7 +15,6 @@ CONFIG_SPECS=( "$CONFIG_PATH"/[0-9][0-9]* )
 CONFIG_OUTDIR=$SOURCEDIR
 CONFIG_CACHE=$DISTDIR/workdir/config_cache
 
-
 _get_config_cross_compiler () {
 	if [[ "$1" == $(get_native_arch) ]]; then
 		:
@@ -381,4 +380,73 @@ makedef_configs () {
 	}
 
 	for_each_config_target _makedef_config "$@"
+}
+
+sanity_check_configs () {
+	# We use LOCALVERSION in Kconfig for variant, save a make flag, but require more sanity check to avoid misuse.
+	# First ensure all arch have the same value
+	# Then ensure it's in a acceptable format
+	_sanity_check_configs() {
+		local target=$1; shift
+		local populated_config
+		local localversion arch_localversion auto_localversion
+
+		for arch in "${CONFIG_ARCH[@]}"; do
+			populated_config="$CONFIG_OUTDIR/$target.$arch.config"
+
+			# config base name is always in this format: <name>.<arch>.config
+			echo "Checking $(basename "$populated_config")..."
+
+			if ! [ -f "$populated_config" ]; then
+				error "Config not populated: '$populated_config'"
+				error "sanity_check_configs need to be called after the configs are populated"
+				exit 1
+			fi
+
+			auto_localversion=$(sed -ne 's/^CONFIG_LOCALVERSION_AUTO=\(.*\)$/\1/pg' "$populated_config")
+			if [ -n "$auto_localversion" ] && [ "$auto_localversion" != "n" ]; then
+				error "CONFIG_LOCALVERSION_AUTO must be unset, but it's set in config target $target"
+				error "This will break dist build system's release versioning."
+				exit 1
+			fi
+
+			if [ -z "$localversion" ]; then
+				localversion=$(sed -ne 's/^CONFIG_LOCALVERSION=\(.*\)$/\1/pg' "$populated_config")
+				if [ 1 -lt $(echo "$localversion" | wc -l) ]; then
+					error "More than one LOCALVERSION is set for config target '$target'"
+					exit 1
+				fi
+			else
+				arch_localversion=$(sed -ne 's/^CONFIG_LOCALVERSION=\(.*\)$/\1/pg' "$populated_config")
+				if [ "$arch_localversion" != "$localversion" ]; then
+					error "Unexpected '$arch_localversion' != '$localversion':"
+					error "This breaks SRPM package naming, LOCALVERSION inconsistent between sub-arches for config target '$target'"
+					exit 1
+				fi
+			fi
+		done
+
+		localversion=${localversion#\"}
+		localversion=${localversion%\"}
+
+		case $localversion in
+			+debuginfo|+core|+devel|+headers|+modules|+$KDIST )
+				error "Unexpected LOCALVERSION '$localversion':"
+				error "LOCALVERSION is using a reserved keyword, this will cause package dependency breakage."
+				exit 1
+				;;
+			+* )
+				;;
+			'' )
+				# Empty value is default and fine
+				;;
+			*)
+				error "Unexpected LOCALVERSION '$localversion':"
+				error "LOCALVERSION is not in acceptable format, for dist building system, it need to start with a '+'"
+				error "to distinguish it from release string, and dist build system also need to manipulate the string based on above fact."
+				exit 1
+		esac
+	}
+
+	for_each_config_target _sanity_check_configs "$@"
 }
