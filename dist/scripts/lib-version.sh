@@ -464,6 +464,10 @@ get_kernel_git_version()
 				# It's not a valid tag
 				KTAGRELEASE=
 			fi
+
+			# If current tag is release tag, previous release tag should be another one
+			KERNEL_PREV_RELREASE_TAG=$(_search_for_release_tag ${release_tag}^ "$repo")
+
 		elif [[ "$last_tag" == "$git_desc" ]]; then
 			# It's tagged, but the tag is not a release tag
 			# A dumb assumption here, if it's not in *.* format (v5.4, 4.12.0, etc...) it's a test tag
@@ -567,7 +571,7 @@ prepare_kernel_ver() {
 		# append the test suffix.
 		krelease=0
 		[[ ${KEXTRAVERSION:-0} != "0" ]] && krelease=$krelease.$KEXTRAVERSION
-		krelease=$krelease.$KGIT_LATEST_TAG_RELEASE_INFO.$KGIT_TESTBUILD_TAG
+		[[ $KGIT_LATEST_TAG_RELEASE_INFO ]] && krelease=$krelease.$KGIT_LATEST_TAG_RELEASE_INFO.$KGIT_TESTBUILD_TAG
 	else
 		if [[ $KTAGRELEASE ]]; then
 			# If the git tag matches all release info, respect it.
