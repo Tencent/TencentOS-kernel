@@ -130,7 +130,7 @@ BuildRequires: binutils-%{_build_arch}-linux-gnu, gcc-%{_build_arch}-linux-gnu
 
 # List the packages used during the kernel build
 BuildRequires: kmod, patch, bash, coreutils, tar, git-core, which, gawk
-BuildRequires: make, gcc, binutils, redhat-rpm-config, hmaccalc, bison, flex, gcc-c++
+BuildRequires: make, gcc, binutils, system-rpm-config, hmaccalc, bison, flex, gcc-c++
 BuildRequires: bzip2, xz, findutils, gzip, perl-interpreter, perl-Carp, perl-devel
 BuildRequires: net-tools, hostname, bc
 BuildRequires: dwarves
