@@ -682,7 +682,7 @@ prepare_next_kernel_ver() {
 
 	# TK4 left-pads the release number with 0
 	KGIT_RELEASE_NUM=$(echo "$KGIT_RELEASE_NUM" | sed 's/^0*//')
-	krelease=$((KGIT_RELEASE_NUM + 1))
+	krelease=$(printf "%04d" $((KGIT_RELEASE_NUM + 1)))
 
 	if [[ $KEXTRAVERSION ]]; then
 		if _is_num "${KEXTRAVERSION%%.*}"; then
@@ -708,7 +708,7 @@ prepare_next_sub_kernel_ver() {
 	fi
 
 	KGIT_RELEASE_NUM=$(echo "$KGIT_RELEASE_NUM" | sed 's/^0*//')
-	krelease=$KGIT_RELEASE_NUM
+	krelease=$(printf "%04d" $KGIT_RELEASE_NUM)
 	krelease=$krelease.$((KGIT_SUB_RELEASE_NUM + 1))
 
 	if [[ $KEXTRAVERSION ]]; then
