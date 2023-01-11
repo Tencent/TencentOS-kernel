@@ -204,8 +204,10 @@ dist-rpm: dist-sources
 dist-prep: dist-sources
 	$(call DO_RPMBUILD,-bp --nodeps $(RPMCROSSFLAGS) $(RPMFLAGS))
 
-dist-new-release:
-	@$(DISTDIR)/scripts/make-release.sh
+dist-new-release: dist-new-maj-release
+
+dist-new-maj-release:
+	@$(DISTDIR)/scripts/make-release.sh --maj-release
 
 dist-new-sub-release:
 	@$(DISTDIR)/scripts/make-release.sh --sub-release
