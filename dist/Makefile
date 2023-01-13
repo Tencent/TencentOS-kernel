@@ -169,7 +169,7 @@ $(SPECFILE): always-rebuild
 		> $(SPECFILE)
 	@grep -A2 "# == Package options ==" $(SPECFILE) | cut -c3-
 
-dist-specfile: $(SPECFILE) $(TOPDIR)/.config
+dist-specfile: $(SPECFILE) dist-configs
 	@echo "$(SPECFILE)"
 
 dist-sources: dist-configs $(TARFILE) $(DISTSOURCES) $(DISTKABIS) $(SPECFILE)
@@ -221,14 +221,14 @@ dist-clean:
 
 BUILDDEPS=$(shell rpmspec -q --buildrequires $(SPECFILE) | cut -d ' ' -f 1)
 MISSINGDEPS=$(shell echo "$(BUILDDEPS)" | xargs -n1 echo | while read -r _d; do rpm -q --whatprovides "$$_d" >/dev/null || echo "$$_d"; done)
-dist-check-buildrequires: $(SPECFILE)
+dist-check-buildrequires: dist-specfile
 	@if [ -n "$(MISSINGDEPS)" ]; then \
 		echo "Error: Build dependency packages missing, please install: $(MISSINGDEPS)"; \
 		echo "Hint: You can try run \`make dist-install-buildrequires\` to fix this."; \
 		exit 1; \
 		fi;
 
-dist-install-buildrequires: $(SPECFILE)
+dist-install-buildrequires: dist-specfile
 	@if [ -n "$(MISSINGDEPS)" ]; then \
 		echo "Installing kernel build dependency '$(MISSINGDEPS)' using yum..."; \
 		echo "Missing dependency packages: '$(MISSINGDEPS)...'"; \
