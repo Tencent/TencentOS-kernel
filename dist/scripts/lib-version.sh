@@ -140,32 +140,65 @@ _is_num() {
 
 # Get the tag of a git ref, if the git ref itself is a valid tag, just return itself
 # else, search latest tag before this git ref.
-_get_last_git_tag_of() {
+_get_git_tag_of() {
 	local gitref=$1; shift
-	local last_tag tag
-	local tagged
+	local tag tags
 
+	tags=$(git "$@" tag --points-at "$gitref")
 	# If multiple tags presents, used the one specified by user
-	for tag in $(git "$@" tag --points-at "$gitref"); do
-		tagged=1
-		last_tag="$tag"
+	for tag in $tags; do
 		if [[ "$tag" == "$gitref" ]]; then
-			break
-		fi
-		# If HEAD is tagged with multiple tags and user is not asking to use one of them,
-		# use the first one found matching release info.
-		if [[ "$gitref" == HEAD ]] && _get_rel_info_from_tag "$tag" > /dev/null; then
-			break
+			echo "$tag"
+			return
 		fi
 	done
 
-	if [[ -z "$last_tag" ]]; then
-		tagged=0
-		last_tag=$(git "$@" describe --tags --abbrev=0 "$gitref" 2>/dev/null)
-	fi
+	# If HEAD is tagged with multiple tags and user is not asking to use one of them,
+	# use the first one found matching release info.
+	for tag in $tags; do
+		if _get_rel_info_from_tag "$tag" > /dev/null; then
+			echo "$tag"
+			return
+		fi
+	done
 
-	echo "$last_tag"
-	return $tagged
+	# Else just return the first tag
+	for tag in $tags; do
+		echo "$tag"
+		return
+	done
+}
+
+# git-describe, but customized for kernel, and prefer specified tag
+_get_git_describe_of() {
+	local gitref=$1; shift
+	local gitdesc
+
+	gitdesc=$(_get_git_tag_of "$gitref" "$@")
+
+	if [[ -n "$gitdesc" ]]; then
+		echo "$gitdesc"
+	else
+		git "$@" describe --tags --abbrev=12 "$gitref"
+	fi
+}
+
+# Get the tag of a git ref, if the git ref itself is a valid tag, just return itself
+# else, search latest tag before this git ref.
+# Return 1 if git ref is tagged,
+_get_last_git_tag_of() {
+	local gitref=$1; shift
+	local gittag
+
+	gittag=$(_get_git_tag_of "$gitref" "$@")
+
+	if [[ -z "$gittag" ]]; then
+		git "$@" describe --tags --abbrev=0 "$gitref"
+		return 0
+	else
+		echo "$gittag"
+		return 1
+	fi
 }
 
 # $1: git tag or git commit, defaults to HEAD
@@ -356,7 +389,7 @@ _search_for_release_tag() {
 	while :; do
 		limit=$((limit - 1))
 
-		if [[ $limit -le 0 ]] || ! tag=$(git -C "$repo" describe --tags --abbrev=0 "$tag^" 2>/dev/null); then
+		if [[ $limit -le 0 ]] || ! tag=$(git -C "$repo" describe --tags --abbrev=0 "$tag" 2>/dev/null); then
 			warn "No valid tag found that are eligible for versioning, please fix your repo and tag it properly."
 			return 1
 		fi
@@ -422,7 +455,7 @@ get_kernel_git_version()
 	fi
 
 	if [[ "$release_tag" ]]; then
-		git_desc=$(git -C "$repo" describe --tags --abbrev=12 "$gitref" 2>/dev/null)
+		git_desc=$(_get_git_describe_of "$gitref" -C "$repo")
 		release_info=$(_get_rel_info_from_tag "$release_tag")
 		release_info_raw=$(_check_strip_kernel_majver "$release_tag")
 
