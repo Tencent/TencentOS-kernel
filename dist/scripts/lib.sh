@@ -96,7 +96,7 @@ get_dist_makefile_var() {
 	local _repo=${3:-$TOPDIR}
 	local _val
 
-	_val=$(cat_repo_file "dist/Makefile" | sed -nE -e "$_sedexp")
+	_val=$(cat_repo_file "dist/Makefile" "$_gitref" "$_repo" | sed -nE -e "$_sedexp")
 	case $_val in
 		*\$* )
 			die "Can't parse Makefile variable '$1', it references to other variables."
