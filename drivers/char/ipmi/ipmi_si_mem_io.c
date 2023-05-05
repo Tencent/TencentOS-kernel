@@ -3,9 +3,75 @@
 #include <linux/io.h>
 #include "ipmi_si.h"
 
+#ifdef CONFIG_ARM_GIC_PHYTIUM_2500
+#include <linux/arm-smccc.h>
+
+#define CTL_RST_FUNC_ID 0xC2000011
+
+static bool apply_phytium2500_workaround;
+
+struct ipmi_workaround_oem_info {
+	char oem_id[ACPI_OEM_ID_SIZE + 1];
+};
+
+static struct ipmi_workaround_oem_info wa_info[] = {
+	{
+		.oem_id		= "KPSVVJ",
+	}
+};
+
+static void ipmi_check_phytium_workaround(void)
+{
+#ifdef CONFIG_ACPI
+	struct acpi_table_header tbl;
+	int i;
+
+	if (ACPI_FAILURE(acpi_get_table_header(ACPI_SIG_DSDT, 0, &tbl)))
+		return;
+
+	for (i = 0; i < ARRAY_SIZE(wa_info); i++) {
+		if (strncmp(wa_info[i].oem_id, tbl.oem_id, ACPI_OEM_ID_SIZE))
+			continue;
+
+		apply_phytium2500_workaround = true;
+		break;
+	}
+#endif
+}
+
+static void ctl_smc(unsigned long arg0, unsigned long arg1,
+		    unsigned long arg2, unsigned long arg3)
+{
+	struct arm_smccc_res res;
+
+	arm_smccc_smc(arg0, arg1, arg2, arg3, 0, 0, 0, 0, &res);
+	if (res.a0 != 0)
+		pr_err("Error: Firmware call SMC reset Failed: %d, addr: 0x%lx\n",
+			(int)res.a0, arg2);
+}
+
+static void ctl_timeout_reset(void)
+{
+	ctl_smc(CTL_RST_FUNC_ID, 0x1, 0x28100208, 0x1);
+	ctl_smc(CTL_RST_FUNC_ID, 0x1, 0x2810020C, 0x1);
+}
+
+static inline void ipmi_phytium_workaround(void)
+{
+	if (apply_phytium2500_workaround)
+		ctl_timeout_reset();
+}
+
+#else
+static inline void ipmi_check_phytium_workaround(void) {}
+static inline void ipmi_phytium_workaround(void) {}
+#endif
+
 static unsigned char intf_mem_inb(const struct si_sm_io *io,
 				  unsigned int offset)
 {
+	ipmi_phytium_workaround();
+
 	return readb((io->addr)+(offset * io->regspacing));
 }
 
@@ -18,6 +84,8 @@ static void intf_mem_outb(const struct si_sm_io *io, unsigned int offset,
 static unsigned char intf_mem_inw(const struct si_sm_io *io,
 				  unsigned int offset)
 {
+	ipmi_phytium_workaround();
+
 	return (readw((io->addr)+(offset * io->regspacing)) >> io->regshift)
 		& 0xff;
 }
@@ -31,6 +99,8 @@ static void intf_mem_outw(const struct si_sm_io *io, unsigned int offset,
 static unsigned char intf_mem_inl(const struct si_sm_io *io,
 				  unsigned int offset)
 {
+	ipmi_phytium_workaround();
+
 	return (readl((io->addr)+(offset * io->regspacing)) >> io->regshift)
 		& 0xff;
 }
@@ -44,6 +114,8 @@ static void intf_mem_outl(const struct si_sm_io *io, unsigned int offset,
 #ifdef readq
 static unsigned char mem_inq(const struct si_sm_io *io, unsigned int offset)
 {
+	ipmi_phytium_workaround();
+
 	return (readq((io->addr)+(offset * io->regspacing)) >> io->regshift)
 		& 0xff;
 }
@@ -80,6 +152,8 @@ int ipmi_si_mem_setup(struct si_sm_io *io)
 
 	if (!addr)
 		return -ENODEV;
+
+	ipmi_check_phytium_workaround();
 
 	/*
 	 * Figure out the actual readb/readw/readl/etc routine to use based
